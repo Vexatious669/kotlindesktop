@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.ui
 
 import androidx.compose.ui.graphics.Color
+import kotlinx.serialization.json.*
 
 /**
  * CSS-like theme tokens. Values are stored as raw CSS in [me.enivzoy.anilife.app.data.AppSettings.themeCss]
@@ -64,6 +65,7 @@ object ThemeCss {
         Token("download-accent-foreground", "Downloads accent text", "#291522"),
     )
 
+    @kotlinx.serialization.Serializable
     data class ColorPreset(val name: String, val description: String, val colors: Map<String, Long>)
 
     /** One-click colour schemes. Each names the tokens it overrides; the rest keep the defaults. */
@@ -75,6 +77,7 @@ object ThemeCss {
                 "background" to 0xFF0A0F0AL, "foreground" to 0xFFF8F8F8L, "card" to 0xFF111A11L,
                 "muted" to 0xFF1A261AL, "muted-foreground" to 0xFFA1A1A1L, "border" to 0x1AFFFFFFL,
                 "primary" to 0xFF87D66AL, "primary-foreground" to 0xFF0A0F0AL,
+                "sidebar" to 0xFF080F08L, "score" to 0xFF87D66AL,
             ),
         ),
         ColorPreset(
@@ -84,6 +87,7 @@ object ThemeCss {
                 "background" to 0xFF05070FL, "foreground" to 0xFFE8ECFFL, "card" to 0xFF0B1020L,
                 "muted" to 0xFF141B30L, "muted-foreground" to 0xFF8B93B8L, "border" to 0x1A6EA8FFL,
                 "primary" to 0xFF6EA8FFL, "primary-foreground" to 0xFF05070FL,
+                "sidebar" to 0xFF03050DL, "score" to 0xFF6EA8FFL,
             ),
         ),
         ColorPreset(
@@ -93,6 +97,7 @@ object ThemeCss {
                 "background" to 0xFF06120BL, "foreground" to 0xFFE6F2E9L, "card" to 0xFF0C1A12L,
                 "muted" to 0xFF14281CL, "muted-foreground" to 0xFF8FB89EL, "border" to 0x1A87D66AL,
                 "primary" to 0xFF57C785L, "primary-foreground" to 0xFF06120BL,
+                "sidebar" to 0xFF040D09L, "score" to 0xFF57C785L,
             ),
         ),
         ColorPreset(
@@ -102,6 +107,7 @@ object ThemeCss {
                 "background" to 0xFF140B08L, "foreground" to 0xFFFDEEE6L, "card" to 0xFF1E120CL,
                 "muted" to 0xFF2A1A14L, "muted-foreground" to 0xFFD9B8A6L, "border" to 0x1AFF9E7AL,
                 "primary" to 0xFFFF9C5CL, "primary-foreground" to 0xFF1A0E05L,
+                "sidebar" to 0xFF100806L, "score" to 0xFFFF9C5CL,
             ),
         ),
         ColorPreset(
@@ -111,6 +117,7 @@ object ThemeCss {
                 "background" to 0xFF0A0A0AL, "foreground" to 0xFFF2F2F2L, "card" to 0xFF151515L,
                 "muted" to 0xFF222222L, "muted-foreground" to 0xFFA3A3A3L, "border" to 0x1AFFFFFFL,
                 "primary" to 0xFFE5E5E5L, "primary-foreground" to 0xFF111111L,
+                "sidebar" to 0xFF080808L, "score" to 0xFFE5E5E5L,
             ),
         ),
     )
@@ -173,6 +180,52 @@ object ThemeCss {
             append("  --").append(name).append(": ").append(toHex(value)).append(";\n")
         }
         append("}")
+    }
+
+    /** Serialises a preset to JSON (colors as CSS hex strings). */
+    fun exportPreset(preset: ColorPreset): String {
+        val obj = buildJsonObject {
+            put("name", preset.name)
+            put("description", preset.description)
+            put("colors", buildJsonObject {
+                preset.colors.forEach { (key, value) -> put(key, toHex(value)) }
+            })
+        }
+        return Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), obj)
+    }
+
+    /** Serialises a preset to JSON. Alias for exportPreset. */
+    fun presetToJson(preset: ColorPreset): String = exportPreset(preset)
+    fun toJson(preset: ColorPreset): String = exportPreset(preset)
+
+    /** Parses a preset from JSON. Colors may be hex strings or numeric ARGB values. */
+    fun importPreset(json: String): ColorPreset? = runCatching {
+        val root = Json.parseToJsonElement(json)
+        val obj = root.jsonObject
+        val name = obj["name"]?.jsonPrimitive?.content ?: "Custom preset"
+        val description = obj["description"]?.jsonPrimitive?.content ?: ""
+        val colorsElement = obj["colors"] ?: obj
+        val colorsObj = colorsElement.jsonObject
+        val colors = colorsObj.mapNotNull { (key, value) ->
+            val color = parseJsonColor(value) ?: return@mapNotNull null
+            key.lowercase().removePrefix("--") to color
+        }.toMap()
+        ColorPreset(name, description, colors)
+    }.getOrNull()
+
+    /** Aliases for importPreset. */
+    fun parsePreset(json: String): ColorPreset? = importPreset(json)
+    fun presetFromJson(json: String): ColorPreset? = importPreset(json)
+    fun fromJson(json: String): ColorPreset? = importPreset(json)
+
+    private fun parseJsonColor(element: JsonElement): Long? = when (element) {
+        is JsonPrimitive -> {
+            if (element.isString) parseColor(element.content)
+            else runCatching { element.content.toLong() }.getOrNull()?.let { value ->
+                if (value > 0xFFFFFF) value else 0xFF000000L or value
+            }
+        }
+        else -> null
     }
 
     fun color(argb: Long): Color = Color(argb)

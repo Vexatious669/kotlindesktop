@@ -25,6 +25,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -45,6 +46,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import java.awt.Toolkit
+import java.io.File
+import javax.swing.JFileChooser
+import javax.swing.JOptionPane
+import kotlinx.serialization.json.*
 import java.awt.datatransfer.StringSelection
 
 /**
@@ -59,8 +64,18 @@ fun ThemeEditor(
 ) {
     var draft by remember { mutableStateOf(css.ifBlank { ThemeCss.defaultCss() }) }
     var dirty by remember { mutableStateOf(false) }
-    var pickingToken by remember { mutableStateOf<String?>(null) }
     val parsed = remember(draft) { ThemeCss.parse(draft) }
+
+    val shippedNames = remember { ThemeCss.colorPresets.map { it.name.lowercase() }.toSet() }
+    val presets = remember {
+        mutableStateListOf<ThemeCss.ColorPreset>().apply {
+            addAll(ThemeCss.colorPresets)
+            addAll(loadCustomPresets())
+        }
+    }
+    fun persistCustom() {
+        saveCustomPresets(presets.filter { it.name.lowercase() !in shippedNames })
+    }
 
     LaunchedEffect(draft) {
         if (!dirty) return@LaunchedEffect
@@ -170,25 +185,10 @@ fun ThemeEditor(
             fontSize = 12.sp,
             lineHeight = 17.sp,
         )
-        PaletteStrip(parsed.colors, onPick = { name -> pickingToken = name })
-
-        pickingToken?.let { name ->
-            val token = ThemeCss.tokens.firstOrNull { it.name == name }
-            if (token != null) {
-                val current = parsed.colors[name] ?: ThemeCss.colorOf(token.default) ?: 0xFF000000L
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ColorPickerButton(
-                        color = ThemeCss.color(current),
-                        label = "--${token.name}",
-                        onPicked = { picked ->
-                            draft = setToken(draft, token.name, ThemeCss.toHex(picked))
-                            dirty = true
-                        },
-                    )
-                    OutlinedButton(onClick = { pickingToken = null }) { Text("Close") }
-                }
-            }
-        }
+        PaletteStrip(parsed.colors, onPicked = { name, picked ->
+            draft = setToken(draft, name, ThemeCss.toHex(picked))
+            dirty = true
+        })
 
         Text("Presets", color = AniLifeColors.Foreground, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         Text(
@@ -197,15 +197,61 @@ fun ThemeEditor(
             fontSize = 12.sp,
             lineHeight = 17.sp,
         )
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ThemeCss.colorPresets.forEach { preset ->
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            presets.forEach { preset ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(preset.name, color = AniLifeColors.Foreground, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        if (preset.description.isNotBlank()) {
+                            Text(preset.description, color = AniLifeColors.MutedForeground, fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
                     OutlinedButton(onClick = {
                         draft = ThemeCss.presetStylesheet(preset)
                         dirty = true
-                    }) { Text(preset.name) }
+                    }) { Text("Apply") }
+                    OutlinedButton(onClick = {
+                        val chooser = JFileChooser()
+                        chooser.selectedFile = File("${preset.name.replace(' ', '_')}.json")
+                        if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+                            runCatching { File(chooser.selectedFile.absolutePath).writeText(ThemeCss.exportPreset(preset)) }
+                        }
+                    }) { Text("Export") }
+                    if (preset.name.lowercase() !in shippedNames) {
+                        OutlinedButton(onClick = {
+                            presets.remove(preset)
+                            persistCustom()
+                        }) { Text("Remove") }
+                    }
                 }
             }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                val chooser = JFileChooser()
+                if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                    val imported = ThemeCss.importPreset(File(chooser.selectedFile.absolutePath).readText())
+                    if (imported != null && presets.none { it.name.equals(imported.name, ignoreCase = true) }) {
+                        presets.add(imported)
+                        persistCustom()
+                    }
+                }
+            }) { Text("Import preset") }
+            OutlinedButton(onClick = {
+                val name = JOptionPane.showInputDialog(null, "Preset name", "Save current theme as preset", JOptionPane.PLAIN_MESSAGE)
+                if (!name.isNullOrBlank()) {
+                    val colors = ThemeCss.parse(draft).colors
+                    val newPreset = ThemeCss.ColorPreset(name.trim(), "Custom preset.", colors)
+                    if (presets.none { it.name.equals(newPreset.name, ignoreCase = true) }) {
+                        presets.add(newPreset)
+                        persistCustom()
+                    }
+                }
+            }) { Text("Save current as preset") }
         }
     }
 }
@@ -360,4 +406,24 @@ private object CssHighlight : VisualTransformation {
         }
         return TransformedText(builder, OffsetMapping.Identity)
     }
+}
+private fun customPresetsFile(): File {
+    val base = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)?.let(::File)
+        ?: File(System.getProperty("user.home"), ".local/share")
+    return File(File(base, "AniLife"), "presets.json")
+}
+
+private fun loadCustomPresets(): List<ThemeCss.ColorPreset> {
+    val file = customPresetsFile()
+    if (!file.isFile) return emptyList()
+    return runCatching {
+        Json.parseToJsonElement(file.readText()).jsonArray.mapNotNull { ThemeCss.importPreset(it.toString()) }
+    }.getOrDefault(emptyList())
+}
+
+private fun saveCustomPresets(list: List<ThemeCss.ColorPreset>) {
+    val file = customPresetsFile()
+    file.parentFile?.mkdirs()
+    val arr = buildJsonArray { list.forEach { add(Json.parseToJsonElement(ThemeCss.exportPreset(it))) } }
+    file.writeText(Json { prettyPrint = true }.encodeToString(JsonArray.serializer(), arr))
 }

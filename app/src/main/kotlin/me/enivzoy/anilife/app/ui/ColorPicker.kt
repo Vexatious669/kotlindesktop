@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -72,18 +74,21 @@ fun ColorPickerButton(
  * The palette as a row of swatches, each showing the colour it currently resolves to. Tapping one
  * opens the picker for that token.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PaletteStrip(
     colors: Map<String, Long>,
-    onPick: (String) -> Unit,
+    onPicked: (String, Color) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyRow(
+    FlowRow(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(ThemeCss.tokens) { token ->
+        ThemeCss.tokens.forEach { token ->
             val argb = colors[token.name] ?: ThemeCss.colorOf(token.default) ?: 0xFF000000L
+            val color = ThemeCss.color(argb)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -94,9 +99,17 @@ fun PaletteStrip(
                         .fillMaxWidth()
                         .height(38.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(ThemeCss.color(argb))
+                        .background(color)
                         .border(1.dp, AniLifeColors.Border, RoundedCornerShape(8.dp))
-                        .clickable { onPick(token.name) },
+                        .clickable {
+                            val picked = JColorChooser.showDialog(
+                                null,
+                                "Pick --${token.name}",
+                                color.toAwtColor(),
+                                true,
+                            )
+                            if (picked != null) onPicked(token.name, Color(picked.red, picked.green, picked.blue, picked.alpha))
+                        },
                 )
                 Text(
                     token.name,
