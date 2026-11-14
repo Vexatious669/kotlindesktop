@@ -74,6 +74,22 @@ class Updater(
         return true
     }
 
+    /**
+     * Launches the downloaded installer. Windows: MSI via msiexec, portable executable by
+     * running it directly (it self-extracts and hands off to the app). The host app should exit
+     * after the installer hands control back.
+     */
+    fun installWindows(installer: Path): Boolean {
+        val name = installer.fileName.toString()
+        val process = if (name.lowercase().endsWith(".msi")) {
+            ProcessBuilder("msiexec", "/i", installer.toString(), "/qn", "/norestart").start()
+        } else {
+            ProcessBuilder(installer.toString()).start()
+        }
+        val exited = process.waitFor(0L, java.util.concurrent.TimeUnit.MILLISECONDS)
+        return !exited
+    }
+
     private suspend fun fetchUpdate(currentVersion: String): Update? {
         val uri = URI.create(manifestUrl)
         val request = HttpRequest.newBuilder(uri)
