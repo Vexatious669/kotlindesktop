@@ -48,9 +48,9 @@ object AniListSync {
     }
 
     fun beginAuth() {
-        // Token flow: after login the pin page hands back an access token directly, so no
-        // client secret is required for the user to paste it back into the app.
-        val url = "$AUTHORIZE?client_id=${clientId()}&response_type=token&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}"
+        // Authorization code flow: after login the pin page hands back a code that is exchanged
+        // for a token at /api/v2/oauth/token using the client secret from env/.env.
+        val url = "$AUTHORIZE?client_id=${clientId()}&response_type=code&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}"
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             Desktop.getDesktop().browse(URI.create(url))
         }
