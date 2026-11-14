@@ -48,7 +48,9 @@ object AniListSync {
     }
 
     fun beginAuth() {
-        val url = "$AUTHORIZE?client_id=${clientId()}&response_type=code&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}"
+        // Token flow: after login the pin page hands back an access token directly, so no
+        // client secret is required for the user to paste it back into the app.
+        val url = "$AUTHORIZE?client_id=${clientId()}&response_type=token&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}"
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             Desktop.getDesktop().browse(URI.create(url))
         }
@@ -83,7 +85,7 @@ object AniListSync {
                 }
             }
         }
-        error("AniList sign-in failed. Paste the access token from the pin page, or set ANILIST_CLIENT_SECRET and paste the authorization code.")
+        error("AniList sign-in failed. Make sure you logged in on the AniList pin page and pasted the access token it gave you (with the access_token= prefix if present).")
     }
 
     suspend fun submitToken(token: String) = submitPasted(token)
