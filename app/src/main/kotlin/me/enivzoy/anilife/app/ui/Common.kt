@@ -334,10 +334,22 @@ private object BrandMarkImage {
     fun load(pixels: Int): ImageBitmap? {
         synchronized(cache) { cache[pixels]?.let { return it } }
         val bitmap = runCatching {
-            val stream = BrandMarkImage::class.java.getResourceAsStream("/anilife-icon.png")
+            val stream = BrandMarkImage::class.java.getResourceAsStream("/anilife-mark.svg")
+                ?: BrandMarkImage::class.java.getResourceAsStream("/anilife-icon.png")
                 ?: BrandMarkImage::class.java.getResourceAsStream("/anilife-128.png")
             val bytes = stream?.use { it.readBytes() } ?: return null
-            org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
+            val skiaImage = if (bytes.toString(Charsets.UTF_8).trimStart().startsWith("<")) {
+                val svg = org.jetbrains.skia.svg.SVGDOM(org.jetbrains.skia.Data.makeFromBytes(bytes))
+                val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(pixels, pixels)
+                val canvas = surface.canvas
+                val scale = pixels / 100f
+                canvas.scale(scale, scale)
+                svg.render(canvas)
+                surface.makeImageSnapshot()
+            } else {
+                org.jetbrains.skia.Image.makeFromEncoded(bytes)
+            }
+            skiaImage.toComposeImageBitmap()
         }.getOrNull() ?: return null
         synchronized(cache) { cache[pixels] = bitmap }
         return bitmap
