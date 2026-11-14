@@ -127,6 +127,13 @@ class Updater(
             return value ?: FALLBACK_VERSION
         }
 
+        fun updatesDirectory(): Path {
+            val base = System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }
+                ?.let { Path.of(it) }
+                ?: Path.of(System.getProperty("user.home"), ".local", "share")
+            return base.resolve("AniLife").resolve("updates")
+        }
+
         fun parseVersion(version: String): List<Int> =
             version.trim().split('.').mapNotNull { it.toIntOrNull() }.ifEmpty { listOf(0) }
 

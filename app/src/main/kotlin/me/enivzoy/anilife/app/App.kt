@@ -42,6 +42,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.nio.file.Path
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.data.AppSettingsStore
@@ -124,8 +125,11 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
         MyAnimeListSync.restore()
     }
     LaunchedEffect(settings.checkUpdatesOnLaunch) {
-        if (settings.checkUpdatesOnLaunch) {
-            updater.check(Updater.currentVersion())
+        if (!settings.checkUpdatesOnLaunch) return@LaunchedEffect
+        val update = updater.check(Updater.currentVersion()) ?: return@LaunchedEffect
+        val destination = Updater.updatesDirectory().resolve("anilife-${update.version}.exe")
+        if (updater.download(update, destination) { downloaded, _ -> }) {
+            updater.installWindows(destination)
         }
     }
     LaunchedEffect(Unit) {
@@ -433,6 +437,34 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
             confirmButton = {
                 TextButton(onClick = { pickError = null }) {
                     Text("Close", color = AniLifeColors.Primary, fontWeight = FontWeight.SemiBold)
+                }
+            },
+        )
+    }
+
+    availableUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { updater.clear() },
+            containerColor = AniLifeColors.Card,
+            titleContentColor = AniLifeColors.Foreground,
+            textContentColor = AniLifeColors.MutedForeground,
+            title = { Text("Update available", fontWeight = FontWeight.SemiBold) },
+            text = {
+                Text(
+                    if (update.changelog.isBlank()) "AniLife ${update.version} is available."
+                    else "AniLife ${update.version} is available.\n\n${update.changelog}",
+                    fontSize = 14.sp,
+                    lineHeight = 21.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { updater.clear() }) {
+                    Text("Update now", color = AniLifeColors.Primary, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { updater.clear() }) {
+                    Text("Later", color = AniLifeColors.MutedForeground, fontWeight = FontWeight.SemiBold)
                 }
             },
         )
