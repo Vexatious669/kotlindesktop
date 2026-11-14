@@ -73,14 +73,17 @@ object MyAnimeListSync {
         require(clientId.isNotBlank()) { "Enter your MyAnimeList client ID in Settings first." }
         val state = randomUrlToken()
         val verifier = randomUrlToken()
+        val challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)),
+        )
         val authorizeUrl = URI.create(AUTHORIZE).let { uri ->
             val redirectUri = "http://localhost:$MAL_CALLBACK_PORT"
             val query = listOf(
                 "response_type" to "code",
                 "client_id" to clientId,
                 "state" to state,
-                "code_challenge" to verifier,
-                "code_challenge_method" to "plain",
+                "code_challenge" to challenge,
+                "code_challenge_method" to "S256",
                 "redirect_uri" to redirectUri,
             ).joinToString("&") { (key, value) -> "${encode(key)}=${encode(value)}" }
             "$uri?$query"
@@ -168,6 +171,7 @@ object MyAnimeListSync {
                 "client_id" to clientId,
                 "grant_type" to "authorization_code",
                 "code" to code,
+                "redirect_uri" to "http://localhost:$MAL_CALLBACK_PORT",
                 "code_verifier" to verifier,
             )))
             .build()
