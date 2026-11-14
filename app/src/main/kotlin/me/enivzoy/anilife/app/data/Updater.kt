@@ -28,7 +28,12 @@ private const val DEFAULT_MANIFEST_URL =
  * installers (see the auto-updater plan in `Instructions.md`).
  */
 class Updater(
-    private val http: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build(),
+    private val http: HttpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(15))
+        // GitHub release endpoints answer 302 (latest -> tagged asset -> CDN); without this the
+        // manifest body is empty and the check silently reports "up to date".
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .build(),
     private val manifestUrl: String = DEFAULT_MANIFEST_URL,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
