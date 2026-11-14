@@ -145,17 +145,21 @@ fun MyAnimeListScreen() {
                 )
                 Button(
                     onClick = {
-                        scope.launch {
-                            loading = true
-                            error = null
-                            try {
-                                AniListSync.connect()
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (failure: Throwable) {
-                                error = failure.message ?: "AniList sign-in failed."
-                            } finally {
-                                loading = false
+                        AniListSync.beginAuth()
+                        val pasted = javax.swing.JOptionPane.showInputDialog(null, "Paste the AniList access token (PIN) from the browser page", "AniList sign-in", javax.swing.JOptionPane.PLAIN_MESSAGE)
+                        if (!pasted.isNullOrBlank()) {
+                            scope.launch {
+                                loading = true
+                                error = null
+                                try {
+                                    AniListSync.submitPasted(pasted)
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (failure: Throwable) {
+                                    error = failure.message ?: "AniList sign-in failed."
+                                } finally {
+                                    loading = false
+                                }
                             }
                         }
                     },

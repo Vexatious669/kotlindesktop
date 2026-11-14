@@ -1,24 +1,19 @@
 package me.enivzoy.anilife.app.data
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.awt.Desktop
 import java.io.File
-import java.net.InetSocketAddress
 import java.net.URI
+import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
-import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,7 +22,9 @@ data class AniListUser(val id: Long, val name: String, val avatar: String?)
 
 object AniListSync {
     private const val AUTHORIZE = "https://anilist.co/api/v2/oauth/authorize"
+    private const val TOKEN = "https://anilist.co/api/v2/oauth/token"
     private const val ENDPOINT = "https://graphql.anilist.co"
+    private const val REDIRECT = "https://anilist.co/api/v2/oauth/pin"
     private val http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()
     private val json = Json { ignoreUnknownKeys = true }
     private val tokenFile = File(dataDirectory(), "anilist-token.txt")
@@ -50,64 +47,55 @@ object AniListSync {
         return runCatching { fetchViewer(token) }.getOrNull()
     }
 
-    private fun writeToken(token: String) {
-        runCatching { tokenFile.writeText(token) }
-    }
-
-    private fun clearToken() {
-        runCatching { tokenFile.delete() }
-    }
-
-    suspend fun connect() {
-        val port = withContext(Dispatchers.IO) {
-            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-            val deferred = CompletableDeferred<String>()
-            server.createContext("/callback") { exchange ->
-                val body = """
-                    <!doctype html><html><body>
-                    <script>
-                    const hash = window.location.hash.substring(1);
-                    const params = new URLSearchParams(hash);
-                    const token = params.get('access_token');
-                    fetch('/token', {method:'POST', body: hash}).then(()=>{document.body.innerText='Connected. You can close this tab.';});
-                    </script>
-                    </body></html>
-                """.trimIndent()
-                exchange.responseHeaders.add("Content-Type", "text/html")
-                exchange.sendResponseHeaders(200, body.toByteArray().size.toLong())
-                exchange.responseBody.use { it.write(body.toByteArray()) }
-            }
-            server.createContext("/token") { exchange ->
-                val body = exchange.requestBody.readBytes().toString(Charsets.UTF_8)
-                val params = java.net.URLDecoder.decode(body, Charsets.UTF_8)
-                val token = params.split("&").firstOrNull { it.startsWith("access_token=") }?.substringAfter("=")
-                if (token != null) deferred.complete(token)
-                val resp = "ok"
-                exchange.sendResponseHeaders(200, resp.length.toLong())
-                exchange.responseBody.use { it.write(resp.toByteArray()) }
-            }
-            server.start()
-            val actualPort = server.address.port
-            val redirect = "http://127.0.0.1:$actualPort/callback"
-            val url = "$AUTHORIZE?client_id=${clientId()}&response_type=token&redirect_uri=${java.net.URLEncoder.encode(redirect, Charsets.UTF_8)}"
+    fun beginAuth() {
+        val url = "$AUTHORIZE?client_id=${clientId()}&response_type=code&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}"
+        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             Desktop.getDesktop().browse(URI.create(url))
-            val token = withTimeoutOrNull(120_000) { deferred.await() }
-            server.stop(0)
-            token
-        }
-        if (port != null) {
-            writeToken(port)
-            mutableUser.value = fetchViewer(port)
         }
     }
+
+    suspend fun submitPasted(value: String) {
+        val cleaned = value.trim().removePrefix("access_token=").trim()
+        require(cleaned.isNotBlank()) { "Paste the AniList access token or PIN." }
+        val viewer = runCatching { fetchViewer(cleaned) }.getOrNull()
+        if (viewer != null) {
+            tokenFile.writeText(cleaned)
+            mutableUser.value = viewer
+            return
+        }
+        val secret = AniListConfig.clientSecret()
+        if (secret.isNotBlank()) {
+            val body = "grant_type=authorization_code&client_id=${URLEncoder.encode(clientId(), Charsets.UTF_8)}&client_secret=${URLEncoder.encode(secret, Charsets.UTF_8)}&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}&code=${URLEncoder.encode(cleaned, Charsets.UTF_8)}"
+            val request = HttpRequest.newBuilder(URI.create(TOKEN))
+                .timeout(Duration.ofSeconds(20))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build()
+            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() in 200..299) {
+                val root = json.parseToJsonElement(response.body()).jsonObject
+                val token = root["access_token"]?.jsonPrimitive?.content
+                if (!token.isNullOrBlank()) {
+                    tokenFile.writeText(token)
+                    mutableUser.value = fetchViewer(token)
+                    return
+                }
+            }
+        }
+        error("AniList sign-in failed. Paste the access token from the pin page, or set ANILIST_CLIENT_SECRET and paste the authorization code.")
+    }
+
+    suspend fun submitToken(token: String) = submitPasted(token)
+    suspend fun submitCode(code: String) = submitPasted(code)
 
     fun disconnect() {
-        clearToken()
+        runCatching { tokenFile.delete() }
         mutableUser.value = null
     }
 
     private fun fetchViewer(token: String): AniListUser? {
-        val query = """query { Viewer { id name avatar { large } } }"""
+        val query = "query { Viewer { id name avatar { large } } }"
         val payload = """{"query":"${query.replace("\\", "\\\\").replace("\"", "\\\"")}"}"""
         val request = HttpRequest.newBuilder(URI.create(ENDPOINT))
             .timeout(Duration.ofSeconds(20))
