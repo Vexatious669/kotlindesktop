@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import me.enivzoy.anilife.app.data.AniListSync
+import me.enivzoy.anilife.app.data.AniListUser
 import me.enivzoy.anilife.app.data.MyAnimeListEntry
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.ui.AniLifeColors
@@ -45,6 +47,7 @@ import me.enivzoy.anilife.app.ui.AniLifeColors
 fun MyAnimeListScreen() {
     val user by MyAnimeListSync.user.collectAsState()
     val configured by MyAnimeListSync.configured.collectAsState()
+    val anilistUser by AniListSync.user.collectAsState()
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<MyAnimeListEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -133,18 +136,47 @@ fun MyAnimeListScreen() {
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AniLifeColors.Card).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("AniList", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-            Text(
-                "AniList list sync is not available yet. Show data already comes from AniList; account sync needs OAuth support.",
-                color = AniLifeColors.MutedForeground,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-            )
-            Text(
-                "Client ID: ${me.enivzoy.anilife.app.data.AniListConfig.clientId()}",
-                color = AniLifeColors.MutedForeground,
-                fontSize = 11.sp,
-            )
+            if (anilistUser == null) {
+                Text("Connect your AniList account", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                Text(
+                    "Client ID: ${me.enivzoy.anilife.app.data.AniListConfig.clientId()}",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 11.sp,
+                )
+                Button(
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            error = null
+                            try {
+                                AniListSync.connect()
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (failure: Throwable) {
+                                error = failure.message ?: "AniList sign-in failed."
+                            } finally {
+                                loading = false
+                            }
+                        }
+                    },
+                    enabled = !loading,
+                ) {
+                    if (loading) CircularProgressIndicator(Modifier.width(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Rounded.Person, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (loading) "Connecting…" else "Connect AniList")
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Rounded.Person, contentDescription = null, tint = AniLifeColors.Primary)
+                    Column(Modifier.weight(1f)) {
+                        Text(anilistUser?.name.orEmpty(), color = AniLifeColors.Foreground, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                        Text("Connected to AniList", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = { AniListSync.disconnect() }) { Text("Disconnect") }
+                }
+            }
+            error?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp) }
         }
         if (user != null) {
             Spacer(Modifier.height(18.dp))
