@@ -80,6 +80,11 @@ jobs:
           }
           $stream.Close()
 
+      # The SFX config format has no Icon option; the helper rewrites the stub's icon resources.
+      - name: Apply AniLife icon to portable exe
+        run: |
+          & "$PWD/scripts/Set-ExeIcon.ps1" -Path "dist/anilife-$env:VERSION#portable.exe" -Icon "app/src/main/resources/anilife.ico"
+
       - name: Write version manifest
         run: |
           $exe = "dist/anilife-$env:VERSION#base.exe"

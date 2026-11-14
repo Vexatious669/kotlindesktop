@@ -307,7 +307,7 @@ fun EmptyPanel(
 fun BrandMark(size: Dp, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val pixels = with(density) { size.roundToPx() }.coerceAtLeast(24)
-    val bitmap = remember(pixels) { BrandMarkImage.load(pixels) }
+    val bitmap = remember(pixels) { AniLifeIcon.load(pixels) }
     if (bitmap != null) {
         Image(
             bitmap = bitmap,
@@ -328,21 +328,28 @@ fun BrandMark(size: Dp, modifier: Modifier = Modifier) {
     }
 }
 
-private object BrandMarkImage {
+/**
+ * Loads the AniLife icon (vector first, raster fallbacks) rasterized to [pixels].
+ * Shared by the in-app brand mark and the native window icon.
+ */
+object AniLifeIcon {
+    private const val SVG_RESOURCE = "/anilife-icon.svg"
     private val cache = HashMap<Int, ImageBitmap>()
 
     fun load(pixels: Int): ImageBitmap? {
         synchronized(cache) { cache[pixels]?.let { return it } }
         val bitmap = runCatching {
-            val stream = BrandMarkImage::class.java.getResourceAsStream("/anilife-mark.svg")
-                ?: BrandMarkImage::class.java.getResourceAsStream("/anilife-icon.png")
-                ?: BrandMarkImage::class.java.getResourceAsStream("/anilife-128.png")
+            val stream = AniLifeIcon::class.java.getResourceAsStream(SVG_RESOURCE)
+                ?: AniLifeIcon::class.java.getResourceAsStream("/anilife-icon.png")
+                ?: AniLifeIcon::class.java.getResourceAsStream("/anilife-128.png")
             val bytes = stream?.use { it.readBytes() } ?: return null
             val skiaImage = if (bytes.toString(Charsets.UTF_8).trimStart().startsWith("<")) {
-                val svg = org.jetbrains.skia.svg.SVGDOM(org.jetbrains.skia.Data.makeFromBytes(bytes))
-                val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(pixels, pixels)
+                val svg = SVGDOM(Data.makeFromBytes(bytes))
+                val surface = Surface.makeRasterN32Premul(pixels, pixels)
                 val canvas = surface.canvas
-                val scale = pixels / 100f
+                val width = svg.root?.width?.value?.takeIf { it > 0f } ?: pixels.toFloat()
+                val height = svg.root?.height?.value?.takeIf { it > 0f } ?: width
+                val scale = minOf(pixels / width, pixels / height)
                 canvas.scale(scale, scale)
                 svg.render(canvas)
                 surface.makeImageSnapshot()

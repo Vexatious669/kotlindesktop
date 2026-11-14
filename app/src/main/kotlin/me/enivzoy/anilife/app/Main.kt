@@ -19,11 +19,9 @@ import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.data.AppSettingsStore
-import org.jetbrains.skia.Data
-import org.jetbrains.skia.Surface
-import org.jetbrains.skia.svg.SVGDOM
 import java.awt.Color
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
@@ -139,16 +137,7 @@ private fun initialWindowSize(): DpSize {
 }
 
  
-private fun loadWindowIcon(): BitmapPainter? {
-    val bytes = Thread.currentThread().contextClassLoader
-        ?.getResourceAsStream("anilife-icon.png")
-        ?.use { it.readBytes() }
-        ?: return null
-    val bitmap = runCatching {
-        org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
-    }.getOrNull() ?: return null
-    return BitmapPainter(bitmap)
-}
+private fun loadWindowIcon(): BitmapPainter? = AniLifeIcon.load(64)?.let(::BitmapPainter)
 
  
 private fun applyDarkTitleBar(window: java.awt.Window) {

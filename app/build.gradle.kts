@@ -76,6 +76,7 @@ compose.desktop {
                 shortcut = !portableBuild
                 perUserInstall = portableBuild
                 dirChooser = portableBuild
+                iconFile.set(file("src/main/resources/anilife.ico"))
                 upgradeUuid = if (portableBuild) {
                     "b2c3d4e5-f6a7-4890-8bcd-ef0123456789"
                 } else {
