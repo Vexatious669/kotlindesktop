@@ -192,14 +192,19 @@ fun ProvidersScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
-                        val chooser = JFileChooser()
-                        chooser.dialogTitle = "Choose a provider module"
-                        chooser.fileSelectionMode = JFileChooser.FILES_ONLY
-                        chooser.isAcceptAllFileFilterUsed = false
-                        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                        val parent = java.awt.Frame()
+                        parent.isVisible = false
+                        val dialog = java.awt.FileDialog(parent, "Choose a provider module", java.awt.FileDialog.LOAD)
+                        dialog.isMultipleMode = true
+                        dialog.isVisible = true
+                        val selected = dialog.files.toList()
+                        parent.dispose()
+                        if (selected.isNotEmpty()) {
                             scope.launch {
-                                runCatching { catalog.import(chooser.selectedFile.toPath()) }
-                                    .onFailure { error = it.message ?: "Couldn't import the provider." }
+                                selected.forEach { file ->
+                                    runCatching { catalog.import(file.toPath()) }
+                                        .onFailure { error = it.message ?: "Couldn't import ${file.name}." }
+                                }
                                 refresh()
                             }
                         }
