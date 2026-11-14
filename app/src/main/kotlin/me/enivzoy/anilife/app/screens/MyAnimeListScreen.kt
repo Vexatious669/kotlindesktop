@@ -69,8 +69,8 @@ fun MyAnimeListScreen() {
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 28.dp)) {
-        Text("MyAnimeList", color = AniLifeColors.Foreground, fontSize = 30.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-        Text("Sync your anime list and watched episode progress.", color = AniLifeColors.MutedForeground, fontSize = 14.sp)
+        Text("Accounts", color = AniLifeColors.Foreground, fontSize = 30.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        Text("Connect your tracking accounts to sync your list and watched progress.", color = AniLifeColors.MutedForeground, fontSize = 14.sp)
         Spacer(Modifier.height(20.dp))
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AniLifeColors.Card).padding(20.dp),
@@ -127,6 +127,24 @@ fun MyAnimeListScreen() {
                 Text("Completed episodes sync to your MAL list after playback finishes.", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
             }
             error?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp) }
+        }
+        Spacer(Modifier.height(18.dp))
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AniLifeColors.Card).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("AniList", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+            Text(
+                "AniList list sync is not available yet. Show data already comes from AniList; account sync needs OAuth support.",
+                color = AniLifeColors.MutedForeground,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            )
+            Text(
+                "Client ID: ${me.enivzoy.anilife.app.data.AniListConfig.clientId()}",
+                color = AniLifeColors.MutedForeground,
+                fontSize = 11.sp,
+            )
         }
         if (user != null) {
             Spacer(Modifier.height(18.dp))
