@@ -71,6 +71,14 @@ class Updater(
     }
 
     companion object {
+        const val FALLBACK_VERSION = "1.0.0"
+
+        fun currentVersion(): String {
+            val stream = Updater::class.java.classLoader.getResourceAsStream("version/version.properties")
+            val value = stream?.bufferedReader()?.readText()?.trim()?.substringAfter('=')?.takeIf(String::isNotBlank)
+            return value ?: FALLBACK_VERSION
+        }
+
         fun parseVersion(version: String): List<Int> =
             version.trim().split('.').mapNotNull { it.toIntOrNull() }.ifEmpty { listOf(0) }
 

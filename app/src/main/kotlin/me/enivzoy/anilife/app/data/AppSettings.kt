@@ -24,6 +24,7 @@ data class AppSettings(
     val pauseDetails: Boolean = false,
     val volume: Int = 100,
     val subtitleScale: Float = 1f,
+    val checkUpdatesOnLaunch: Boolean = true,
     val captionFont: String = "SansSerif",
     val captionFontFile: String = "",
     val buttonColor: String = "#87D66A",
@@ -77,6 +78,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             pauseDetails = properties.getProperty("pauseDetails", "false").toBooleanStrictOrNull() ?: false,
             volume = properties.getProperty("volume", "100").toIntOrNull() ?: 100,
             subtitleScale = properties.getProperty("subtitleScale", "1.0").toFloatOrNull() ?: 1f,
+            checkUpdatesOnLaunch = properties.getProperty("checkUpdatesOnLaunch", "true").toBooleanStrictOrNull() ?: true,
             captionFont = properties.getProperty("captionFont", "SansSerif"),
             captionFontFile = properties.getProperty("captionFontFile", ""),
             buttonColor = properties.getProperty("buttonColor", "#87D66A"),
@@ -118,6 +120,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("pauseDetails", settings.pauseDetails.toString())
             setProperty("volume", settings.volume.toString())
             setProperty("subtitleScale", settings.subtitleScale.toString())
+            setProperty("checkUpdatesOnLaunch", settings.checkUpdatesOnLaunch.toString())
             setProperty("captionFont", settings.captionFont)
             setProperty("captionFontFile", settings.captionFontFile)
             setProperty("buttonColor", settings.buttonColor)

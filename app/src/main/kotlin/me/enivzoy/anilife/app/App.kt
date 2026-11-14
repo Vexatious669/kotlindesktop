@@ -64,6 +64,7 @@ import me.enivzoy.anilife.app.screens.SettingsScreen
 import me.enivzoy.anilife.app.screens.MyAnimeListScreen
 import me.enivzoy.anilife.app.screens.NotificationsScreen
 import me.enivzoy.anilife.app.data.MyAnimeListSync
+import me.enivzoy.anilife.app.data.Updater
 import me.enivzoy.anilife.app.data.MpvBootstrap
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.ReleaseNotifier
@@ -92,6 +93,8 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
     val mediaProviders = remember { ProviderCatalog() }
     val discordPresence = remember { DiscordPresenceManager() }
     val releaseNotifier = remember(repository) { ReleaseNotifier(repository) }
+    val updater = remember { Updater() }
+    val availableUpdate by updater.update.collectAsState()
     val downloadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 3) }
     val settings by settingsStore.settings.collectAsState()
@@ -119,6 +122,11 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
     LaunchedEffect(Unit) {
         MyAnimeListSync.configure()
         MyAnimeListSync.restore()
+    }
+    LaunchedEffect(settings.checkUpdatesOnLaunch) {
+        if (settings.checkUpdatesOnLaunch) {
+            updater.check(Updater.currentVersion())
+        }
     }
     LaunchedEffect(Unit) {
         val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
