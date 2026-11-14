@@ -146,7 +146,7 @@ fun MyAnimeListScreen() {
                 Button(
                     onClick = {
                         AniListSync.beginAuth()
-                        val pasted = javax.swing.JOptionPane.showInputDialog(null, "Paste the AniList access token (PIN) from the browser page", "AniList sign-in", javax.swing.JOptionPane.PLAIN_MESSAGE)
+                        val pasted = javax.swing.JOptionPane.showInputDialog(null, "Paste the code (or access token) shown on the AniList pin page", "AniList sign-in", javax.swing.JOptionPane.PLAIN_MESSAGE)
                         if (!pasted.isNullOrBlank()) {
                             scope.launch {
                                 loading = true
