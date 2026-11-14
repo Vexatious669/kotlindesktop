@@ -14,6 +14,9 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.file.Files
+import java.nio.file.Path
+import java.security.MessageDigest
 import java.time.Duration
 
 private const val DEFAULT_MANIFEST_URL =
@@ -41,6 +44,34 @@ class Updater(
 
     fun clear() {
         mutableUpdate.value = null
+    }
+
+    /** Downloads the release asset and verifies its SHA-256 against the manifest. */
+    suspend fun download(update: Update, destination: Path, onProgress: (Long, Long?) -> Unit = { _, _ -> }): Boolean {
+        val uri = URI.create(update.url)
+        val request = HttpRequest.newBuilder(uri)
+            .timeout(Duration.ofSeconds(600))
+            .header("Accept", "*/*")
+            .GET()
+            .uri(uri)
+            .build()
+        val response = http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+        if (response.statusCode() >= 400) {
+            println("[Updater] asset download failed (HTTP ${response.statusCode()})")
+            return false
+        }
+        val bytes = response.body()
+        Files.createDirectories(destination.parent)
+        Files.newOutputStream(destination).use { stream -> stream.write(bytes) }
+        onProgress(bytes.size.toLong(), bytes.size.toLong())
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+        if (update.sha256.isNotBlank() && digest.lowercase() != update.sha256.lowercase()) {
+            println("[Updater] sha256 mismatch for ${update.version}")
+            return false
+        }
+        return true
     }
 
     private suspend fun fetchUpdate(currentVersion: String): Update? {
@@ -72,6 +103,7 @@ class Updater(
 
     companion object {
         const val FALLBACK_VERSION = "1.0.0"
+        const val UPDATES_DIRECTORY = "updates"
 
         fun currentVersion(): String {
             val stream = Updater::class.java.classLoader.getResourceAsStream("version/version.properties")
