@@ -487,13 +487,15 @@ private fun DownloadSettings(settings: AppSettings, onSettingsChange: ((AppSetti
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SettingsButton("Choose folder") {
-                val chooser = JFileChooser(selectedDirectory)
-                chooser.dialogTitle = "Choose the download folder"
-                chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                chooser.isAcceptAllFileFilterUsed = false
-                if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                val parent = java.awt.Frame()
+                parent.isVisible = false
+                val dialog = java.awt.FileDialog(parent, "Choose the download folder", java.awt.FileDialog.LOAD)
+                dialog.isVisible = true
+                val selected = dialog.file?.let { java.io.File(dialog.directory, it) } ?: dialog.directory?.let { java.io.File(it) }
+                parent.dispose()
+                if (selected != null) {
                     onSettingsChange {
-                        it.copy(downloadDirectory = chooser.selectedFile.toPath().toAbsolutePath().normalize().toString())
+                        it.copy(downloadDirectory = selected.toPath().toAbsolutePath().normalize().toString())
                     }
                 }
             }
@@ -579,13 +581,14 @@ private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSet
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = {
-                    val chooser = JFileChooser()
-                    chooser.dialogTitle = "Choose the app font"
-                    chooser.fileFilter = javax.swing.filechooser.FileNameExtensionFilter("Font files (*.ttf, *.otf)", "ttf", "otf")
-                    chooser.fileSelectionMode = JFileChooser.FILES_ONLY
-                    chooser.isAcceptAllFileFilterUsed = false
-                    if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-                        onSettingsChange { it.copy(appFontFile = chooser.selectedFile.absolutePath) }
+                    val parent = java.awt.Frame()
+                    parent.isVisible = false
+                    val dialog = java.awt.FileDialog(parent, "Choose the app font", java.awt.FileDialog.LOAD)
+                    dialog.isVisible = true
+                    val selected = dialog.file?.let { java.io.File(dialog.directory, it) }
+                    parent.dispose()
+                    if (selected != null) {
+                        onSettingsChange { it.copy(appFontFile = selected.absolutePath) }
                     }
                 },
             ) { Text("Choose font file") }

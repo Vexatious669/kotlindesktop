@@ -24,8 +24,11 @@ class WasmProviderFileStore(private val directory: Path = providerDirectory()) {
 
     suspend fun list(): List<ImportedWasmProvider> = withContext(Dispatchers.IO) {
         if (!Files.isDirectory(directory)) return@withContext emptyList()
+        Files.list(directory).use { cleanup ->
+            cleanup.filter { Files.isRegularFile(it) && it.fileName.toString().startsWith(".") }.forEach { Files.deleteIfExists(it) }
+        }
         Files.list(directory).use { paths ->
-            paths.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".wasm", true) }
+            paths.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".wasm", true) && !it.fileName.toString().startsWith(".") }
                 .map { path ->
                     val normalized = path.toAbsolutePath().normalize()
                     ImportedWasmProvider(
@@ -57,6 +60,9 @@ class WasmProviderFileStore(private val directory: Path = providerDirectory()) {
             }
             validateHeader(wasmSource)
             Files.createDirectories(directory)
+            Files.list(directory).use { cleanup ->
+                cleanup.filter { Files.isRegularFile(it) && it.fileName.toString().startsWith(".") }.forEach { Files.deleteIfExists(it) }
+            }
             val digest = sha256(wasmSource)
             val existing = list().firstOrNull { it.sha256 == digest }
             if (existing != null) return@withContext existing

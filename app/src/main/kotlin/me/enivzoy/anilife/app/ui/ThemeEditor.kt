@@ -215,10 +215,15 @@ fun ThemeEditor(
                         dirty = true
                     }) { Text("Apply") }
                     OutlinedButton(onClick = {
-                        val chooser = JFileChooser()
-                        chooser.selectedFile = File("${preset.name.replace(' ', '_')}.json")
-                        if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-                            runCatching { File(chooser.selectedFile.absolutePath).writeText(ThemeCss.exportPreset(preset)) }
+                        val parent = java.awt.Frame()
+                        parent.isVisible = false
+                        val dialog = java.awt.FileDialog(parent, "Export preset", java.awt.FileDialog.SAVE)
+                        dialog.file = "${preset.name.replace(' ', '_')}.json"
+                        dialog.isVisible = true
+                        val selected = dialog.file?.let { java.io.File(dialog.directory, it) }
+                        parent.dispose()
+                        if (selected != null) {
+                            runCatching { selected.writeText(ThemeCss.exportPreset(preset)) }
                         }
                     }) { Text("Export") }
                     if (preset.name.lowercase() !in shippedNames) {
@@ -232,9 +237,14 @@ fun ThemeEditor(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
-                val chooser = JFileChooser()
-                if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-                    val imported = ThemeCss.importPreset(File(chooser.selectedFile.absolutePath).readText())
+                val parent = java.awt.Frame()
+                parent.isVisible = false
+                val dialog = java.awt.FileDialog(parent, "Import preset", java.awt.FileDialog.LOAD)
+                dialog.isVisible = true
+                val selected = dialog.file?.let { java.io.File(dialog.directory, it) }
+                parent.dispose()
+                if (selected != null) {
+                    val imported = ThemeCss.importPreset(selected.readText())
                     if (imported != null && presets.none { it.name.equals(imported.name, ignoreCase = true) }) {
                         presets.add(imported)
                         persistCustom()

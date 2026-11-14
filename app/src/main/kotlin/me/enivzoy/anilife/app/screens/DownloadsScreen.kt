@@ -145,11 +145,13 @@ fun DownloadsScreen(
     val downloadJobs by queueManager.jobs.collectAsState()
 
     fun selectMediaFolder(): Path? {
-        val chooser = JFileChooser(mediaRoot?.let(::File))
-        chooser.dialogTitle = "Choose the folder containing your anime folders"
-        chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-        chooser.isAcceptAllFileFilterUsed = false
-        return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile.toPath() else null
+        val parent = java.awt.Frame()
+        parent.isVisible = false
+        val dialog = java.awt.FileDialog(parent, "Choose the folder containing your anime folders", java.awt.FileDialog.LOAD)
+        dialog.isVisible = true
+        val selected = dialog.file?.let { java.io.File(dialog.directory, it) } ?: dialog.directory?.let { java.io.File(it) }
+        parent.dispose()
+        return selected?.toPath()
     }
 
     fun beginScan(root: Path) {
@@ -205,17 +207,23 @@ fun DownloadsScreen(
     }
 
     fun selectPortableLibrary() {
-        val chooser = JFileChooser()
-        chooser.dialogTitle = "Import an AniLife portable library"
-        chooser.fileFilter = FileNameExtensionFilter("AniLife library JSON", "json")
-        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return
-        val json = chooser.selectedFile.toPath()
+        val parent = java.awt.Frame()
+        parent.isVisible = false
+        val chooser = java.awt.FileDialog(parent, "Import an AniLife portable library", java.awt.FileDialog.LOAD)
+        chooser.isVisible = true
+        val selectedFile = chooser.file?.let { java.io.File(chooser.directory, it) }
+        parent.dispose()
+        if (selectedFile == null) return
+        val json = selectedFile.toPath()
         val defaultRoot = mediaRoot?.let(Path::of) ?: json.parent
-        val folderChooser = JFileChooser(defaultRoot?.toFile())
-        folderChooser.dialogTitle = "Choose the folder containing the anime folders"
-        folderChooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-        if (folderChooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-            importPortable(json, folderChooser.selectedFile.toPath())
+        val folderParent = java.awt.Frame()
+        folderParent.isVisible = false
+        val folderChooser = java.awt.FileDialog(folderParent, "Choose the folder containing the anime folders", java.awt.FileDialog.LOAD)
+        folderChooser.isVisible = true
+        val folderSelected = folderChooser.file?.let { java.io.File(folderChooser.directory, it) } ?: folderChooser.directory?.let { java.io.File(it) }
+        folderParent.dispose()
+        if (folderSelected != null) {
+            importPortable(json, folderSelected.toPath())
         }
     }
 
