@@ -41,6 +41,7 @@ fun main() {
     )
     val previousPlacement = remember { androidx.compose.runtime.mutableStateOf(state.placement) }
     val windowedBounds = remember { androidx.compose.runtime.mutableStateOf<Rectangle?>(null) }
+    val windowedWorkArea = remember { androidx.compose.runtime.mutableStateOf<Rectangle?>(null) }
     val windowedStyle = remember { androidx.compose.runtime.mutableStateOf<Long?>(null) }
     val windowedScale = remember { androidx.compose.runtime.mutableStateOf<AffineTransform?>(null) }
     val icon = remember { loadWindowIcon() }
@@ -62,8 +63,10 @@ fun main() {
                     if (isWindows) {
                         if (fullscreen && windowedStyle.value == null) {
                             if (state.placement != WindowPlacement.Fullscreen) previousPlacement.value = state.placement
+                            val configuration = window.graphicsConfiguration
                             windowedBounds.value = Rectangle(window.bounds)
-                            windowedScale.value = window.graphicsConfiguration.defaultTransform
+                            windowedWorkArea.value = usableScreenBounds(configuration)
+                            windowedScale.value = configuration.defaultTransform
                             val hwnd = Native.getWindowPointer(window)
                             val style = WindowsWindowApi.INSTANCE.GetWindowLongPtrW(hwnd, GWL_STYLE)
                             check(style != 0L) { "Couldn't read the window style for fullscreen mode." }
@@ -91,20 +94,40 @@ fun main() {
                             check(WindowsWindowApi.INSTANCE.SetWindowLongPtrW(hwnd, GWL_STYLE, style) != 0L) {
                                 "Couldn't restore the window frame."
                             }
-                            val bounds = requireNotNull(windowedBounds.value)
-                            val scale = requireNotNull(windowedScale.value)
-                            check(
-                                WindowsWindowApi.INSTANCE.SetWindowPos(
-                                    hwnd,
-                                    null,
-                                    (bounds.x * scale.scaleX).toInt(),
-                                    (bounds.y * scale.scaleY).toInt(),
-                                    (bounds.width * scale.scaleX).toInt(),
-                                    (bounds.height * scale.scaleY).toInt(),
-                                    SWP_FRAMECHANGED or SWP_NOOWNERZORDER or SWP_NOZORDER,
-                                ) != 0,
-                            ) { "Couldn't restore the window size." }
+                            if (previousPlacement.value == WindowPlacement.Maximized) {
+                                check(
+                                    WindowsWindowApi.INSTANCE.SetWindowPos(
+                                        hwnd,
+                                        null,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        SWP_FRAMECHANGED or SWP_NOMOVE or SWP_NOSIZE or SWP_NOOWNERZORDER or SWP_NOZORDER,
+                                    ) != 0,
+                                ) { "Couldn't restore the maximized window frame." }
+                                WindowsWindowApi.INSTANCE.ShowWindow(hwnd, SW_RESTORE)
+                                WindowsWindowApi.INSTANCE.ShowWindow(hwnd, SW_MAXIMIZE)
+                            } else {
+                                val bounds = fitWindowBoundsToWorkArea(
+                                    requireNotNull(windowedBounds.value),
+                                    requireNotNull(windowedWorkArea.value),
+                                )
+                                val scale = requireNotNull(windowedScale.value)
+                                check(
+                                    WindowsWindowApi.INSTANCE.SetWindowPos(
+                                        hwnd,
+                                        null,
+                                        (bounds.x * scale.scaleX).toInt(),
+                                        (bounds.y * scale.scaleY).toInt(),
+                                        (bounds.width * scale.scaleX).toInt(),
+                                        (bounds.height * scale.scaleY).toInt(),
+                                        SWP_FRAMECHANGED or SWP_NOOWNERZORDER or SWP_NOZORDER,
+                                    ) != 0,
+                                ) { "Couldn't restore the window size." }
+                            }
                             windowedBounds.value = null
+                            windowedWorkArea.value = null
                             windowedStyle.value = null
                             windowedScale.value = null
                             state.placement = previousPlacement.value
@@ -120,6 +143,28 @@ fun main() {
         }
     }
     }
+}
+
+private fun usableScreenBounds(configuration: java.awt.GraphicsConfiguration): Rectangle {
+    val bounds = configuration.bounds
+    val insets = Toolkit.getDefaultToolkit().getScreenInsets(configuration)
+    return Rectangle(
+        bounds.x + insets.left,
+        bounds.y + insets.top,
+        bounds.width - insets.left - insets.right,
+        bounds.height - insets.top - insets.bottom,
+    )
+}
+
+internal fun fitWindowBoundsToWorkArea(bounds: Rectangle, workArea: Rectangle): Rectangle {
+    val width = bounds.width.coerceAtMost(workArea.width)
+    val height = bounds.height.coerceAtMost(workArea.height)
+    return Rectangle(
+        bounds.x.coerceIn(workArea.x, workArea.x + workArea.width - width),
+        bounds.y.coerceIn(workArea.y, workArea.y + workArea.height - height),
+        width,
+        height,
+    )
 }
 
  
@@ -161,6 +206,7 @@ private interface WindowsWindowApi : Library {
     fun GetWindowLongPtrW(hwnd: Pointer, index: Int): Long
     fun SetWindowLongPtrW(hwnd: Pointer, index: Int, value: Long): Long
     fun SetWindowPos(hwnd: Pointer, insertAfter: Pointer?, x: Int, y: Int, width: Int, height: Int, flags: Int): Int
+    fun ShowWindow(hwnd: Pointer, command: Int): Int
 
     companion object {
         val INSTANCE: WindowsWindowApi = Native.load("user32", WindowsWindowApi::class.java)
@@ -173,4 +219,8 @@ private const val WS_OVERLAPPEDWINDOW = 0x00CF0000L
 private const val SWP_NOOWNERZORDER = 0x0200
 private const val SWP_FRAMECHANGED = 0x0020
 private const val SWP_NOZORDER = 0x0004
+private const val SWP_NOMOVE = 0x0002
+private const val SWP_NOSIZE = 0x0001
+private const val SW_RESTORE = 9
+private const val SW_MAXIMIZE = 3
 
