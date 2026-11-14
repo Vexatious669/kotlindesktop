@@ -80,6 +80,25 @@ jobs:
           }
           $stream.Close()
 
+      - name: Write version manifest
+        run: |
+          $exe = "dist/anilife-$env:VERSION#base.exe"
+          $asset = [ordered]@{
+            platform = "windows"
+            url = "https://github.com/anilifecommunity/kotlindesktop/releases/download/v$env:VERSION/$($exe)"
+            sha256 = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash
+            size = [int64](Get-Item $exe).Length
+          }
+          $manifest = [ordered]@{
+            version = $env:VERSION
+            channel = "beta"
+            releasedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            minVersion = "1.0.0"
+            releaseNotes = "Auto-update manifest for AniLife."
+            assets = @($asset)
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $PWD "dist/version.json")
+
       - name: List outputs
         run: Get-ChildItem dist | ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length/1MB), $_.Name }
 
