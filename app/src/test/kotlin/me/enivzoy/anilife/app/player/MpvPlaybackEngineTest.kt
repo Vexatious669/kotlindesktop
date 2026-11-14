@@ -3,9 +3,27 @@
 import me.enivzoy.anilife.mpv.Mpv
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MpvPlaybackEngineTest {
+
+    @Test
+    fun picksThePreferredCaptionLanguageAndFallsBackToAnyTrack() {
+        val english = PlayerSubtitleTrack(1, "English", "en", false, true)
+        val japanese = PlayerSubtitleTrack(2, "Japanese", "ja", false, false)
+
+        assertEquals(english, chooseSubtitleTrack(listOf(japanese, english), "en"))
+        assertEquals(japanese, chooseSubtitleTrack(listOf(japanese, english), "ja"))
+        // 3-letter codes like "eng" should still match the two-letter preference.
+        val shortCodeEnglish = PlayerSubtitleTrack(3, "English", "eng", false, false)
+        assertEquals(3, chooseSubtitleTrack(listOf(japanese, shortCodeEnglish), "en")?.id)
+        // No preference ("none") or an unknown language falls back to the first track.
+        assertEquals(japanese, chooseSubtitleTrack(listOf(japanese, english), "none"))
+        assertEquals(japanese, chooseSubtitleTrack(listOf(japanese, english), "zz"))
+        assertNull(chooseSubtitleTrack(emptyList(), "en"))
+    }
 
     @Test
     fun reportsRealPlaybackStateAndRespondsToTransportControls() {

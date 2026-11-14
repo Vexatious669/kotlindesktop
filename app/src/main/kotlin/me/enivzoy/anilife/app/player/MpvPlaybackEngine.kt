@@ -32,6 +32,28 @@ data class PlayerSubtitleTrack(
 )
 
 /**
+ * Picks the caption track to start with. mpv only auto-selects a track when its own `slang`
+ * list matches, so a stream that only carries, say, Japanese captions would otherwise start
+ * with the captions switched off even though the viewer asked for them.
+ */
+internal fun chooseSubtitleTrack(
+    tracks: List<PlayerSubtitleTrack>,
+    language: String,
+): PlayerSubtitleTrack? {
+    if (tracks.isEmpty()) return null
+    val wanted = language.trim().lowercase().takeIf { it.isNotEmpty() && it != "none" }
+        ?: return tracks.first()
+    return tracks.firstOrNull { track -> subtitleLanguageMatches(track.language, wanted) }
+        ?: tracks.first()
+}
+
+internal fun subtitleLanguageMatches(code: String?, wanted: String): Boolean {
+    val actual = code?.trim()?.lowercase()?.substringBefore('-')?.takeIf(String::isNotBlank) ?: return false
+    val target = wanted.trim().lowercase().substringBefore('-')
+    return actual == target || actual.take(2) == target.take(2)
+}
+
+/**
  * Drives libmpv for the player screen.
  *
  * mpv decodes into a software render target (see [Mpv.SoftwareVideoSurface]); every decoded
@@ -45,6 +67,9 @@ class MpvPlaybackEngine(
     fallbackDurationSeconds: Double = 0.0,
     private val serverSubtitles: List<AnimeSubtitleSource> = emptyList(),
     private val startPositionSeconds: Double = 0.0,
+    private val subtitlesByDefault: Boolean = true,
+    private val subtitleLanguage: String = "en",
+    private val subtitleScale: Float = 1f,
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
@@ -136,6 +161,7 @@ class MpvPlaybackEngine(
                     runCatching { player?.addSubtitle(subtitle.url, subtitle.label, subtitle.language) }
                 }
                 refreshSubtitleTracks()
+                applyDefaultSubtitles()
                 // Resume where the episode was left off, a few seconds back so the viewer hears the
                 // line before the one they missed.
                 if (startPositionSeconds > 0.0) {
@@ -188,6 +214,26 @@ class MpvPlaybackEngine(
 
     fun selectSubtitleTrack(id: Int?) {
         player?.setPropertyValue("sid", id?.toString() ?: "no")
+        if (id != null) player?.setPropertyValue("sub-visibility", "yes")
+        refreshSubtitleTracks()
+    }
+
+    /**
+     * Applies the "show captions by default" and "preferred caption language" settings to the
+     * current file. Called when the file finishes loading and whenever those settings change
+     * during playback.
+     */
+    fun applyDefaultSubtitles() {
+        val mpv = player ?: return
+        if (!subtitlesByDefault) {
+            runCatching { mpv.setPropertyValue("sid", "no") }
+            refreshSubtitleTracks()
+            return
+        }
+        refreshSubtitleTracks()
+        if (subtitleTracks.any(PlayerSubtitleTrack::selected)) return
+        val track = chooseSubtitleTrack(subtitleTracks, subtitleLanguage) ?: return
+        runCatching { mpv.setPropertyValue("sid", track.id.toString()) }
         refreshSubtitleTracks()
     }
 
@@ -271,6 +317,12 @@ class MpvPlaybackEngine(
             .toMutableList()
         // The software renderer needs decoded frames in system memory.
         options += "hwdec" to "no"
+        // Captions are drawn into the rendered frame, so they follow these options too.
+        options += "sub-visibility" to "yes"
+        options += "sub-scale" to subtitleScale.coerceIn(0.5f, 2f).toString()
+        subtitleLanguage.trim().lowercase()
+            .takeIf { it.isNotEmpty() && it != "none" }
+            ?.let { options += "slang" to it }
         val fields = headers.entries
             .filter { it.key.isNotBlank() && it.value.isNotBlank() }
             .map { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }

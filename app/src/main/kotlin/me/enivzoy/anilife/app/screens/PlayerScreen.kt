@@ -143,8 +143,14 @@ fun PlayerScreen(
                 fallbackDurationSeconds = fallbackDurationSeconds,
                 serverSubtitles = selectedSource?.subtitles.orEmpty(),
                 startPositionSeconds = resumePosition,
+                subtitlesByDefault = settings.subtitlesByDefault,
+                subtitleLanguage = settings.subtitleLanguage,
+                subtitleScale = settings.subtitleScale,
             )
         }
+    }
+    LaunchedEffect(engine, settings.subtitlesByDefault, settings.subtitleLanguage) {
+        engine?.applyDefaultSubtitles()
     }
     LaunchedEffect(engine) {
         if (engine != null) {
