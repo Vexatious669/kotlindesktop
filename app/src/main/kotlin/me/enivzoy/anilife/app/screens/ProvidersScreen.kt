@@ -1,6 +1,8 @@
 ﻿package me.enivzoy.anilife.app.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,7 +36,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.DragData
+import androidx.compose.ui.draganddrop.awtTransferable
+import androidx.compose.ui.draganddrop.dragData
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +53,7 @@ import me.enivzoy.anilife.app.data.ImportedWasmProvider
 import me.enivzoy.anilife.app.data.ProviderCatalog
 import me.enivzoy.anilife.app.data.ProviderInfo
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import java.awt.datatransfer.DataFlavor
 import java.io.File
 import javax.swing.JFileChooser
 
@@ -54,6 +63,7 @@ import javax.swing.JFileChooser
  * Each provider is a WebAssembly module; the bundled ones cover the usual sites, and more can be
  * dropped in from disk.
  */
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun ProvidersScreen(
     catalog: ProviderCatalog,
@@ -80,11 +90,45 @@ fun ProvidersScreen(
         }
     }
 
+    val dropTarget = remember {
+        object : DragAndDropTarget {
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                val files = try {
+                    (event.dragData() as? DragData.FilesList)?.readFiles()?.map { java.io.File(it) }
+                } catch (e: Exception) {
+                    null
+                } ?: run {
+                    val transferable = event.awtTransferable
+                    if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                        (transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<*>)?.filterIsInstance<File>()
+                    } else {
+                        emptyList()
+                    }
+                }
+                if (files.isNullOrEmpty()) return false
+                scope.launch {
+                    val supported = files.filter { it.extension.equals("wasm", ignoreCase = true) || it.extension.equals("json", ignoreCase = true) }
+                    val rejected = files.filter { !(it.extension.equals("wasm", ignoreCase = true) || it.extension.equals("json", ignoreCase = true)) }
+                    if (rejected.isNotEmpty()) {
+                        error = "Unsupported file type: ${rejected.joinToString { it.name }}. Only .wasm or .json provider files can be imported."
+                    }
+                    supported.forEach { file ->
+                        runCatching { catalog.import(file.toPath()) }
+                            .onFailure { error = it.message ?: "Couldn't import ${file.name}." }
+                    }
+                    refresh()
+                }
+                return true
+            }
+        }
+    }
+
     LaunchedEffect(Unit) { refresh() }
 
     Column(
         Modifier
             .fillMaxSize()
+            .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 32.dp, vertical = 30.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -166,7 +210,7 @@ fun ProvidersScreen(
                         contentColor = AniLifeColors.PrimaryForeground,
                     ),
                 ) {
-                    Text("Add provider (.wasm)", fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Add provider (.wasm or .json)", fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold)
                 }
                 OutlinedButton(onClick = { refresh() }) {
                     Text("Refresh", fontSize = 14.sp, lineHeight = 18.sp)

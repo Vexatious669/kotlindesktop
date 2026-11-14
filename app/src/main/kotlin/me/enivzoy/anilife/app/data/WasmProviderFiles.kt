@@ -6,6 +6,8 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.Base64
+import kotlinx.serialization.json.*
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -40,37 +42,81 @@ class WasmProviderFileStore(private val directory: Path = providerDirectory()) {
 
     suspend fun import(source: Path): ImportedWasmProvider = withContext(Dispatchers.IO) {
         val normalizedSource = source.toAbsolutePath().normalize()
-        require(Files.isRegularFile(normalizedSource)) { "Select an existing .wasm file." }
-        require(normalizedSource.fileName.toString().endsWith(".wasm", true)) { "Only .wasm files can be imported." }
-        val size = Files.size(normalizedSource)
-        require(size in WASM_HEADER_SIZE..MAX_MODULE_BYTES) {
-            "The WebAssembly file must be between 8 bytes and 64 MiB."
-        }
-        validateHeader(normalizedSource)
-        Files.createDirectories(directory)
-        val digest = sha256(normalizedSource)
-        val existing = list().firstOrNull { it.sha256 == digest }
-        if (existing != null) return@withContext existing
-        val baseName = safeFileName(normalizedSource.fileName.toString().removeSuffix(".wasm").removeSuffix(".WASM"))
-        var index = 1
-        var destination: Path
-        do {
-            val suffix = if (index == 1) "" else " ($index)"
-            destination = directory.resolve("$baseName$suffix.wasm")
-            index++
-        } while (Files.exists(destination))
-        val temporary = directory.resolve(".${UUID.randomUUID()}.tmp")
+        require(Files.isRegularFile(normalizedSource)) { "Select an existing provider file." }
+        val isJson = normalizedSource.fileName.toString().endsWith(".json", true)
+        val decodedTemp = if (isJson) decodeProviderJson(normalizedSource) else null
+        val wasmSource = decodedTemp ?: normalizedSource
         try {
-            Files.copy(normalizedSource, temporary)
-            try {
-                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE)
-            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-                Files.move(temporary, destination)
+            require(wasmSource.fileName.toString().endsWith(".wasm", true) || decodedTemp != null) { "Only .wasm or .json provider files can be imported." }
+            if (decodedTemp == null) {
+                require(normalizedSource.fileName.toString().endsWith(".wasm", true)) { "Only .wasm or .json provider files can be imported." }
             }
+            val size = Files.size(wasmSource)
+            require(size in WASM_HEADER_SIZE..MAX_MODULE_BYTES) {
+                "The WebAssembly file must be between 8 bytes and 64 MiB."
+            }
+            validateHeader(wasmSource)
+            Files.createDirectories(directory)
+            val digest = sha256(wasmSource)
+            val existing = list().firstOrNull { it.sha256 == digest }
+            if (existing != null) return@withContext existing
+            val baseName = if (isJson) {
+                val obj = Json.parseToJsonElement(Files.readString(normalizedSource)).jsonObject
+                val name = obj["fileName"]?.jsonPrimitive?.content?.removeSuffix(".wasm")
+                    ?: obj["name"]?.jsonPrimitive?.content
+                    ?: "provider"
+                safeFileName(name)
+            } else {
+                safeFileName(wasmSource.fileName.toString().removeSuffix(".wasm").removeSuffix(".WASM"))
+            }
+            var index = 1
+            var destination: Path
+            do {
+                val suffix = if (index == 1) "" else " ($index)"
+                destination = directory.resolve("$baseName$suffix.wasm")
+                index++
+            } while (Files.exists(destination))
+            val temporary = directory.resolve(".${UUID.randomUUID()}.tmp")
+            try {
+                Files.copy(wasmSource, temporary)
+                try {
+                    Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE)
+                } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                    Files.move(temporary, destination)
+                }
+            } finally {
+                Files.deleteIfExists(temporary)
+            }
+            ImportedWasmProvider(destination.fileName.toString(), destination, size, digest)
         } finally {
-            Files.deleteIfExists(temporary)
+            decodedTemp?.let { Files.deleteIfExists(it) }
         }
-        ImportedWasmProvider(destination.fileName.toString(), destination, size, digest)
+    }
+
+    suspend fun exportToJson(provider: ImportedWasmProvider): String = withContext(Dispatchers.IO) {
+        val bytes = Files.readAllBytes(provider.path)
+        val obj = buildJsonObject {
+            put("format", "anilife-provider")
+            put("version", 1)
+            put("name", provider.name.removeSuffix(".wasm"))
+            put("fileName", provider.name)
+            put("sha256", provider.sha256)
+            put("sizeBytes", provider.sizeBytes)
+            put("data", Base64.getEncoder().encodeToString(bytes))
+        }
+        Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), obj)
+    }
+
+    private fun decodeProviderJson(source: Path): Path {
+        val text = Files.readString(source)
+        val obj = Json.parseToJsonElement(text).jsonObject
+        val data = obj["data"]?.jsonPrimitive?.content ?: error("Provider JSON is missing its data field.")
+        val bytes = runCatching { Base64.getDecoder().decode(data) }.getOrElse { error("Provider JSON data is not valid base64.") }
+        require(bytes.size in WASM_HEADER_SIZE..MAX_MODULE_BYTES) { "The decoded WebAssembly file must be between 8 bytes and 64 MiB." }
+        val temp = directory.also { Files.createDirectories(it) }.resolve(".${UUID.randomUUID()}.jsonimport.wasm")
+        Files.write(temp, bytes)
+        validateHeader(temp)
+        return temp
     }
 
     suspend fun remove(module: ImportedWasmProvider) = withContext(Dispatchers.IO) {
