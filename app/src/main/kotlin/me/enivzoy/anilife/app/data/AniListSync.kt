@@ -51,6 +51,7 @@ object AniListSync {
         // Authorization code flow: after login the pin page hands back a code that is exchanged
         // for a token at /api/v2/oauth/token using the client secret from env/.env.
         val url = "$AUTHORIZE?client_id=${clientId()}&response_type=code&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}"
+        println("[AniList] beginAuth: opening $url")
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             Desktop.getDesktop().browse(URI.create(url))
         }
@@ -59,33 +60,41 @@ object AniListSync {
     suspend fun submitPasted(value: String) {
         val cleaned = value.trim().removePrefix("access_token=").trim()
         require(cleaned.isNotBlank()) { "Paste the AniList access token or PIN." }
-        val viewer = runCatching { fetchViewer(cleaned) }.getOrNull()
+        println("[AniList] submitPasted: received value len=${cleaned.length}, prefix=${cleaned.take(13)}")
+        val viewer = runCatching { fetchViewer(cleaned) }
+            .onFailure { println("[AniList] bearer token check failed: ${it.message}") }
+            .getOrNull()
         if (viewer != null) {
+            println("[AniList] bearer token accepted for viewer=${viewer.id} name=${viewer.name}")
             tokenFile.writeText(cleaned)
             mutableUser.value = viewer
             return
         }
+        println("[AniList] bearer token rejected; attempting authorization code exchange")
         val secret = AniListConfig.clientSecret()
-        if (secret.isNotBlank()) {
-            val body = "grant_type=authorization_code&client_id=${URLEncoder.encode(clientId(), Charsets.UTF_8)}&client_secret=${URLEncoder.encode(secret, Charsets.UTF_8)}&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}&code=${URLEncoder.encode(cleaned, Charsets.UTF_8)}"
-            val request = HttpRequest.newBuilder(URI.create(TOKEN))
-                .timeout(Duration.ofSeconds(20))
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build()
-            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
-            if (response.statusCode() in 200..299) {
-                val root = json.parseToJsonElement(response.body()).jsonObject
-                val token = root["access_token"]?.jsonPrimitive?.content
-                if (!token.isNullOrBlank()) {
-                    tokenFile.writeText(token)
-                    mutableUser.value = fetchViewer(token)
-                    return
-                }
+        if (secret.isBlank()) {
+            println("[AniList] no client secret configured (set ANILIST_CLIENT_SECRET in .env); cannot exchange code")
+            error("AniList sign-in failed. Make sure you logged in on the AniList pin page and pasted the access token it gave you (with the access_token= prefix if present).")
+        }
+        val body = "grant_type=authorization_code&client_id=${URLEncoder.encode(clientId(), Charsets.UTF_8)}&client_secret=${URLEncoder.encode(secret, Charsets.UTF_8)}&redirect_uri=${URLEncoder.encode(REDIRECT, Charsets.UTF_8)}&code=${URLEncoder.encode(cleaned, Charsets.UTF_8)}"
+        val request = HttpRequest.newBuilder(URI.create(TOKEN))
+            .timeout(Duration.ofSeconds(20))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build()
+        val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+        println("[AniList] code exchange status=${response.statusCode()} body=${response.body().take(400)}")
+        if (response.statusCode() in 200..299) {
+            val root = json.parseToJsonElement(response.body()).jsonObject
+            val token = root["access_token"]?.jsonPrimitive?.content
+            if (!token.isNullOrBlank()) {
+                tokenFile.writeText(token)
+                mutableUser.value = fetchViewer(token)
+                return
             }
         }
-        error("AniList sign-in failed. Make sure you logged in on the AniList pin page and pasted the access token it gave you (with the access_token= prefix if present).")
+        error("AniList sign-in failed. The authorization code exchange did not return a token (status ${response.statusCode()}, body ${response.body().take(200)}).")
     }
 
     suspend fun submitToken(token: String) = submitPasted(token)
@@ -108,6 +117,7 @@ object AniListSync {
             .build()
         val response = http.send(request, HttpResponse.BodyHandlers.ofString())
         val root = json.parseToJsonElement(response.body()).jsonObject
+        println("[AniList] viewer check status=${response.statusCode()} body=${response.body().take(300)}")
         val viewer = root["data"]?.jsonObject?.get("Viewer")?.jsonObject ?: return null
         val id = viewer["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return null
         val name = viewer["name"]?.jsonPrimitive?.content ?: "AniList user"
