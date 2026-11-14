@@ -90,7 +90,7 @@ jobs:
           $exe = "dist/anilife-$env:VERSION#base.exe"
           $asset = [ordered]@{
             platform = "windows"
-            url = "https://github.com/anilifecommunity/kotlindesktop/releases/download/v$env:VERSION/$($exe)"
+            url = "https://github.com/anilifecommunity/kotlindesktop/releases/download/v$env:VERSION/anilife-$env:VERSION.base.exe"
             sha256 = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash
             size = [int64](Get-Item $exe).Length
           }

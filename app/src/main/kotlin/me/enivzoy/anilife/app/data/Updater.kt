@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -36,13 +37,14 @@ class Updater(
         .build(),
     private val manifestUrl: String = DEFAULT_MANIFEST_URL,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
     private val mutableUpdate = MutableStateFlow<Update?>(null)
     val update: StateFlow<Update?> = mutableUpdate.asStateFlow()
 
     /** Returns the newer [Update] for [currentVersion], or null when the app is up to date. */
     suspend fun check(currentVersion: String): Update? {
-        val update = runCatching { fetchUpdate(currentVersion) }.getOrNull() ?: return null
+        val update = runCatching { fetchUpdate(currentVersion) }
+            .onFailure { System.err.println("[Updater] update check failed: ${it.message}") }
+            .getOrNull() ?: return null
         mutableUpdate.value = update
         return update
     }
@@ -53,7 +55,10 @@ class Updater(
 
     /** Downloads the release asset and verifies its SHA-256 against the manifest. */
     suspend fun download(update: Update, destination: Path, onProgress: (Long, Long?) -> Unit = { _, _ -> }): Boolean {
-        val uri = URI.create(update.url)
+        val uri = httpUri(update.url) ?: run {
+            System.err.println("[Updater] invalid download URL for version ${update.version}")
+            return false
+        }
         val request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(600))
             .header("Accept", "*/*")
@@ -109,17 +114,7 @@ class Updater(
             println("[Updater] update manifest fetch failed (HTTP ${response.statusCode()})")
             return null
         }
-        val root = json.parseToJsonElement(response.body()) as? JsonObject ?: return null
-        val version = root.string("version") ?: return null
-        if (!isNewer(version, currentVersion)) return null
-        return Update(
-            version = version,
-            changelog = root.string("releaseNotes") ?: root.string("changelog") ?: "",
-            url = root.string("url") ?: root.string("assetUrl") ?: "",
-            sizeBytes = root.long("sizeBytes")?.toLong() ?: root.long("size")?.toLong() ?: 0L,
-            sha256 = root.string("sha256") ?: root.string("checksum") ?: "",
-            publishedAt = root.long("releasedAt")?.toLong() ?: 0L,
-        )
+        return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
     }
 
     companion object {
@@ -154,6 +149,57 @@ class Updater(
             return false
         }
     }
+}
+
+internal fun parseUpdateManifest(body: String, currentVersion: String, platform: String): Update? {
+    val json = Json { ignoreUnknownKeys = true }
+    val root = json.parseToJsonElement(body) as? JsonObject ?: return null
+    val version = root.string("version") ?: return null
+    if (!Updater.isNewer(version, currentVersion)) return null
+    val asset = (root["assets"] as? JsonArray)
+        ?.mapNotNull { it as? JsonObject }
+        ?.firstOrNull { it.string("platform").equals(platform, ignoreCase = true) }
+    val url = sequenceOf(root.string("url"), root.string("assetUrl"), asset?.string("url"))
+        .filterNotNull()
+        .firstOrNull(String::isNotBlank)
+        ?: return null
+    val downloadUrl = normalizeAssetUrl(url) ?: return null
+    return Update(
+        version = version,
+        changelog = root.string("releaseNotes") ?: root.string("changelog") ?: "",
+        url = downloadUrl,
+        sizeBytes = root.long("sizeBytes") ?: root.long("size") ?: asset?.long("size") ?: 0L,
+        sha256 = root.string("sha256") ?: root.string("checksum") ?: asset?.string("sha256") ?: "",
+        publishedAt = root.long("releasedAt") ?: 0L,
+    )
+}
+
+private fun currentPlatform(): String = when {
+    System.getProperty("os.name").orEmpty().contains("windows", ignoreCase = true) -> "windows"
+    System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true) -> "macos"
+    else -> "linux"
+}
+
+private fun httpUri(url: String): URI? = runCatching { URI.create(url) }
+    .getOrNull()
+    ?.takeIf { uri ->
+        uri.isAbsolute &&
+            (uri.scheme.equals("http", ignoreCase = true) || uri.scheme.equals("https", ignoreCase = true)) &&
+            !uri.host.isNullOrBlank()
+    }
+
+private fun normalizeAssetUrl(url: String): String? {
+    val uri = httpUri(url) ?: return null
+    if (!uri.host.equals("github.com", ignoreCase = true) ||
+        !uri.path.contains("/releases/download/") ||
+        !uri.path.contains("/dist/") ||
+        uri.rawFragment.isNullOrBlank()
+    ) {
+        return uri.toASCIIString()
+    }
+
+    val path = "${uri.path.substringBeforeLast("/dist/")}/${uri.path.substringAfterLast('/')}.${uri.rawFragment}"
+    return runCatching { URI(uri.scheme, uri.authority, path, uri.query, null).toASCIIString() }.getOrNull()
 }
 
 private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
