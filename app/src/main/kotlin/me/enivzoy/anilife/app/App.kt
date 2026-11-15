@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import java.nio.file.Path
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
+import me.enivzoy.anilife.app.data.DiscordOAuth
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
 import me.enivzoy.anilife.app.data.DiscordPresenceManager
@@ -187,6 +188,7 @@ fun AniLifeApp(
         AniListSync.restore()
         MyAnimeListSync.configure()
         MyAnimeListSync.restore()
+        DiscordOAuth.restore()
     }
     LaunchedEffect(settings.checkUpdatesOnLaunch) {
         if (settings.checkUpdatesOnLaunch) {

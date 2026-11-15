@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Search
@@ -44,21 +45,27 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
@@ -75,6 +82,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -82,6 +90,9 @@ import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DirectMediaDownloader
+import me.enivzoy.anilife.app.data.DiscordOAuth
+import me.enivzoy.anilife.app.data.DiscordOAuthState
+import me.enivzoy.anilife.app.data.DiscordOAuthStatus
 import me.enivzoy.anilife.app.data.DiscordPresenceState
 import me.enivzoy.anilife.app.data.DiscordPresenceStatus
 import me.enivzoy.anilife.app.data.ANILIFE_ICON_URL
@@ -985,6 +996,65 @@ private fun ServerSettings() {
 }
 
 @Composable
+private fun DiscordOAuthSection() {
+    val state by DiscordOAuth.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    var error by remember { mutableStateOf<String?>(null) }
+    val connecting = state.status == DiscordOAuthStatus.CONNECTING
+
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .background(AniLifeColors.Card).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Rounded.Link, contentDescription = null, tint = AniLifeColors.Primary)
+            Column(Modifier.weight(1f)) {
+                Text("Discord account", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    state.user?.displayName?.let { "Connected as $it" } ?: "Sign in with Discord (OAuth2) to link your account.",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 12.sp,
+                )
+            }
+            if (state.user != null) {
+                TextButton(onClick = { DiscordOAuth.disconnect() }) { Text("Disconnect") }
+            }
+        }
+        if (state.user != null) {
+            state.user?.avatarUrl?.let { url ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Avatar:", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+                    Text(url, color = AniLifeColors.MutedForeground, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                }
+            }
+            Text("User ID: ${state.user?.id}", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+        } else {
+            Button(
+                onClick = {
+                    scope.launch {
+                        error = null
+                        try {
+                            DiscordOAuth.signIn()
+                        } catch (e: Throwable) {
+                            error = e.message ?: "Discord sign-in failed."
+                        }
+                    }
+                },
+                enabled = !connecting,
+            ) {
+                if (connecting) CircularProgressIndicator(Modifier.width(16.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Rounded.Link, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Sign in with Discord")
+            }
+        }
+        state.message?.let { Text(it, color = AniLifeColors.MutedForeground, fontSize = 12.sp) }
+        error?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp) }
+    }
+}
+
+@Composable
 private fun AccountSettings(
     settings: AppSettings,
     discordState: DiscordPresenceState,
@@ -992,6 +1062,7 @@ private fun AccountSettings(
     onDiscordConnect: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
+    val oauthState by DiscordOAuth.state.collectAsState()
     SettingsRow(
         "Discord Rich Presence",
         "Show \"Watching AniLife\" with an elapsed timer, or the anime open in the player, on your Discord profile.",
@@ -1007,9 +1078,9 @@ private fun AccountSettings(
         modifier = Modifier.padding(top = 6.dp, bottom = 10.dp),
     )
     DiscordProfilePreview(
-        displayName = discordState.accountName ?: "FleurdelysLover",
-        username = discordState.username ?: "witherbl_de",
-        avatarUrl = discordState.avatarUrl,
+        displayName = oauthState.user?.displayName ?: discordState.accountName ?: "FleurdelysLover",
+        username = oauthState.user?.username ?: discordState.username ?: "witherbl_de",
+        avatarUrl = oauthState.user?.avatarUrl ?: discordState.avatarUrl,
         activityDetails = "On S01E11",
         activityArtworkUrl = ANILIFE_ICON_URL,
     )
@@ -1026,6 +1097,7 @@ private fun AccountSettings(
             try { uriHandler.openUri("https://github.com/anilifecommunity/kotlindesktop") } catch (_: Exception) {}
         }
     }
+    DiscordOAuthSection()
     SettingsNote("MyAnimeList sync is available from Profile after signing in.")
 }
 
