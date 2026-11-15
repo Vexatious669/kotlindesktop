@@ -1569,40 +1569,91 @@ private fun DiscordPresencePreview(enabled: Boolean) {
     val timer = "%d:%02d elapsed".format(minutes, seconds)
     val alpha = if (enabled) 1f else 0.45f
 
-    Column(
-        Modifier.fillMaxWidth().padding(bottom = 14.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF111214))
-            .border(1.dp, Color(0xFF1E1F22), RoundedCornerShape(10.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "WATCHING ANILIFE",
-            color = Color(0xFFB5BAC1).copy(alpha = alpha),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.6.sp,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A261A)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("A", color = AniLifeColors.Primary.copy(alpha = alpha), fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("AniLife", color = Color.White.copy(alpha = alpha), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Text("AniLife", color = Color(0xFFDBDEE1).copy(alpha = alpha), fontSize = 12.sp)
-                Text("i love anilife", color = Color(0xFFB5BAC1).copy(alpha = alpha), fontSize = 12.sp)
-                Text(timer, color = Color(0xFFB5BAC1).copy(alpha = alpha), fontSize = 12.sp)
-            }
-        }
-        Text(
-            "Example player preview · timer is a dummy value for configuration",
+            "Example of how it looks on your Discord profile",
             color = AniLifeColors.MutedForeground.copy(alpha = alpha),
             fontSize = 11.sp,
         )
+
+        // Discord profile-style mockup
+        Column(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF232428))
+                .border(1.dp, Color(0xFF1E1F22), RoundedCornerShape(8.dp)),
+        ) {
+            // Banner
+            Box(
+                Modifier.fillMaxWidth().height(56.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color(0xFF1A261A), Color(0xFF2B3A2B), AniLifeColors.Primary.copy(alpha = 0.35f))
+                        )
+                    )
+            )
+            // Avatar overlapping banner + profile info
+            Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                Box(
+                    Modifier.padding(top = 0.dp).offset(y = (-26).dp)
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF232428))
+                        .padding(4.dp),
+                ) {
+                    Box(
+                        Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFF313338)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("U", color = Color.White.copy(alpha = alpha), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    }
+                    // Online status dot
+                    Box(
+                        Modifier.align(Alignment.BottomEnd).size(14.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF232428))
+                            .padding(2.dp),
+                    ) {
+                        Box(Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFF23A55A)))
+                    }
+                }
+            }
+            Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Spacer(Modifier.height(0.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("yourname", color = Color.White.copy(alpha = alpha), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("i love anilife", color = Color(0xFFDBDEE1).copy(alpha = alpha), fontSize = 12.sp)
+                }
+                // Activity / presence card inside profile
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF111214))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "Watching AniLife",
+                        color = Color(0xFFB5BAC1).copy(alpha = alpha),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A261A)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("A", color = AniLifeColors.Primary.copy(alpha = alpha), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("AniLife", color = Color.White.copy(alpha = alpha), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("AniLife", color = Color(0xFFDBDEE1).copy(alpha = alpha), fontSize = 12.sp)
+                            Text(timer, color = Color(0xFF23A55A).copy(alpha = alpha), fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
