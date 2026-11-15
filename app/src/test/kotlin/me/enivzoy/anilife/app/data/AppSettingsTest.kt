@@ -65,6 +65,7 @@ class AppSettingsTest {
                     volume = 140,
                     contentScale = "invalid",
                     subtitleScale = 4f,
+                    aniListSubmitPercent = 250,
                     captionFont = "  Custom Anime Font  ",
                     captionFontFile = root.resolve("custom.otf").toString(),
                     captionTextColor = "#AABBCC",
@@ -93,6 +94,7 @@ class AppSettingsTest {
             assertEquals(100, persisted.volume)
             assertEquals("fit", persisted.contentScale)
             assertEquals(2f, persisted.subtitleScale)
+            assertEquals(100, persisted.aniListSubmitPercent)
             assertEquals("Custom Anime Font", persisted.captionFont)
             assertEquals(root.resolve("custom.otf").toString(), persisted.captionFontFile)
             assertEquals("#AABBCC", persisted.captionTextColor)

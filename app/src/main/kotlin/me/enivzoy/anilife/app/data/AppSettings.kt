@@ -73,6 +73,7 @@ data class AppSettings(
     val pauseDetails: Boolean = false,
     val volume: Int = 100,
     val subtitleScale: Float = 1f,
+    val aniListSubmitPercent: Int = 80,
     val checkUpdatesOnLaunch: Boolean = true,
     val captionFont: String = "sans-serif",
     val captionFontFile: String = "",
@@ -142,6 +143,8 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             subtitleLanguage = properties.getProperty("subtitleLanguage", "en"),
             subtitlesByDefault = properties.getProperty("subtitlesByDefault", "true").toBooleanStrictOrNull() ?: true,
             autoplayNextEpisode = properties.getProperty("autoplayNextEpisode", "true").toBooleanStrictOrNull() ?: true,
+            aniListSubmitPercent = properties.getProperty("aniListSubmitPercent", "80")
+                .toIntOrNull()?.coerceIn(1, 100) ?: 80,
             resumePlayback = properties.getProperty("resumePlayback", "true").toBooleanStrictOrNull() ?: true,
             hardwareDecoding = properties.getProperty("hardwareDecoding", "true").toBooleanStrictOrNull() ?: true,
             playbackBufferSize = properties.getProperty("playbackBufferSize", "auto"),
@@ -195,6 +198,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("subtitleLanguage", settings.subtitleLanguage)
             setProperty("subtitlesByDefault", settings.subtitlesByDefault.toString())
             setProperty("autoplayNextEpisode", settings.autoplayNextEpisode.toString())
+            setProperty("aniListSubmitPercent", settings.aniListSubmitPercent.toString())
             setProperty("resumePlayback", settings.resumePlayback.toString())
             setProperty("hardwareDecoding", settings.hardwareDecoding.toString())
             setProperty("playbackBufferSize", settings.playbackBufferSize)

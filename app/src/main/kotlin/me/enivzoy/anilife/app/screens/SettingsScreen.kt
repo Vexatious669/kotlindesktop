@@ -399,6 +399,18 @@ private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSetting
     ) {
         SettingsSwitch(settings.autoplayNextEpisode) { enabled -> onSettingsChange { it.copy(autoplayNextEpisode = enabled) } }
     }
+    SettingsRow(
+        "Submit AniList progress",
+        "Send an episode to AniList as watched once this share of it has been watched.",
+    ) {
+        SettingsStepper(
+            value = settings.aniListSubmitPercent,
+            valueLabel = "${settings.aniListSubmitPercent}%",
+            range = 10..100,
+            step = 5,
+            onChange = { value -> onSettingsChange { it.copy(aniListSubmitPercent = value) } },
+        )
+    }
     SettingsSection("Skipping") {
         SettingsRow(
             "Skip button",

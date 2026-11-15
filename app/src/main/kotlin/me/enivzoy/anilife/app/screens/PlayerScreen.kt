@@ -319,10 +319,28 @@ fun PlayerScreen(
             runCatching { MyAnimeListSync.syncCompletedEpisode(malId, watched) }
         }
     }
+    // AniList progress is submitted once the configured share of the episode has been watched
+    // (settings.aniListSubmitPercent, default 80%); a finished episode always submits as well.
+    var aniListSubmitted by remember(animeCard?.id, episode) { mutableStateOf(false) }
+    LaunchedEffect(engine, settings.aniListSubmitPercent, animeCard?.id, episode) {
+        val player = engine ?: return@LaunchedEffect
+        val anime = animeCard ?: return@LaunchedEffect
+        val watched = episode ?: return@LaunchedEffect
+        if (settings.aniListSubmitPercent >= 100) return@LaunchedEffect
+        while (!aniListSubmitted) {
+            kotlinx.coroutines.delay(1000)
+            val duration = player.durationSeconds
+            if (duration > 0.0 && player.positionSeconds / duration * 100.0 >= settings.aniListSubmitPercent) {
+                aniListSubmitted = true
+                AniListSync.syncCompletedEpisode(anime, watched)
+            }
+        }
+    }
     LaunchedEffect(engine, engine?.hasEnded, animeCard?.id, episode) {
-        if (engine?.hasEnded == true) {
+        if (engine?.hasEnded == true && !aniListSubmitted) {
             val anime = animeCard ?: return@LaunchedEffect
             val watched = episode ?: return@LaunchedEffect
+            aniListSubmitted = true
             AniListSync.syncCompletedEpisode(anime, watched)
         }
     }
