@@ -13,7 +13,11 @@ sealed interface Screen {
     data object Profile : Screen
     data object Settings : Screen
     data class Detail(val id: Long) : Screen
-    data class Watch(val detail: me.enivzoy.anilife.core.model.AnimeDetail, val initialEpisode: Double? = null) : Screen
+    data class Watch(
+        val detail: me.enivzoy.anilife.core.model.AnimeDetail,
+        val initialEpisode: Double? = null,
+        val navId: Long = System.nanoTime(),
+    ) : Screen
     data class Player(
         val title: String,
         val url: String? = null,

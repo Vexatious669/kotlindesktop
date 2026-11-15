@@ -59,6 +59,8 @@ fun AnimeWatchScreen(
     repository: AniListRepository,
     providers: AnimeVideoProviders,
     initialEpisode: Double? = null,
+    initialAutoPlayConsumed: Boolean = false,
+    onInitialAutoPlay: () -> Unit = {},
     onBack: () -> Unit,
     onPlay: (String, String, Map<String, String>, List<AnimeVideoSource>, Double, String?, List<Double>, Map<Double, String>, Map<Double, String>) -> Unit,
 ) {
@@ -121,19 +123,28 @@ fun AnimeWatchScreen(
                 error = "No ${if (dub) "dub" else "sub"} streams were returned. Try another episode or audio track."
             } else {
                 error = null
-                val best = resolved.first()
-                val ep = episodeNumber(activeEpisode)
-                onPlay(
-                    "$title · Episode $ep · ${best.provider} ${best.quality ?: best.format.uppercase()}",
-                    best.url,
-                    best.headers,
-                    resolved,
-                    activeEpisode,
-                    episodes.firstOrNull { it.number == activeEpisode }?.title?.takeIf(String::isNotBlank),
-                    episodes.map(AnimeEpisode::number),
-                    episodes.mapNotNull { ep -> ep.title?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
-                    episodes.mapNotNull { ep -> ep.thumbnail?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
-                )
+                // The initial episode (opened from the detail page) auto-plays once; if the user
+                // returns from the player we keep the resolved servers visible instead of looping
+                // back into playback.
+                val isInitialAutoPlay = resolveAttempt == 0 && initialEpisode != null && activeEpisode == initialEpisode
+                if (isInitialAutoPlay && initialAutoPlayConsumed) {
+                    // Sources are populated above; let the user pick a server manually.
+                } else {
+                    if (isInitialAutoPlay) onInitialAutoPlay()
+                    val best = resolved.first()
+                    val ep = episodeNumber(activeEpisode)
+                    onPlay(
+                        "$title · Episode $ep · ${best.provider} ${best.quality ?: best.format.uppercase()}",
+                        best.url,
+                        best.headers,
+                        resolved,
+                        activeEpisode,
+                        episodes.firstOrNull { it.number == activeEpisode }?.title?.takeIf(String::isNotBlank),
+                        episodes.map(AnimeEpisode::number),
+                        episodes.mapNotNull { ep -> ep.title?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
+                        episodes.mapNotNull { ep -> ep.thumbnail?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
+                    )
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

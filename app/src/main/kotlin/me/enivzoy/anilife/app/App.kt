@@ -110,6 +110,7 @@ fun AniLifeApp(
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var homeLoaded by remember { mutableStateOf(false) }
     var playerFullscreen by remember { mutableStateOf(false) }
+    val consumedWatchAutoPlays = remember { mutableStateListOf<Long>() }
     val scope = rememberCoroutineScope()
     var updateCheckStatus by remember { mutableStateOf<String?>(null) }
     var checkingForUpdates by remember { mutableStateOf(false) }
@@ -398,6 +399,8 @@ fun AniLifeApp(
                         repository = repository,
                         providers = animeVideoProviders,
                         initialEpisode = target.initialEpisode,
+                        initialAutoPlayConsumed = target.navId in consumedWatchAutoPlays,
+                        onInitialAutoPlay = { if (target.navId !in consumedWatchAutoPlays) consumedWatchAutoPlays += target.navId },
                         onBack = ::goBack,
                         onPlay = { title, url, headers, alternatives, episode, episodeTitle, episodes, episodeTitles, episodeThumbnails ->
                             navigateTo(
