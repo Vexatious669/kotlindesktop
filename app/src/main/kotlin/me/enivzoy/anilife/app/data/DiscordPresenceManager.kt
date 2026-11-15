@@ -22,6 +22,7 @@ data class DiscordPresenceTarget(
     val season: String?,
     val year: Int?,
     val episode: Double?,
+    val seasonNumber: Int? = null,
     val cover: String? = null,
 )
 
@@ -56,7 +57,16 @@ internal fun buildDiscordPresenceActivity(
     target: DiscordPresenceTarget?,
     startedAt: Instant,
 ): Activity {
-    val details = target?.let(::watchingDetails) ?: "Idling"
+    val details = target?.title?.trim()?.ifBlank { "Anime" } ?: "Idling"
+    val state = target?.let { t ->
+        val episode = t.episode
+        if (episode != null && episode > 0) {
+            val season = (t.seasonNumber ?: 1).coerceAtLeast(1)
+            "On S%02dE%02d".format(season, episode.toInt())
+        } else {
+            "App developed by witherbl_de"
+        }
+    } ?: "App developed by witherbl_de"
 
     return Activity.builder()
         .name("AniLife")
@@ -64,7 +74,7 @@ internal fun buildDiscordPresenceActivity(
         // The member list says "Watching AniLife" or "Watching <series>" instead of the app name.
         .statusDisplay(StatusDisplayType.DETAILS)
         .details(details.discordText())
-        .state("App developed by witherbl_de")
+        .state(state.discordText())
         .apply {
             // Always show an elapsed timer: real watch time when playing, a dummy timer while
             // idling so the presence can be configured/previewed.
@@ -77,6 +87,7 @@ internal fun buildDiscordPresenceActivity(
                 largeImage(ANILIFE_ICON_URL, "AniLife")
             }
         }
+        .button("Visit AniLife", "https://anilife.cc")
         .build()
 }
 

@@ -51,6 +51,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -91,11 +92,12 @@ fun DiscordProfilePreview(
     statusThought: String = "it means nothing even if your the most beautiful...",
     subtitle: String = "enivzoy | king orchestra | l's cumbucket",
     bio: String = "my rods pretty long",
-    activityDetails: String = "App developed by witherbl_de",
+    activityDetails: String = "On S01E11",
     activityArtworkUrl: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
+    val uriHandler = LocalUriHandler.current
     var copied by remember { mutableStateOf(false) }
     var elapsedSeconds by remember { mutableIntStateOf(325) } // 5:25
     var isPaused by remember { mutableStateOf(false) }
@@ -263,7 +265,7 @@ fun DiscordProfilePreview(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Idling",
+                            text = "Watching AniLife",
                             color = DiscordCardTokens.TextSecondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
@@ -385,6 +387,27 @@ fun DiscordProfilePreview(
                             }
                         }
                     }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Discord RPC button (opens AniLife in the browser)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(DiscordCardTokens.ActivityBg)
+                        .border(1.dp, DiscordCardTokens.ActivityBorder, RoundedCornerShape(8.dp))
+                        .clickable { uriHandler.openUri("https://anilife.cc") }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Visit AniLife",
+                        color = DiscordCardTokens.TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }

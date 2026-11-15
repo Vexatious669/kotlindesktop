@@ -18,7 +18,7 @@ class AppSettingsTest {
             startedAt,
         )
         val series = buildDiscordPresenceActivity(
-            DiscordPresenceTarget("series", "My Series", false, "FALL", 2026, 8.0, cover),
+            DiscordPresenceTarget("series", "My Series", false, "FALL", 2026, 8.0, null, cover),
             startedAt,
         )
         val missingSeason = buildDiscordPresenceActivity(
@@ -32,8 +32,10 @@ class AppSettingsTest {
         assertEquals("App developed by witherbl_de", idle.state())
         assertEquals(StatusDisplayType.DETAILS, idle.statusDisplayType())
         assertEquals("My Movie", movie.details())
-        assertEquals("My Series - Fall 2026 Episode 8", series.details())
-        assertEquals("My Series - Episode 8", missingSeason.details())
+        assertEquals("My Series", series.details())
+        assertEquals("My Series", missingSeason.details())
+        assertEquals("On S01E08", series.state())
+        assertEquals("On S01E08", missingSeason.state())
         assertEquals(cover, series.assets().largeImage())
         assertEquals("My Series", series.assets().largeText())
         assertEquals(startedAt, series.timestamps()?.start())
