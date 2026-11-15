@@ -1009,7 +1009,7 @@ private fun AccountSettings(
         displayName = discordState.accountName ?: "FleurdelysLover",
         username = discordState.username ?: "witherbl_de",
         avatarUrl = discordState.avatarUrl,
-        activityDetails = "i love anilife",
+        activityDetails = "App developed by witherbl_de",
         activityArtworkUrl = ANILIFE_ICON_URL,
     )
     Spacer(Modifier.height(12.dp))

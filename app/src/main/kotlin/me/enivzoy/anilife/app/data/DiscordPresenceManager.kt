@@ -56,7 +56,7 @@ internal fun buildDiscordPresenceActivity(
     target: DiscordPresenceTarget?,
     startedAt: Instant,
 ): Activity {
-    val details = target?.let(::watchingDetails) ?: "App developed by witherbl_de"
+    val details = target?.let(::watchingDetails) ?: "Idling"
 
     return Activity.builder()
         .name("AniLife")
@@ -64,7 +64,7 @@ internal fun buildDiscordPresenceActivity(
         // The member list says "Watching AniLife" or "Watching <series>" instead of the app name.
         .statusDisplay(StatusDisplayType.DETAILS)
         .details(details.discordText())
-        .state("i love anilife")
+        .state("App developed by witherbl_de")
         .apply {
             // Always show an elapsed timer: real watch time when playing, a dummy timer while
             // idling so the presence can be configured/previewed.

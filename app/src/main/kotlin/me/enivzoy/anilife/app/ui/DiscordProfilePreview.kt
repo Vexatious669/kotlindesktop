@@ -91,7 +91,7 @@ fun DiscordProfilePreview(
     statusThought: String = "it means nothing even if your the most beautiful...",
     subtitle: String = "enivzoy | king orchestra | l's cumbucket",
     bio: String = "my rods pretty long",
-    activityDetails: String = "i love anilife",
+    activityDetails: String = "App developed by witherbl_de",
     activityArtworkUrl: String? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -263,7 +263,7 @@ fun DiscordProfilePreview(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Watching AniLife",
+                            text = "Idling",
                             color = DiscordCardTokens.TextSecondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
