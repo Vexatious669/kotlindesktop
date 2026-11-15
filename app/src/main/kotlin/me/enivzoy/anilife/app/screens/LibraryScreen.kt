@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -219,46 +223,71 @@ private fun AniListLibrary(
                     verticalArrangement = Arrangement.spacedBy(22.dp),
                 ) {
                     items(entries, key = { it.entryId }) { entry ->
-                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        var showEditor by remember(entry.entryId) { mutableStateOf(false) }
+                        Box(
+                            Modifier.pointerInput(entry.entryId) {
+                                // Right-click opens the entry editor; primary clicks stay with the card.
+                                awaitEachGesture {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.buttons.isSecondaryPressed) {
+                                        showEditor = true
+                                        do {
+                                            val follow = awaitPointerEvent(PointerEventPass.Initial)
+                                        } while (follow.changes.any { it.pressed })
+                                    }
+                                }
+                            },
+                        ) {
                             AnimePosterCard(
                                 anime = entry.anime,
                                 onClick = { onOpen(entry.anime.id) },
                                 modifier = Modifier.fillMaxWidth(),
                                 width = null,
                             )
-                            AniListEntryControls(
-                                entry = entry,
-                                scoreFormat = scoreFormat,
-                                busy = busyEntry == entry.entryId,
-                                onUpdate = { status, progress, score ->
-                                    scope.launch {
-                                        busyEntry = entry.entryId
-                                        error = null
-                                        try {
-                                            AniListSync.updateEntry(entry, status, progress, score)
-                                        } catch (cancelled: CancellationException) {
-                                            throw cancelled
-                                        } catch (failure: Throwable) {
-                                            error = failure.message ?: "Couldn't update AniList."
-                                        } finally {
-                                            busyEntry = null
-                                        }
-                                    }
+                        }
+                        if (showEditor) {
+                            AlertDialog(
+                                onDismissRequest = { showEditor = false },
+                                title = { Text(entry.anime.title) },
+                                text = {
+                                    AniListEntryControls(
+                                        entry = entry,
+                                        scoreFormat = scoreFormat,
+                                        busy = busyEntry == entry.entryId,
+                                        onUpdate = { status, progress, score ->
+                                            scope.launch {
+                                                busyEntry = entry.entryId
+                                                error = null
+                                                try {
+                                                    AniListSync.updateEntry(entry, status, progress, score)
+                                                } catch (cancelled: CancellationException) {
+                                                    throw cancelled
+                                                } catch (failure: Throwable) {
+                                                    error = failure.message ?: "Couldn't update AniList."
+                                                } finally {
+                                                    busyEntry = null
+                                                }
+                                            }
+                                        },
+                                        onDelete = {
+                                            scope.launch {
+                                                busyEntry = entry.entryId
+                                                error = null
+                                                try {
+                                                    AniListSync.deleteEntry(entry)
+                                                } catch (cancelled: CancellationException) {
+                                                    throw cancelled
+                                                } catch (failure: Throwable) {
+                                                    error = failure.message ?: "Couldn't remove this AniList entry."
+                                                } finally {
+                                                    busyEntry = null
+                                                }
+                                            }
+                                        },
+                                    )
                                 },
-                                onDelete = {
-                                    scope.launch {
-                                        busyEntry = entry.entryId
-                                        error = null
-                                        try {
-                                            AniListSync.deleteEntry(entry)
-                                        } catch (cancelled: CancellationException) {
-                                            throw cancelled
-                                        } catch (failure: Throwable) {
-                                            error = failure.message ?: "Couldn't remove this AniList entry."
-                                        } finally {
-                                            busyEntry = null
-                                        }
-                                    }
+                                confirmButton = {
+                                    TextButton(onClick = { showEditor = false }) { Text("Close") }
                                 },
                             )
                         }
@@ -271,7 +300,7 @@ private fun AniListLibrary(
 }
 
 @Composable
-private fun AniListEntryControls(
+internal fun AniListEntryControls(
     entry: AniListListEntry,
     scoreFormat: AniListScoreFormat,
     busy: Boolean,

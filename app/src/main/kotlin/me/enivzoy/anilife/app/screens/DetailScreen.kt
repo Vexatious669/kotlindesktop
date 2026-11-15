@@ -105,6 +105,7 @@ fun DetailScreen(
     val scope = rememberCoroutineScope()
     var aniListActionError by remember(id) { mutableStateOf<String?>(null) }
     var aniListActionPending by remember(id) { mutableStateOf(false) }
+    var showEntryEditor by remember(id) { mutableStateOf(false) }
 
     LaunchedEffect(id, attempt) {
         state = LoadState.Loading
@@ -117,20 +118,25 @@ fun DetailScreen(
             is LoadState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 ErrorPanel(current.message, onRetry = { attempt++ })
             }
-            is LoadState.Ready -> DetailContent(
-                detail = current.value,
-                providers = providers,
-                onOpen = onOpen,
-                onWatch = { episode -> onWatch(current.value, episode) },
-                inLibrary = if (aniListUser != null) {
-                    aniListEntries.any { it.anime.id == current.value.id }
-                } else {
-                    library.any { it.id == current.value.id }
-                },
-                libraryUsesAniList = aniListUser != null,
-                libraryActionError = aniListActionError,
-                libraryActionPending = aniListActionPending,
-                onToggleLibrary = {
+            is LoadState.Ready -> {
+                val remoteEntry = aniListEntries.firstOrNull { it.anime.id == current.value.id }
+                DetailContent(
+                    detail = current.value,
+                    providers = providers,
+                    onOpen = onOpen,
+                    onWatch = { episode -> onWatch(current.value, episode) },
+                    inLibrary = if (aniListUser != null) {
+                        aniListEntries.any { it.anime.id == current.value.id }
+                    } else {
+                        library.any { it.id == current.value.id }
+                    },
+                    libraryUsesAniList = aniListUser != null,
+                    libraryActionError = aniListActionError,
+                    libraryActionPending = aniListActionPending,
+                    onEditAniListEntry = if (remoteEntry != null && aniListUser != null) {
+                        ({ showEntryEditor = true })
+                    } else null,
+                    onToggleLibrary = {
                     val remoteEntry = aniListEntries.firstOrNull { it.anime.id == current.value.id }
                     if (aniListUser != null) {
                         scope.launch {
@@ -162,6 +168,57 @@ fun DetailScreen(
                     }
                 },
             )
+                if (showEntryEditor) {
+                    val account = aniListUser
+                    if (remoteEntry != null && account != null) {
+                    AlertDialog(
+                        onDismissRequest = { showEntryEditor = false },
+                        title = { Text(remoteEntry.anime.title) },
+                        text = {
+                            AniListEntryControls(
+                                entry = remoteEntry,
+                                scoreFormat = account.scoreFormat,
+                                busy = aniListActionPending,
+                                onUpdate = { status, progress, score ->
+                                    scope.launch {
+                                        aniListActionPending = true
+                                        aniListActionError = null
+                                        try {
+                                            AniListSync.updateEntry(remoteEntry, status, progress, score)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (failure: Throwable) {
+                                            aniListActionError = failure.message ?: "Couldn't update your AniList list."
+                                        } finally {
+                                            aniListActionPending = false
+                                        }
+                                    }
+                                },
+                                onDelete = {
+                                    scope.launch {
+                                        aniListActionPending = true
+                                        aniListActionError = null
+                                        try {
+                                            AniListSync.deleteEntry(remoteEntry)
+                                            showEntryEditor = false
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (failure: Throwable) {
+                                            aniListActionError = failure.message ?: "Couldn't update your AniList list."
+                                        } finally {
+                                            aniListActionPending = false
+                                        }
+                                    }
+                                },
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showEntryEditor = false }) { Text("Close") }
+                        },
+                    )
+                    }
+                }
+            }
         }
 
         BackButton(onBack, Modifier.align(Alignment.TopStart).padding(16.dp))
@@ -201,6 +258,7 @@ private fun DetailContent(
     libraryActionError: String?,
     libraryActionPending: Boolean,
     onToggleLibrary: () -> String?,
+    onEditAniListEntry: (() -> Unit)? = null,
 ) {
     var expanded by remember(detail.id) { mutableStateOf(false) }
     var notice by remember(detail.id) { mutableStateOf<Pair<String, String>?>(null) }
@@ -358,6 +416,11 @@ private fun DetailContent(
                         }
                         if (libraryActionPending) {
                             Text("Updating your list…", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
+                        }
+                        onEditAniListEntry?.let { onEdit ->
+                            TextButton(onClick = onEdit, enabled = !libraryActionPending) {
+                                Text("Edit AniList entry", fontSize = 12.sp, color = AniLifeColors.MutedForeground)
+                            }
                         }
 
                         if (detail.genres.isNotEmpty()) {
