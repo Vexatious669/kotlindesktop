@@ -167,8 +167,12 @@ class DiscordPresenceManager : AutoCloseable {
                 applicationId = id
                 ensureClient(id)
 
+                println("[Discord]   (exec) hasPublished=$hasPublished lastPublishedTarget=${lastPublishedTarget?.title} target=${target?.title} reconnect=$reconnect")
                 if (reconnect || !hasPublished || target != lastPublishedTarget) {
+                    println("[Discord]   (exec) calling publishCurrent()")
                     publishCurrent()
+                } else {
+                    println("[Discord]   (exec) SKIPPING publishCurrent (target unchanged)")
                 }
             }
         } catch (_: RejectedExecutionException) {
