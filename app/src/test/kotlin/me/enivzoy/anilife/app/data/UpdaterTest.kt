@@ -70,4 +70,37 @@ class UpdaterTest {
 
         assertNull(parseUpdateManifest(manifest, currentVersion = "1.0.4", platform = "windows"))
     }
+
+    @Test
+    fun parsesGitHubReleaseApiResponseWithoutFollowingAssetRedirects() {
+        val release = """
+            {
+              "tag_name": "v1.0.5",
+              "body": "Release notes",
+              "published_at": "2026-11-15T00:16:53Z",
+              "assets": [
+                {
+                  "name": "version.json",
+                  "browser_download_url": "https://github.com/example/version.json"
+                },
+                {
+                  "name": "anilife-1.0.5.base.exe",
+                  "url": "https://api.github.com/repos/example/releases/assets/123",
+                  "browser_download_url": "https://github.com/example/anilife-1.0.5.base.exe",
+                  "size": 42,
+                  "digest": "sha256:abc123"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val update = parseUpdateManifest(release, currentVersion = "1.0.4", platform = "windows")
+
+        assertEquals("1.0.5", update?.version)
+        assertEquals("Release notes", update?.changelog)
+        assertEquals("https://github.com/example/anilife-1.0.5.base.exe", update?.url)
+        assertEquals("abc123", update?.sha256)
+        assertEquals(42L, update?.sizeBytes)
+        assertEquals(1_794_701_813L, update?.publishedAt)
+    }
 }

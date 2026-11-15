@@ -24,20 +24,18 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.time.Duration
+import java.time.Instant
 
 private const val DEFAULT_MANIFEST_URL =
-    "https://github.com/anilifecommunity/kotlindesktop/releases/latest/download/version.json"
+    "https://api.github.com/repos/anilifecommunity/kotlindesktop/releases/latest"
 
 /**
- * Looks an auto-update manifest published with a GitHub release and decides whether the running
- * build is behind it. The manifest is the same JSON the release pipeline drops next to the
- * installers (see the auto-updater plan in `Instructions.md`).
+ * Checks the latest GitHub release without following its installer asset redirect. The parser
+ * also accepts the version manifest format used by earlier releases.
  */
 class Updater(
     private val http: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(15))
-        // GitHub release endpoints answer 302 (latest -> tagged asset -> CDN); without this the
-        // manifest body is empty and the check silently reports "up to date".
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build(),
     private val manifestUrl: String = DEFAULT_MANIFEST_URL,
@@ -119,9 +117,9 @@ class Updater(
     private suspend fun fetchUpdate(currentVersion: String): Update? {
         val uri = URI.create(manifestUrl)
         val request = HttpRequest.newBuilder(uri)
-            .timeout(Duration.ofSeconds(20))
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
+            .timeout(Duration.ofSeconds(30))
+            .header("User-Agent", "AniLife-Updater")
+            .header("Accept", "application/vnd.github+json")
             .GET()
             .uri(uri)
             .build()
@@ -169,23 +167,48 @@ class Updater(
 internal fun parseUpdateManifest(body: String, currentVersion: String, platform: String): Update? {
     val json = Json { ignoreUnknownKeys = true }
     val root = json.parseToJsonElement(body) as? JsonObject ?: return null
-    val version = root.string("version") ?: return null
+    val version = root.string("version")
+        ?: root.string("tag_name")?.removePrefix("v")
+        ?: return null
     if (!Updater.isNewer(version, currentVersion)) return null
-    val asset = (root["assets"] as? JsonArray)
+    val assets = (root["assets"] as? JsonArray)
         ?.mapNotNull { it as? JsonObject }
-        ?.firstOrNull { it.string("platform").equals(platform, ignoreCase = true) }
-    val url = sequenceOf(root.string("url"), root.string("assetUrl"), asset?.string("url"))
+        .orEmpty()
+    val platformAsset = assets.firstOrNull {
+        it.string("platform").equals(platform, ignoreCase = true)
+    }
+    val releaseAsset = if (root.string("tag_name") != null) {
+        assets.firstOrNull {
+            val name = it.string("name").orEmpty()
+            name.endsWith(".base.exe", ignoreCase = true) ||
+                name.endsWith("#base.exe", ignoreCase = true)
+        }
+    } else {
+        null
+    }
+    val asset = platformAsset ?: releaseAsset
+    val url = sequenceOf(
+        root.string("url"),
+        root.string("assetUrl"),
+        asset?.string("browser_download_url"),
+        asset?.string("url"),
+    )
         .filterNotNull()
         .firstOrNull(String::isNotBlank)
         ?: return null
     val downloadUrl = normalizeAssetUrl(url) ?: return null
     return Update(
         version = version,
-        changelog = root.string("releaseNotes") ?: root.string("changelog") ?: "",
+        changelog = root.string("releaseNotes") ?: root.string("changelog") ?: root.string("body") ?: "",
         url = downloadUrl,
         sizeBytes = root.long("sizeBytes") ?: root.long("size") ?: asset?.long("size") ?: 0L,
-        sha256 = root.string("sha256") ?: root.string("checksum") ?: asset?.string("sha256") ?: "",
-        publishedAt = root.long("releasedAt") ?: 0L,
+        sha256 = root.string("sha256") ?: root.string("checksum")
+            ?: asset?.string("sha256")
+            ?: asset?.string("digest")?.removePrefix("sha256:")
+            ?: "",
+        publishedAt = root.long("releasedAt")
+            ?: root.string("published_at")?.let { runCatching { Instant.parse(it).epochSecond }.getOrNull() }
+            ?: 0L,
     )
 }
 
