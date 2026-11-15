@@ -39,6 +39,10 @@ class AppSettingsTest {
         assertEquals(cover, series.assets().largeImage())
         assertEquals("My Series", series.assets().largeText())
         assertEquals(startedAt, series.timestamps()?.start())
+        assertEquals(2, idle.buttons().size)
+        assertEquals("Visit AniLife", idle.buttons()[0].label())
+        assertEquals("https://anilife.cc", idle.buttons()[0].url())
+        assertEquals("Star on GitHub", idle.buttons()[1].label())
     }
 
     @Test
