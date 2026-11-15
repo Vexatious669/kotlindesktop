@@ -88,6 +88,7 @@ internal fun buildDiscordPresenceActivity(
             }
         }
         .button("Visit AniLife", "https://anilife.cc")
+        .button("Star on GitHub", "https://github.com/anilifecommunity/kotlindesktop")
         .build()
 }
 

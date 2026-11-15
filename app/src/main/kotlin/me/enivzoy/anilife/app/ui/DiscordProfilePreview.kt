@@ -391,23 +391,42 @@ fun DiscordProfilePreview(
 
                 Spacer(Modifier.height(10.dp))
 
-                // Discord RPC button (opens AniLife in the browser)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(DiscordCardTokens.ActivityBg)
-                        .border(1.dp, DiscordCardTokens.ActivityBorder, RoundedCornerShape(8.dp))
-                        .clickable { uriHandler.openUri("https://anilife.cc") }
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Visit AniLife",
-                        color = DiscordCardTokens.TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                // Discord RPC buttons (opens AniLife / GitHub in the browser)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DiscordCardTokens.ActivityBg)
+                            .border(1.dp, DiscordCardTokens.ActivityBorder, RoundedCornerShape(8.dp))
+                            .clickable { uriHandler.openUri("https://anilife.cc") }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Visit AniLife",
+                            color = DiscordCardTokens.TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DiscordCardTokens.ActivityBg)
+                            .border(1.dp, DiscordCardTokens.ActivityBorder, RoundedCornerShape(8.dp))
+                            .clickable { uriHandler.openUri("https://github.com/anilifecommunity/kotlindesktop") }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Star on GitHub",
+                            color = DiscordCardTokens.TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
         }

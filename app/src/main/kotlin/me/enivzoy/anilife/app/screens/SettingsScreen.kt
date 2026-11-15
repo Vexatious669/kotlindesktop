@@ -991,6 +991,7 @@ private fun AccountSettings(
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
     onDiscordConnect: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
     SettingsRow(
         "Discord Rich Presence",
         "Show \"Watching AniLife\" with an elapsed timer, or the anime open in the player, on your Discord profile.",
@@ -1019,6 +1020,11 @@ private fun AccountSettings(
             enabled = settings.discordPresenceEnabled,
             onConnect = onDiscordConnect,
         )
+    }
+    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        SettingsButton("Star on GitHub") {
+            try { uriHandler.openUri("https://github.com/anilifecommunity/kotlindesktop") } catch (_: Exception) {}
+        }
     }
     SettingsNote("MyAnimeList sync is available from Profile after signing in.")
 }
