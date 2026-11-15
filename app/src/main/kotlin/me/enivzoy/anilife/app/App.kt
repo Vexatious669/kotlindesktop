@@ -237,9 +237,8 @@ fun AniLifeApp(
     val mpvLibrary = remember { runCatching { Mpv.defaultLibraryPath() }.getOrNull() }
     var showIntro by remember { mutableStateOf(settings.playIntro) }
 
-    LaunchedEffect(screen is Screen.Player) {
+    LaunchedEffect(screen) {
         playerFullscreen = screen is Screen.Player
-        // Keep Discord presence in step with the player even if the presenceTarget effect misses a beat.
         discordPresence.update(
             enabled = settings.discordPresenceEnabled,
             configuredApplicationId = settings.discordApplicationId,

@@ -81,8 +81,9 @@ internal fun buildDiscordPresenceActivity(
             startedAt(startedAt)
             if (target != null) {
                 target.cover?.takeIf(String::isNotBlank)?.let { cover ->
+                    // Match the idle path (largeImage with a URL) which is known to work; smallImage
+                    // and largeUrl variants caused Discord to reject the activity in testing.
                     largeImage(cover.trim(), target.title.discordText())
-                    smallImage(ANILIFE_ICON_URL, "AniLife")
                 }
             } else {
                 largeImage(ANILIFE_ICON_URL, "AniLife")
