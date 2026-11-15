@@ -239,6 +239,7 @@ fun AniLifeApp(
 
     LaunchedEffect(screen) {
         playerFullscreen = screen is Screen.Player
+        println("[Discord] screen=${screen::class.simpleName} presenceTarget=${presenceTarget?.title} ep=${presenceTarget?.episode}")
         discordPresence.update(
             enabled = settings.discordPresenceEnabled,
             configuredApplicationId = settings.discordApplicationId,

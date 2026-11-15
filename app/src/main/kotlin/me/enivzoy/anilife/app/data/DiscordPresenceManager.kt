@@ -139,6 +139,7 @@ class DiscordPresenceManager : AutoCloseable {
         reconnect: Boolean = false,
     ) {
         if (closed.get()) return
+        println("[Discord] update enabled=$enabled id=$configuredApplicationId target=${target?.title} ep=${target?.episode}")
         try {
             executor.execute {
                 if (closed.get()) return@execute
@@ -257,6 +258,9 @@ class DiscordPresenceManager : AutoCloseable {
         activeClient.setActivity(activity).whenComplete { _, failure ->
             if (failure != null && !closed.get()) {
                 System.err.println("Discord Rich Presence update failed: ${failure.message}")
+                failure.printStackTrace()
+            } else if (!closed.get()) {
+                println("[Discord] activity published: ${activity.details()} / ${activity.state()} buttons=${activity.buttons()}")
             }
         }
     }
