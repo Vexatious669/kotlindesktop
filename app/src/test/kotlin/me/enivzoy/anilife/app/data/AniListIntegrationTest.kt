@@ -2,6 +2,8 @@ package me.enivzoy.anilife.app.data
 
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.enivzoy.anilife.core.model.AnimeCard
@@ -10,7 +12,9 @@ import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AniListIntegrationTest {
     @Test
@@ -87,6 +91,48 @@ class AniListIntegrationTest {
         } finally {
             root.toFile().deleteRecursively()
         }
+    }
+
+    @Test
+    fun treatsAniListMissingEntryLookupAsNullInsteadOfAnError() {
+        // Live AniList behavior: MediaList for an entry that does not exist answers HTTP 404 with
+        // errors [{message: "Not Found.", status: 404}] and data {"MediaList": null}. That is the
+        // valid "not on the list" answer, not a failure.
+        val missing = """
+            {"errors":[{"message":"Not Found.","status":404}],"data":{"MediaList":null}}
+        """.trimIndent()
+        val parsed = AniListAccountApi.parseGraphQlResponse(404, missing)
+        assertEquals(JsonNull, parsed["MediaList"])
+
+        val unauthorized = """
+            {"errors":[{"message":"Unauthorized.","status":401}],"data":{"SaveMediaListEntry":null}}
+        """.trimIndent()
+        assertEquals("Unauthorized.", runCatching {
+            AniListAccountApi.parseGraphQlResponse(401, unauthorized)
+        }.exceptionOrNull()?.message)
+
+        val validation = """
+            {"errors":[{"message":"validation","status":400}],"data":{"SaveMediaListEntry":null}}
+        """.trimIndent()
+        assertEquals("validation", runCatching {
+            AniListAccountApi.parseGraphQlResponse(400, validation)
+        }.exceptionOrNull()?.message)
+
+        val ok = """{"data":{"Viewer":{"id":1}}}"""
+        assertTrue(AniListAccountApi.parseGraphQlResponse(200, ok).containsKey("Viewer"))
+    }
+
+    @Test
+    fun saveOmitsTheEntryIdVariableForNewEntries() = runBlocking {
+        val variables = mutableListOf<JsonObject>()
+        val api = AniListAccountApi { _, _, vars ->
+            variables += vars
+            Json.parseToJsonElement("""{"SaveMediaListEntry":${entryJson(7, "PLANNING", 0)}}""").jsonObject
+        }
+        api.save(token = "t", entryId = null, mediaId = 21, status = AniListListStatus.PLANNING, progress = 0, score = 0.0)
+        assertFalse(variables.single().containsKey("entryId"))
+        api.save(token = "t", entryId = 55, mediaId = 21, status = AniListListStatus.CURRENT, progress = 3, score = 8.0)
+        assertEquals("55", variables.last()["entryId"]?.jsonPrimitive?.content)
     }
 
     private fun entryJson(id: Long, status: String, progress: Int) = """

@@ -4,7 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -134,7 +133,9 @@ internal class AniListAccountApi(
             token,
             SAVE_ENTRY_MUTATION,
             buildJsonObject {
-                put("entryId", entryId?.let(::JsonPrimitive) ?: JsonNull)
+                // AniList rejects an explicit id: null ("The selected id is invalid."), so the
+                // variable must be omitted entirely when creating a new list entry.
+                entryId?.let { put("entryId", it) }
                 put("mediaId", mediaId)
                 put("status", status.apiValue)
                 put("progress", progress)
@@ -199,7 +200,7 @@ internal class AniListAccountApi(
         )
     }
 
-    private companion object {
+    internal companion object {
         const val ENDPOINT = "https://graphql.anilist.co"
         val json = Json { ignoreUnknownKeys = true }
         val http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()
@@ -283,16 +284,34 @@ internal class AniListAccountApi(
                     .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(JsonObject.serializer(), payload)))
                     .build()
                 val response = http.send(httpRequest, HttpResponse.BodyHandlers.ofString())
-                val root = runCatching { json.parseToJsonElement(response.body()).jsonObject }
-                    .getOrElse { error("AniList returned an unreadable response.") }
-                val errors = (root["errors"] as? JsonArray)
-                    ?.mapNotNull { (it as? JsonObject)?.string("message") }
-                    .orEmpty()
-                if (response.statusCode() !in 200..299 || errors.isNotEmpty()) {
-                    error(errors.firstOrNull()?.take(300) ?: "AniList request failed (HTTP ${response.statusCode()}).")
-                }
-                root["data"] as? JsonObject ?: error("AniList returned no data.")
+                parseGraphQlResponse(response.statusCode(), response.body())
             }
+
+        /**
+         * AniList answers a lookup for a list entry that does not exist with HTTP 404 and an
+         * errors array of "Not Found." while still returning a data object whose field is null.
+         * That is the valid "not on the list" answer, so pass it through instead of throwing;
+         * every other error response stays fatal.
+         */
+        internal fun parseGraphQlResponse(statusCode: Int, body: String): JsonObject {
+            val root = runCatching { json.parseToJsonElement(body).jsonObject }
+                .getOrElse { error("AniList returned an unreadable response.") }
+            val errorObjects = (root["errors"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            val messages = errorObjects.mapNotNull { it.string("message") }
+            val data = root["data"] as? JsonObject
+            val missingLookup = data != null &&
+                statusCode == 404 &&
+                messages.isNotEmpty() &&
+                messages.all { it.startsWith("Not Found") } &&
+                errorObjects.all { it.int("status") == 404 }
+            if (messages.isNotEmpty() && !missingLookup) {
+                error(messages.first().take(300))
+            }
+            if (statusCode !in 200..299 && !missingLookup) {
+                error(messages.firstOrNull()?.take(300) ?: "AniList request failed (HTTP $statusCode).")
+            }
+            return data ?: error("AniList returned no data.")
+        }
     }
 }
 
