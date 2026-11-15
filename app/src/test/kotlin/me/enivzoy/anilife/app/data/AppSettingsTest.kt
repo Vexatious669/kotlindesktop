@@ -27,7 +27,7 @@ class AppSettingsTest {
         )
 
         assertEquals(ActivityType.WATCHING, idle.type())
-        assertEquals("AniLife", idle.details())
+        assertEquals("App developed by witherbl_de", idle.details())
         assertEquals("AniLife", idle.name())
         assertEquals("i love anilife", idle.state())
         assertEquals(StatusDisplayType.DETAILS, idle.statusDisplayType())

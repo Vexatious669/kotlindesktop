@@ -84,6 +84,7 @@ import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.DiscordPresenceState
 import me.enivzoy.anilife.app.data.DiscordPresenceStatus
+import me.enivzoy.anilife.app.data.ANILIFE_ICON_URL
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.DiscordProfilePreview
 import me.enivzoy.anilife.app.ui.ThemeEditor
@@ -1009,6 +1010,7 @@ private fun AccountSettings(
         username = discordState.username ?: "witherbl_de",
         avatarUrl = discordState.avatarUrl,
         activityDetails = "i love anilife",
+        activityArtworkUrl = ANILIFE_ICON_URL,
     )
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {

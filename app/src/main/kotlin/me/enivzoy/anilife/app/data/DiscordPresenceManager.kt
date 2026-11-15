@@ -48,11 +48,15 @@ data class DiscordPresenceState(
         }
 }
 
+/** Publicly hosted AniLife icon used as the presence image when nothing is playing. */
+const val ANILIFE_ICON_URL =
+    "https://raw.githubusercontent.com/anilifecommunity/kotlindesktop/main/app/src/main/resources/anilife-icon.png"
+
 internal fun buildDiscordPresenceActivity(
     target: DiscordPresenceTarget?,
     startedAt: Instant,
 ): Activity {
-    val details = target?.let(::watchingDetails) ?: "AniLife"
+    val details = target?.let(::watchingDetails) ?: "App developed by witherbl_de"
 
     return Activity.builder()
         .name("AniLife")
@@ -62,13 +66,15 @@ internal fun buildDiscordPresenceActivity(
         .details(details.discordText())
         .state("i love anilife")
         .apply {
-            // Always show an elapsed timer: real watch time when playing, a stable dummy timer
-            // when idling so the presence preview can be configured.
+            // Always show an elapsed timer: real watch time when playing, a dummy timer while
+            // idling so the presence can be configured/previewed.
             startedAt(startedAt)
             if (target != null) {
                 target.cover?.takeIf(String::isNotBlank)?.let { cover ->
                     largeImage(cover.trim(), target.title.discordText())
                 }
+            } else {
+                largeImage(ANILIFE_ICON_URL, "AniLife")
             }
         }
         .build()
