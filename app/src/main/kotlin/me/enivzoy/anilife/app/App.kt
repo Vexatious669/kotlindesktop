@@ -65,6 +65,7 @@ import me.enivzoy.anilife.app.screens.SettingsScreen
 import me.enivzoy.anilife.app.screens.MyAnimeListScreen
 import me.enivzoy.anilife.app.screens.NotificationsScreen
 import me.enivzoy.anilife.app.data.MyAnimeListSync
+import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.Updater
 import me.enivzoy.anilife.app.data.MpvBootstrap
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
@@ -182,6 +183,7 @@ fun AniLifeApp(
     }
 
     LaunchedEffect(Unit) {
+        AniListSync.restore()
         MyAnimeListSync.configure()
         MyAnimeListSync.restore()
     }
@@ -346,6 +348,8 @@ fun AniLifeApp(
                 when (target) {
                     Screen.Home -> HomeScreen(
                         repository = repository,
+                        settings = settings,
+                        onSettingsChange = ::updateSettings,
                         onOpen = { navigateTo(Screen.Detail(it)) },
                         onContentReady = { homeLoaded = true },
                     )
@@ -357,7 +361,6 @@ fun AniLifeApp(
                         onBrowse = { navigateTo(Screen.Browse) },
                     )
                     Screen.Settings -> SettingsScreen(
-                        mpvLibrary = mpvLibrary,
                         settings = settings,
                         discordState = discordState,
                         onSettingsChange = ::updateSettings,
@@ -373,7 +376,7 @@ fun AniLifeApp(
                         notifier = releaseNotifier,
                         onOpenAnime = { navigateTo(Screen.Detail(it)) },
                     )
-                    Screen.Profile -> MyAnimeListScreen()
+                    Screen.Profile -> MyAnimeListScreen(repository)
                     Screen.Downloads -> DownloadsScreen(
                         repository = repository,
                         settings = settings,
@@ -384,10 +387,11 @@ fun AniLifeApp(
                     )
                     is Screen.Detail -> DetailScreen(
                         repository = repository,
+                        providers = animeVideoProviders,
                         id = target.id,
                         onBack = ::goBack,
                         onOpen = { navigateTo(Screen.Detail(it)) },
-                        onWatch = { detail -> navigateTo(Screen.Watch(detail)) },
+                        onWatch = { detail, episode -> navigateTo(Screen.Watch(detail, episode)) },
                     )
                     is Screen.Watch -> AnimeWatchScreen(
                         detail = target.detail,

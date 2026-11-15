@@ -3,12 +3,14 @@ package me.enivzoy.anilife.app.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,9 +19,11 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,12 +32,14 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.Sync
@@ -52,13 +58,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.platform.Font
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AppSettings
@@ -67,10 +83,12 @@ import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.DiscordPresenceState
 import me.enivzoy.anilife.app.data.DiscordPresenceStatus
 import me.enivzoy.anilife.app.ui.AniLifeColors
-import me.enivzoy.anilife.app.ui.Chip
 import me.enivzoy.anilife.app.ui.ThemeEditor
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
 
 /**
  * Settings, laid out as a sidebar of pages and a scrolling panel of rows. Every control maps to a
@@ -78,7 +96,6 @@ import javax.swing.JFileChooser
  */
 @Composable
 fun SettingsScreen(
-    mpvLibrary: String?,
     settings: AppSettings,
     discordState: DiscordPresenceState,
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
@@ -159,7 +176,7 @@ fun SettingsScreen(
                             checkingForUpdates = checkingForUpdates,
                             onCheckForUpdates = onCheckForUpdates,
                         )
-                        SettingsPage.About -> AboutSettings(mpvLibrary)
+                        SettingsPage.About -> AboutSettings(currentVersion)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -184,7 +201,7 @@ private enum class SettingsPage(
     Appearance("Appearance", "Theme and type", Icons.Rounded.Palette, "css theme colors palette font typeface editor"),
     Data("Data", "Buffers, cache, and storage", Icons.Rounded.Storage, "buffer memory cache storage"),
     App("App", "Updates, decoding, performance, and startup", Icons.Rounded.Apps, "updates version release hardware decoding gpu startup intro splash"),
-    About("About", "Version and credits", Icons.Rounded.Info, "app version metadata player providers credits"),
+    About("About", "Version, keyboard shortcuts, and the people behind it", Icons.Rounded.Info, "app version metadata player providers credits links website discord shortcuts repository"),
 }
 
 private data class SettingSearchEntry(
@@ -218,7 +235,7 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Hardware decoding", SettingsPage.App, "gpu acceleration decoder cpu"),
     SettingSearchEntry("Check for updates on launch", SettingsPage.App, "automatic updates release startup"),
     SettingSearchEntry("Check for updates now", SettingsPage.App, "update version release check"),
-    SettingSearchEntry("About AniLife", SettingsPage.About, "app version metadata player credits"),
+    SettingSearchEntry("About AniLife", SettingsPage.About, "app version metadata player credits links website discord shortcuts repository"),
 )
 
 @Composable
@@ -449,45 +466,468 @@ private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSetting
 
 @Composable
 private fun SubtitleSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
-    SettingsRow(
-        "Show captions by default",
-        "Start playback with text captions enabled.",
-    ) {
-        SettingsSwitch(settings.subtitlesByDefault) { enabled -> onSettingsChange { it.copy(subtitlesByDefault = enabled) } }
+    var fontError by remember { mutableStateOf<String?>(null) }
+
+    fun updateCaption(transform: (AppSettings) -> AppSettings) {
+        onSettingsChange { transform(it).copy(captionPreset = "custom") }
     }
-    SettingsRow(
-        "Preferred caption language",
-        "Ask the player to choose this language when a matching track is available.",
-    ) {
-        SettingsDropdown(
+
+    fun importCustomFont() {
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Import subtitle font"
+            isAcceptAllFileFilterUsed = false
+            fileFilter = FileNameExtensionFilter("Font files (*.ttf, *.otf)", "ttf", "otf")
+        }
+        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return
+
+        try {
+            val source = chooser.selectedFile
+            require(source.length() <= 20L * 1024L * 1024L) { "Font files must be 20 MB or smaller." }
+            val family = java.awt.Font.createFont(java.awt.Font.TRUETYPE_FONT, source).family
+            val directory = captionFontsDirectory()
+            if (!directory.exists() && !directory.mkdirs()) {
+                throw IllegalStateException("Couldn't create the custom fonts folder.")
+            }
+            val imported = File(directory, source.name)
+            if (source.canonicalFile != imported.canonicalFile) {
+                Files.copy(source.toPath(), imported.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            updateCaption { it.copy(captionFont = family, captionFontFile = imported.absolutePath) }
+            fontError = null
+        } catch (_: Exception) {
+            fontError = "Couldn't import that font. Choose a valid TTF or OTF file."
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Caption appearance", color = AniLifeColors.Foreground, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "For plain subtitles. Styled ASS subtitles keep their own look.",
+            color = AniLifeColors.MutedForeground,
+            fontSize = 12.sp,
+        )
+        SubtitlePreview(settings)
+        SettingsSegmented(
             choices = listOf(
-                "en" to "English",
-                "ja" to "Japanese",
-                "es" to "Spanish",
-                "pt" to "Portuguese",
-                "fr" to "French",
-                "de" to "German",
-                "it" to "Italian",
-                "ru" to "Russian",
-                "ar" to "Arabic",
-                "zh" to "Chinese",
-                "none" to "No preference",
+                "classic" to "Classic",
+                "boxed" to "Boxed",
+                "cinema" to "Cinema",
+                "high-contrast" to "High contrast",
             ),
-            selected = settings.subtitleLanguage,
-            onSelect = { value -> onSettingsChange { it.copy(subtitleLanguage = value) } },
+            selected = settings.captionPreset.takeIf { it != "custom" },
+            onSelect = { preset -> onSettingsChange { applyCaptionPreset(it, preset) } },
         )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CaptionControlHeader("Font", settings.captionFont)
+                captionFontOptions.chunked(3).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        row.forEach { (label, family) ->
+                            CaptionOptionButton(
+                                modifier = Modifier.weight(1f),
+                                label = label,
+                                selected = settings.captionFont.equals(family, ignoreCase = true),
+                                onClick = {
+                                    updateCaption { it.copy(captionFont = family, captionFontFile = "") }
+                                },
+                            )
+                        }
+                    }
+                }
+                SettingsButton("Import custom font", onClick = ::importCustomFont)
+                fontError?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 11.sp) }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CaptionControlHeader("Size", "${(settings.subtitleScale * 100).toInt()}%")
+                CaptionSlider(
+                    value = settings.subtitleScale,
+                    range = 0.5f..2f,
+                    valueLabel = "${(settings.subtitleScale * 100).toInt()}%",
+                    onChange = { value -> updateCaption { it.copy(subtitleScale = value) } },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingsButton("A−") {
+                        updateCaption { it.copy(subtitleScale = (it.subtitleScale - 0.1f).coerceAtLeast(0.5f)) }
+                    }
+                    SettingsButton("A+") {
+                        updateCaption { it.copy(subtitleScale = (it.subtitleScale + 0.1f).coerceAtMost(2f)) }
+                    }
+                }
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CaptionControlHeader("Text colour", "${(settings.captionTextOpacity * 100).toInt()}% opacity")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    captionTextColors.forEach { color ->
+                        CaptionColorSwatch(
+                            color = color,
+                            selected = settings.captionTextColor.equals(color, ignoreCase = true),
+                            description = "$color subtitle text",
+                            onClick = { updateCaption { it.copy(captionTextColor = color) } },
+                        )
+                    }
+                }
+                CaptionSlider(
+                    value = settings.captionTextOpacity,
+                    range = 0f..1f,
+                    valueLabel = "${(settings.captionTextOpacity * 100).toInt()}%",
+                    onChange = { value -> updateCaption { it.copy(captionTextOpacity = value) } },
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CaptionControlHeader(
+                    "Background",
+                    if (settings.captionBackgroundOpacity <= 0f) "None"
+                    else "${(settings.captionBackgroundOpacity * 100).toInt()}% opacity",
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingsButton("None") {
+                        updateCaption { it.copy(captionBackgroundOpacity = 0f) }
+                    }
+                    captionBackgroundColors.forEach { color ->
+                        CaptionColorSwatch(
+                            color = color,
+                            selected = settings.captionBackgroundOpacity > 0f &&
+                                settings.captionBackgroundColor.equals(color, ignoreCase = true),
+                            description = "$color subtitle background",
+                            onClick = {
+                                updateCaption {
+                                    it.copy(
+                                        captionBackgroundColor = color,
+                                        captionBackgroundOpacity = it.captionBackgroundOpacity.takeIf { alpha -> alpha > 0f } ?: 0.55f,
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+                CaptionSlider(
+                    value = settings.captionBackgroundOpacity,
+                    range = 0f..1f,
+                    valueLabel = "${(settings.captionBackgroundOpacity * 100).toInt()}%",
+                    onChange = { value -> updateCaption { it.copy(captionBackgroundOpacity = value) } },
+                )
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CaptionControlHeader("Edge", settings.captionEdgeStyle.replaceFirstChar(Char::uppercase))
+                SettingsSegmented(
+                    choices = listOf("none" to "None", "outline" to "Outline", "shadow" to "Shadow"),
+                    selected = settings.captionEdgeStyle,
+                    onSelect = { value -> updateCaption { it.copy(captionEdgeStyle = value) } },
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CaptionControlHeader(
+                    "Position",
+                    "${settings.captionVerticalOffset.toInt()}% from the ${settings.captionVerticalPosition}",
+                )
+                SettingsSegmented(
+                    choices = listOf("bottom" to "Bottom", "top" to "Top"),
+                    selected = settings.captionVerticalPosition,
+                    onSelect = { value -> updateCaption { it.copy(captionVerticalPosition = value) } },
+                )
+                CaptionSlider(
+                    value = settings.captionVerticalOffset,
+                    range = 0f..30f,
+                    valueLabel = "${settings.captionVerticalOffset.toInt()}%",
+                    onChange = { value -> updateCaption { it.copy(captionVerticalOffset = value) } },
+                )
+                SettingsSegmented(
+                    choices = listOf("left" to "←", "center" to "Center", "right" to "→"),
+                    selected = settings.captionAlignment,
+                    onSelect = { value -> updateCaption { it.copy(captionAlignment = value) } },
+                )
+            }
+        }
+
+        SettingsSection("Playback") {
+            SettingsRow(
+                "Show captions by default",
+                "Start playback with text captions enabled.",
+            ) {
+                SettingsSwitch(settings.subtitlesByDefault) {
+                    enabled -> onSettingsChange { it.copy(subtitlesByDefault = enabled) }
+                }
+            }
+            SettingsRow(
+                "Preferred caption language",
+                "Ask the player to choose this language when a matching track is available.",
+            ) {
+                SettingsDropdown(
+                    choices = listOf(
+                        "en" to "English",
+                        "ja" to "Japanese",
+                        "es" to "Spanish",
+                        "pt" to "Portuguese",
+                        "fr" to "French",
+                        "de" to "German",
+                        "it" to "Italian",
+                        "ru" to "Russian",
+                        "ar" to "Arabic",
+                        "zh" to "Chinese",
+                        "none" to "No preference",
+                    ),
+                    selected = settings.subtitleLanguage,
+                    onSelect = { value -> onSettingsChange { it.copy(subtitleLanguage = value) } },
+                )
+            }
+        }
     }
-    SettingsRow(
-        "Caption size",
-        "Text subtitle scaling.",
+}
+
+private val captionFontOptions = listOf(
+    "Sans" to "sans-serif",
+    "Serif" to "serif",
+    "Mono" to "monospace",
+    "Narrow" to "Arial Narrow",
+    "Casual" to "Comic Sans MS",
+    "Script" to "cursive",
+)
+
+private val captionTextColors = listOf("#FFFFFF", "#FFEB3B", "#4DD0E1", "#81C784", "#FF80AB")
+private val captionBackgroundColors = listOf("#000000", "#424242", "#0B2848", "#FFFFFF")
+
+private fun captionFontsDirectory(): File {
+    val base = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)?.let(::File)
+        ?: File(System.getProperty("user.home"), ".local/share")
+    return File(base, "AniLife/fonts")
+}
+
+private fun applyCaptionPreset(settings: AppSettings, preset: String): AppSettings = when (preset) {
+    "classic" -> settings.copy(
+        captionPreset = preset,
+        captionFont = "sans-serif",
+        captionFontFile = "",
+        subtitleScale = 1f,
+        captionTextColor = "#FFFFFF",
+        captionTextOpacity = 1f,
+        captionBackgroundColor = "#000000",
+        captionBackgroundOpacity = 0f,
+        captionEdgeStyle = "outline",
+        captionVerticalPosition = "bottom",
+        captionVerticalOffset = 3f,
+        captionAlignment = "center",
+    )
+    "boxed" -> settings.copy(
+        captionPreset = preset,
+        captionFont = "sans-serif",
+        captionFontFile = "",
+        subtitleScale = 1f,
+        captionTextColor = "#FFFFFF",
+        captionTextOpacity = 1f,
+        captionBackgroundColor = "#000000",
+        captionBackgroundOpacity = 0.65f,
+        captionEdgeStyle = "none",
+        captionVerticalPosition = "bottom",
+        captionVerticalOffset = 3f,
+        captionAlignment = "center",
+    )
+    "cinema" -> settings.copy(
+        captionPreset = preset,
+        captionFont = "serif",
+        captionFontFile = "",
+        subtitleScale = 1f,
+        captionTextColor = "#FFF4DC",
+        captionTextOpacity = 1f,
+        captionBackgroundColor = "#000000",
+        captionBackgroundOpacity = 0f,
+        captionEdgeStyle = "shadow",
+        captionVerticalPosition = "bottom",
+        captionVerticalOffset = 8f,
+        captionAlignment = "center",
+    )
+    "high-contrast" -> settings.copy(
+        captionPreset = preset,
+        captionFont = "sans-serif",
+        captionFontFile = "",
+        subtitleScale = 1.1f,
+        captionTextColor = "#FFFF00",
+        captionTextOpacity = 1f,
+        captionBackgroundColor = "#000000",
+        captionBackgroundOpacity = 0.9f,
+        captionEdgeStyle = "none",
+        captionVerticalPosition = "bottom",
+        captionVerticalOffset = 4f,
+        captionAlignment = "center",
+    )
+    else -> settings.copy(captionPreset = "custom")
+}
+
+@Composable
+private fun CaptionControlHeader(title: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f), color = AniLifeColors.Foreground, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(value, color = AniLifeColors.MutedForeground, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun CaptionOptionButton(
+    modifier: Modifier,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier.clip(shape)
+            .background(if (selected) AniLifeColors.Primary else Color.Transparent)
+            .border(1.dp, if (selected) AniLifeColors.Primary else AniLifeColors.Border, shape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 7.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        SettingsSliderRow(
-            value = settings.subtitleScale,
-            valueRange = 0.5f..2f,
-            valueLabel = "${(settings.subtitleScale * 100).toInt()}%",
-            onChange = { value -> onSettingsChange { it.copy(subtitleScale = value) } },
+        Text(
+            label,
+            color = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
+            fontSize = 11.sp,
+            maxLines = 1,
         )
     }
+}
+
+@Composable
+private fun CaptionColorSwatch(
+    color: String,
+    selected: Boolean,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier.size(28.dp)
+            .clip(CircleShape)
+            .background(captionColor(color, 1f))
+            .border(if (selected) 2.dp else 1.dp, if (selected) AniLifeColors.Primary else AniLifeColors.Border, CircleShape)
+            .semantics { contentDescription = description }
+            .selectable(selected, role = Role.RadioButton, onClick = onClick),
+    )
+}
+
+@Composable
+private fun CaptionSlider(
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    valueLabel: String,
+    onChange: (Float) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Slider(
+            value = value,
+            onValueChange = { onChange(it.coerceIn(range)) },
+            valueRange = range,
+            modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(
+                thumbColor = AniLifeColors.Primary,
+                activeTrackColor = AniLifeColors.Primary,
+                inactiveTrackColor = AniLifeColors.Muted,
+                activeTickColor = Color.Transparent,
+                inactiveTickColor = Color.Transparent,
+            ),
+        )
+        Text(valueLabel, color = AniLifeColors.MutedForeground, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+@Composable
+private fun SubtitlePreview(settings: AppSettings) {
+    val style = settings.subtitleAppearance
+    val fontFamily = remember(style.fontFamily, style.fontFile) {
+        captionPreviewFontFamily(style.fontFamily, style.fontFile)
+    }
+    val contentAlignment = when (style.verticalPosition) {
+        "top" -> when (style.alignment) {
+            "left" -> Alignment.TopStart
+            "right" -> Alignment.TopEnd
+            else -> Alignment.TopCenter
+        }
+        else -> when (style.alignment) {
+            "left" -> Alignment.BottomStart
+            "right" -> Alignment.BottomEnd
+            else -> Alignment.BottomCenter
+        }
+    }
+    val textAlignment = when (style.alignment) {
+        "left" -> TextAlign.Start
+        "right" -> TextAlign.End
+        else -> TextAlign.Center
+    }
+    val sample = "This is how subtitles will look,\nover whatever is playing."
+    val shadow = when (style.edgeStyle) {
+        "none" -> null
+        "shadow" -> Shadow(Color.Black.copy(alpha = 0.9f), Offset(2f, 2f), 4f)
+        else -> Shadow(Color.Black.copy(alpha = 0.95f), Offset(0f, 1f), 2f)
+    }
+    val outerShape = RoundedCornerShape(14.dp)
+
+    BoxWithConstraints(
+        Modifier.fillMaxWidth()
+            .aspectRatio(16f / 7f)
+            .clip(outerShape)
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF12203A), Color(0xFF60445F), Color(0xFF162B39)),
+                ),
+            ),
+    ) {
+        val topInset = if (style.verticalPosition == "top") maxHeight * style.verticalOffset / 100f else 0.dp
+        val bottomInset = if (style.verticalPosition == "bottom") maxHeight * style.verticalOffset / 100f else 0.dp
+        Box(
+            Modifier.fillMaxSize().padding(
+                start = 18.dp,
+                end = 18.dp,
+                top = topInset,
+                bottom = bottomInset,
+            ),
+            contentAlignment = contentAlignment,
+        ) {
+            Text(
+                sample,
+                Modifier.widthIn(max = 480.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(captionColor(style.backgroundColor, style.backgroundOpacity))
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                style = TextStyle(
+                    color = captionColor(style.textColor, style.textOpacity),
+                    fontFamily = fontFamily,
+                    fontSize = (18f * style.scale).sp,
+                    textAlign = textAlignment,
+                    shadow = shadow,
+                ),
+                lineHeight = (22f * style.scale).sp,
+            )
+        }
+        Text(
+            "SUBTITLE PREVIEW",
+            Modifier.align(Alignment.TopStart).padding(10.dp),
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+private fun captionPreviewFontFamily(fontFamily: String, fontFile: String): FontFamily {
+    if (fontFile.isNotBlank()) {
+        val file = File(fontFile)
+        if (file.isFile) runCatching { FontFamily(Font(file)) }.getOrNull()?.let { return it }
+    }
+    return when (fontFamily.lowercase()) {
+        "serif" -> FontFamily.Serif
+        "monospace" -> FontFamily.Monospace
+        "cursive" -> FontFamily.Cursive
+        else -> FontFamily.SansSerif
+    }
+}
+
+private fun captionColor(hex: String, opacity: Float): Color {
+    val rgb = hex.removePrefix("#").takeLast(6).toLongOrNull(16) ?: 0xFFFFFFL
+    return Color(0xFF000000L or rgb).copy(alpha = opacity.coerceIn(0f, 1f))
 }
 
 @Composable
@@ -679,26 +1119,206 @@ private fun AppSettingsPage(
 }
 
 @Composable
-private fun AboutSettings(mpvLibrary: String?) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("AniLife", color = AniLifeColors.Foreground, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "An anime watching app derived from the ruined reputation of AniLife and made with love.",
-            color = AniLifeColors.MutedForeground,
-            fontSize = 13.sp,
-            lineHeight = 20.sp,
-        )
-        AboutLine("Metadata", "AniList")
-        AboutLine(
-            "Player",
-            if (mpvLibrary != null) "libmpv · $mpvLibrary" else "libmpv not found (set -DAniLife.mpv.library=<path>)",
-        )
-        AboutLine("Providers", "Sandboxed WebAssembly modules, listed on the Providers screen.")
-        AboutLine("Interface", "Compose Desktop 1.7.3 · Kotlin 2.2.20")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip(text = "Made with love", container = AniLifeColors.Secondary, content = AniLifeColors.Foreground)
-            Chip(text = "No telemetry", container = AniLifeColors.Secondary, content = AniLifeColors.Foreground)
+private fun AboutSettings(currentVersion: String) {
+    val uriHandler = LocalUriHandler.current
+    var linkError by remember { mutableStateOf(false) }
+
+    fun openLink(uri: String) {
+        try {
+            uriHandler.openUri(uri)
+            linkError = false
+        } catch (_: Exception) {
+            linkError = true
         }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AboutCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(54.dp).clip(CircleShape).background(AniLifeColors.Primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Rounded.PlayCircle,
+                        contentDescription = null,
+                        tint = AniLifeColors.PrimaryForeground,
+                        modifier = Modifier.size(38.dp),
+                    )
+                }
+                Column(
+                    Modifier.padding(start = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text("AniLife", color = AniLifeColors.Foreground, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text("Version $currentVersion", color = AniLifeColors.MutedForeground, fontSize = 13.sp)
+                }
+            }
+
+            AboutLinkRow("W", "Website", "anilife.cc") {
+                openLink("https://anilife.cc")
+            }
+            AboutLinkRow("D", "Discord server", "Community, support, and release news") {
+                openLink("https://discord.gg/C3EUYzdfZZ")
+            }
+
+            Text(
+                "An anime app for finding episodes, keeping track of what you watch, and picking up where you left off.",
+                color = AniLifeColors.MutedForeground,
+                fontSize = 13.sp,
+                lineHeight = 20.sp,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Rounded.Favorite,
+                    contentDescription = null,
+                    tint = AniLifeColors.Primary,
+                    modifier = Modifier.size(17.dp),
+                )
+                Text(
+                    "  Made with love",
+                    color = AniLifeColors.Foreground,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Row(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .clickable { openLink("https://github.com/anilifecommunity/kotlindesktop") }
+                    .padding(vertical = 3.dp, horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.Star,
+                    contentDescription = null,
+                    tint = AniLifeColors.MutedForeground,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(
+                    "  Star the repo",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            if (linkError) {
+                Text(
+                    "Couldn't open that link. Please try again or open it in your browser.",
+                    color = AniLifeColors.Destructive,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+
+        AboutCard {
+            Text("Keyboard shortcuts", color = AniLifeColors.Foreground, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Player shortcuts work while a video is open.",
+                color = AniLifeColors.MutedForeground,
+                fontSize = 12.sp,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AboutShortcut(Modifier.weight(1f), "Space / K", "Play or pause")
+                    AboutShortcut(Modifier.weight(1f), "← / →", "Seek 5 seconds")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AboutShortcut(Modifier.weight(1f), "J / L", "Seek 10 seconds")
+                    AboutShortcut(Modifier.weight(1f), "↑ / ↓", "Change volume")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AboutShortcut(Modifier.weight(1f), "M", "Mute")
+                    AboutShortcut(Modifier.weight(1f), "F", "Fullscreen")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AboutShortcut(Modifier.weight(1f), "Z / X", "Subtitle delay")
+                    AboutShortcut(Modifier.weight(1f), "[ / ]", "Playback speed")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AboutShortcut(Modifier.weight(1f), "Enter", "Skip intro / outro")
+                    AboutShortcut(Modifier.weight(1f), "N / P", "Next / previous episode")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AboutCard(content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(shape)
+            .background(AniLifeColors.Card)
+            .border(1.dp, AniLifeColors.Border, shape)
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun AboutLinkRow(
+    badge: String,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(shape)
+            .background(AniLifeColors.Background)
+            .border(1.dp, AniLifeColors.Border, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(32.dp).clip(CircleShape).background(AniLifeColors.Primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(badge, color = AniLifeColors.PrimaryForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Column(
+            Modifier.weight(1f).padding(start = 10.dp, end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(title, color = AniLifeColors.Foreground, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = AniLifeColors.MutedForeground, fontSize = 12.sp, lineHeight = 17.sp)
+        }
+        Icon(
+            Icons.Rounded.Link,
+            contentDescription = "Open $title",
+            tint = AniLifeColors.MutedForeground,
+            modifier = Modifier.size(17.dp),
+        )
+    }
+}
+
+@Composable
+private fun AboutShortcut(modifier: Modifier, keyLabel: String, description: String) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        val shape = RoundedCornerShape(7.dp)
+        Text(
+            keyLabel,
+            Modifier.clip(shape)
+                .background(AniLifeColors.Background)
+                .border(1.dp, AniLifeColors.Border, shape)
+                .padding(horizontal = 7.dp, vertical = 5.dp),
+            color = AniLifeColors.Foreground,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+        Text(
+            description,
+            Modifier.weight(1f).padding(start = 8.dp),
+            color = AniLifeColors.MutedForeground,
+            fontSize = 11.sp,
+            maxLines = 2,
+            lineHeight = 15.sp,
+        )
     }
 }
 
@@ -961,18 +1581,5 @@ private fun DiscordConnectionRow(
         SettingsButton(if (state.status == DiscordPresenceStatus.Connected) "Reconnect" else "Connect") {
             onConnect()
         }
-    }
-}
-
-@Composable
-private fun AboutLine(label: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            label.uppercase(),
-            color = AniLifeColors.MutedForeground.copy(alpha = 0.7f),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(value, color = AniLifeColors.Foreground, fontSize = 13.sp, lineHeight = 19.sp)
     }
 }

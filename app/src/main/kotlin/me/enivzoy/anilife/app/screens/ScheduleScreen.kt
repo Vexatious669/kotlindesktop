@@ -1,32 +1,41 @@
-﻿package me.enivzoy.anilife.app.screens
+package me.enivzoy.anilife.app.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +43,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
@@ -43,27 +54,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.ui.AniLifeColors
-import me.enivzoy.anilife.app.ui.Chip
-import me.enivzoy.anilife.app.ui.EmptyPanel
 import me.enivzoy.anilife.app.ui.ErrorPanel
 import me.enivzoy.anilife.app.ui.LoadState
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.app.ui.Shimmer
-import me.enivzoy.anilife.app.ui.cardMeta
 import me.enivzoy.anilife.app.ui.loadState
 import me.enivzoy.anilife.app.ui.parseAnimeColor
 import me.enivzoy.anilife.core.model.AiringEntry
-import me.enivzoy.anilife.core.model.countdown
+import me.enivzoy.anilife.core.model.AnimeCard
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
-
- 
-
-
 
 @Composable
 fun ScheduleScreen(
@@ -72,78 +79,240 @@ fun ScheduleScreen(
 ) {
     var attempt by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<LoadState<List<AiringEntry>>>(LoadState.Loading) }
+    val libraryEntries by repository.library.entries.collectAsState()
 
     LaunchedEffect(attempt) {
         state = LoadState.Loading
         state = loadState { repository.schedule() }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(start = 32.dp, end = 32.dp, top = 30.dp, bottom = 8.dp)) {
-            Text("Schedule", color = AniLifeColors.Foreground, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(6.dp))
-            Text("Airing this week on AniList", color = AniLifeColors.MutedForeground, fontSize = 14.sp)
+    when (val current = state) {
+        LoadState.Loading -> ScheduleSkeleton()
+        is LoadState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            ErrorPanel(current.message, onRetry = { attempt++ })
+        }
+        is LoadState.Ready -> ScheduleContent(
+            entries = current.value,
+            library = libraryEntries,
+            onOpen = onOpen,
+        )
+    }
+}
+
+@Composable
+private fun ScheduleContent(
+    entries: List<AiringEntry>,
+    library: List<AnimeCard>,
+    onOpen: (Long) -> Unit,
+) {
+    val zone = remember { ZoneId.systemDefault() }
+    val today = remember(zone) { LocalDate.now(zone) }
+    var selectedDate by remember(today) { mutableStateOf(today) }
+    var onlyMyList by remember { mutableStateOf(false) }
+    var formatFilters by remember { mutableStateOf(emptySet<String>()) }
+    val libraryIds = remember(library) { library.mapTo(mutableSetOf()) { it.id } }
+    val visibleEntries = remember(entries, zone, formatFilters, onlyMyList, libraryIds) {
+        filterScheduleEntries(entries, formatFilters, libraryIds, onlyMyList)
+    }
+    val selectedEntries = remember(visibleEntries, selectedDate, zone) {
+        visibleEntries.filter { airingDate(it, zone) == selectedDate }.sortedBy { it.airingAt }
+    }
+    val dayCounts = remember(visibleEntries, zone) {
+        visibleEntries.groupingBy { airingDate(it, zone) }.eachCount()
+    }
+    val now = System.currentTimeMillis() / 1000
+
+    Column(
+        Modifier.fillMaxSize()
+            .background(AniLifeColors.Background)
+            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Schedule",
+                color = AniLifeColors.Foreground,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.weight(1f))
+            MyListButton(selected = onlyMyList, onClick = { onlyMyList = !onlyMyList })
         }
 
-        when (val current = state) {
-            LoadState.Loading -> ScheduleSkeleton()
-            is LoadState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                ErrorPanel(current.message, onRetry = { attempt++ })
-            }
-            is LoadState.Ready -> {
-                if (current.value.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        EmptyPanel(
-                            icon = Icons.Rounded.CalendarMonth,
-                            title = "Nothing airing",
-                            message = "AniList has no episodes scheduled for the next seven days.",
-                        )
-                    }
-                } else {
-                    ScheduleList(current.value, onOpen)
-                }
+        ScheduleDayStrip(
+            today = today,
+            selected = selectedDate,
+            counts = dayCounts,
+            onSelect = { selectedDate = it },
+            modifier = Modifier.padding(top = 14.dp),
+        )
+
+        Row(
+            Modifier.weight(1f).fillMaxWidth().padding(top = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            ScheduleTimeline(
+                date = selectedDate,
+                today = today,
+                entries = selectedEntries,
+                now = now,
+                onOpen = onOpen,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+            )
+            ScheduleSidebar(
+                entries = visibleEntries,
+                libraryIds = libraryIds,
+                counts = dayCounts,
+                selectedDate = selectedDate,
+                month = YearMonth.from(selectedDate),
+                now = now,
+                formatFilters = formatFilters,
+                onSelectDate = { selectedDate = it },
+                onToggleFormat = { format ->
+                    formatFilters = if (format in formatFilters) formatFilters - format else formatFilters + format
+                },
+                onOpen = onOpen,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MyListButton(selected: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier.clip(shape)
+            .background(if (selected) AniLifeColors.Primary else AniLifeColors.Card)
+            .border(1.dp, if (selected) AniLifeColors.Primary else AniLifeColors.Border, shape)
+            .clickable(onClick = onClick)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(horizontal = 13.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Icon(
+            Icons.Rounded.BookmarkBorder,
+            contentDescription = null,
+            tint = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            "My list",
+            color = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun ScheduleDayStrip(
+    today: LocalDate,
+    selected: LocalDate,
+    counts: Map<LocalDate, Int>,
+    onSelect: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        scheduleDateWindow(today).forEach { date ->
+            val isSelected = date == selected
+            val shape = RoundedCornerShape(13.dp)
+            Column(
+                Modifier.weight(1f)
+                    .height(68.dp)
+                    .clip(shape)
+                    .background(if (isSelected) AniLifeColors.Primary else AniLifeColors.Card.copy(alpha = 0.45f))
+                    .border(1.dp, if (isSelected) AniLifeColors.Primary else AniLifeColors.Border, shape)
+                    .clickable { onSelect(date) }
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .padding(horizontal = 4.dp, vertical = 7.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    dateLabel(date, today),
+                    color = if (isSelected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    date.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())),
+                    color = if (isSelected) AniLifeColors.PrimaryForeground.copy(alpha = 0.78f) else AniLifeColors.MutedForeground,
+                    fontSize = 10.sp,
+                )
+                Text(
+                    "${counts[date] ?: 0} eps",
+                    color = if (isSelected) AniLifeColors.PrimaryForeground else AniLifeColors.MutedForeground,
+                    fontSize = 10.sp,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ScheduleList(entries: List<AiringEntry>, onOpen: (Long) -> Unit) {
-    val zone = remember { ZoneId.systemDefault() }
-    val today = remember { LocalDate.now(zone) }
-    val grouped = remember(entries, zone) {
-        entries.groupBy { Instant.ofEpochSecond(it.airingAt).atZone(zone).toLocalDate() }
-    }
+private fun ScheduleTimeline(
+    date: LocalDate,
+    today: LocalDate,
+    entries: List<AiringEntry>,
+    now: Long,
+    onOpen: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val listState = rememberLazyListState()
-
-    Box(Modifier.fillMaxSize()) {
+    val groups = remember(entries) {
+        entries.sortedBy { it.airingAt }
+            .groupBy { Instant.ofEpochSecond(it.airingAt).atZone(ZoneId.systemDefault()).toLocalDateTime().withSecond(0).withNano(0) }
+            .toList()
+    }
+    Box(modifier) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 48.dp),
+            contentPadding = PaddingValues(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp),
         ) {
-            grouped.forEach { (date, dayEntries) ->
-                item(key = "day-$date") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            item(key = "schedule-date-heading") {
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = date.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault())),
+                        color = AniLifeColors.Foreground,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "· ${entries.size} episodes · ${entries.count { it.airingAt < now }} aired",
+                        color = AniLifeColors.MutedForeground,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+            if (groups.isEmpty()) {
+                item(key = "schedule-empty") {
+                    Box(
+                        Modifier.fillMaxWidth().padding(top = 70.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = dayLabel(date, today),
-                            color = AniLifeColors.Foreground,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "${dayEntries.size} episode${if (dayEntries.size == 1) "" else "s"}",
+                            "Nothing scheduled for ${dateLabel(date, today).lowercase()}",
                             color = AniLifeColors.MutedForeground,
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                         )
                     }
                 }
-                items(items = dayEntries, key = { "${it.anime.id}-${it.airingAt}" }) { entry ->
-                    ScheduleRow(entry = entry, zone = zone, onOpen = onOpen)
+            } else {
+                items(groups, key = { (time, _) -> time.toString() }) { (time, groupEntries) ->
+                    ScheduleTimeGroup(
+                        time = time,
+                        entries = groupEntries,
+                        now = now,
+                        onOpen = onOpen,
+                    )
                 }
             }
         }
@@ -152,102 +321,475 @@ private fun ScheduleList(entries: List<AiringEntry>, onOpen: (Long) -> Unit) {
 }
 
 @Composable
-private fun ScheduleRow(entry: AiringEntry, zone: ZoneId, onOpen: (Long) -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val time = remember(entry.airingAt, zone) {
-        Instant.ofEpochSecond(entry.airingAt).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
-    }
-    val tint = remember(entry.anime.color) { parseAnimeColor(entry.anime.color) }
-
+private fun ScheduleTimeGroup(
+    time: LocalDateTime,
+    entries: List<AiringEntry>,
+    now: Long,
+    onOpen: (Long) -> Unit,
+) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (hovered) AniLifeColors.Card else AniLifeColors.Background.copy(alpha = 0f))
-            .clickable(interactionSource = interaction, indication = null) { onOpen(entry.anime.id) }
-            .pointerHoverIcon(PointerIcon.Hand)
-            .padding(horizontal = 10.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        Column(Modifier.width(62.dp)) {
-            Text(time, color = AniLifeColors.Foreground, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Text(countdown(entry.airingAt), color = AniLifeColors.MutedForeground, fontSize = 11.sp, maxLines = 1)
-        }
-        RemoteImage(
-            url = entry.anime.cover,
-            contentDescription = entry.anime.title,
-            modifier = Modifier.width(44.dp).height(66.dp).clip(RoundedCornerShape(6.dp)),
-            placeholderColor = tint,
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.width(75.dp).padding(top = 2.dp)) {
             Text(
-                text = entry.anime.title,
+                time.format(DateTimeFormatter.ofPattern("h:mm", Locale.getDefault())),
                 color = AniLifeColors.Foreground,
                 fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                relativeAiring(entries.first().airingAt, now),
+                color = AniLifeColors.MutedForeground,
+                fontSize = 10.sp,
+                maxLines = 1,
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            entries.chunked(3).forEach { rowEntries ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    rowEntries.forEach { entry ->
+                        ScheduleEpisodeCard(
+                            entry = entry,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onOpen(entry.anime.id) },
+                        )
+                    }
+                    repeat(3 - rowEntries.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleEpisodeCard(
+    entry: AiringEntry,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val anime = entry.anime
+    val shape = RoundedCornerShape(13.dp)
+    val tint = remember(anime.color) { parseAnimeColor(anime.color) }
+    Row(
+        modifier.clip(shape)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(tint.copy(alpha = 0.25f), AniLifeColors.Card, AniLifeColors.Card),
+                ),
+            )
+            .border(BorderStroke(1.dp, AniLifeColors.Border), shape)
+            .clickable(onClick = onClick)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(10.dp)
+            .height(88.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        RemoteImage(
+            url = anime.cover,
+            contentDescription = anime.title,
+            modifier = Modifier.width(58.dp).fillMaxHeight().clip(RoundedCornerShape(8.dp)),
+            placeholderColor = tint,
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                anime.title,
+                color = AniLifeColors.Foreground,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = if (entry.anime.genres.isNotEmpty()) {
-                    entry.anime.genres.take(3).joinToString(" · ")
-                } else {
-                    cardMeta(entry.anime)
-                },
+                "Episode ${entry.episode}${anime.episodes?.let { " / $it" }.orEmpty()}",
                 color = AniLifeColors.MutedForeground,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
+                maxLines = 1,
+            )
+            Text(
+                listOfNotNull(anime.format?.let(::formatLabel), anime.genres.firstOrNull())
+                    .joinToString(" · "),
+                color = AniLifeColors.MutedForeground,
+                fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(12.dp))
-        Chip(
-            text = "Episode ${entry.episode}",
-            container = AniLifeColors.Secondary,
-            content = AniLifeColors.Foreground,
-            modifier = Modifier.widthIn(min = 72.dp),
-        )
+        IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
+            Box(
+                Modifier.fillMaxSize()
+                    .clip(CircleShape)
+                    .background(AniLifeColors.Primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.PlayArrow,
+                    contentDescription = "Open ${anime.title}",
+                    tint = AniLifeColors.PrimaryForeground,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun ScheduleSkeleton() {
-    val listState = rememberLazyListState()
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 24.dp, bottom = 48.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+private fun ScheduleSidebar(
+    entries: List<AiringEntry>,
+    libraryIds: Set<Long>,
+    counts: Map<LocalDate, Int>,
+    selectedDate: LocalDate,
+    month: YearMonth,
+    now: Long,
+    formatFilters: Set<String>,
+    onSelectDate: (LocalDate) -> Unit,
+    onToggleFormat: (String) -> Unit,
+    onOpen: (Long) -> Unit,
+) {
+    var calendarMonth by remember(selectedDate) { mutableStateOf(month) }
+    val upcoming = entries.filter { it.airingAt >= now }.minByOrNull { it.airingAt }
+    val fromLibrary = entries
+        .filter { it.airingAt >= now && it.anime.id in libraryIds }
+        .sortedBy { it.airingAt }
+        .take(4)
+
+    Column(
+        Modifier.width(300.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(13.dp),
+    ) {
+        upcoming?.let { UpcomingCard(it, now, onOpen) }
+        FromLibraryCard(fromLibrary, onOpen)
+        CalendarCard(
+            month = calendarMonth,
+            counts = counts,
+            selectedDate = selectedDate,
+            onPrevious = { calendarMonth = calendarMonth.minusMonths(1) },
+            onNext = { calendarMonth = calendarMonth.plusMonths(1) },
+            onSelectDate = { date ->
+                calendarMonth = YearMonth.from(date)
+                onSelectDate(date)
+            },
+        )
+        FormatFilters(formatFilters, onToggleFormat)
+    }
+}
+
+@Composable
+private fun UpcomingCard(entry: AiringEntry, now: Long, onOpen: (Long) -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    val tint = remember(entry.anime.color) { parseAnimeColor(entry.anime.color) }
+    Box(
+        Modifier.fillMaxWidth().height(154.dp)
+            .clip(shape)
+            .background(AniLifeColors.Card)
+            .border(1.dp, AniLifeColors.Border, shape)
+            .clickable { onOpen(entry.anime.id) }
+            .pointerHoverIcon(PointerIcon.Hand),
+    ) {
+        RemoteImage(
+            url = entry.anime.cover,
+            contentDescription = null,
+            modifier = Modifier.matchParentSize().alpha(0.18f),
+            placeholderColor = tint,
+        )
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.verticalGradient(
+                    listOf(AniLifeColors.Card.copy(alpha = 0.18f), AniLifeColors.Background.copy(alpha = 0.96f)),
+                ),
+            ),
+        )
+        Column(
+            Modifier.fillMaxSize().padding(13.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            item {
-                Shimmer(Modifier.width(140.dp).height(18.dp), RoundedCornerShape(4.dp))
+            Text(
+                "UP NEXT",
+                Modifier.clip(RoundedCornerShape(5.dp))
+                    .background(AniLifeColors.Primary)
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                color = AniLifeColors.PrimaryForeground,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Column {
+                Text(
+                    entry.anime.title,
+                    color = AniLifeColors.Foreground,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text("Episode ${entry.episode}", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    relativeAiring(entry.airingAt, now),
+                    color = AniLifeColors.Primary,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
-            items(8) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Shimmer(Modifier.width(52.dp).height(28.dp), RoundedCornerShape(4.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Shimmer(Modifier.width(44.dp).height(66.dp), RoundedCornerShape(6.dp))
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Shimmer(Modifier.fillMaxWidth(0.5f).height(14.dp), RoundedCornerShape(4.dp))
-                        Shimmer(Modifier.fillMaxWidth(0.3f).height(10.dp), RoundedCornerShape(4.dp))
+        }
+    }
+}
+
+@Composable
+private fun FromLibraryCard(entries: List<AiringEntry>, onOpen: (Long) -> Unit) {
+    SchedulePanel {
+        Text("From your list this week", color = AniLifeColors.Foreground, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        if (entries.isEmpty()) {
+            Text(
+                "No upcoming episodes from your list.",
+                color = AniLifeColors.MutedForeground,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                entries.forEach { entry ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(7.dp))
+                            .clickable { onOpen(entry.anime.id) }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RemoteImage(
+                            url = entry.anime.cover,
+                            contentDescription = entry.anime.title,
+                            modifier = Modifier.width(28.dp).height(38.dp).clip(RoundedCornerShape(5.dp)),
+                            placeholderColor = AniLifeColors.CardHover,
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                entry.anime.title,
+                                color = AniLifeColors.Foreground,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text("Episode ${entry.episode}", color = AniLifeColors.MutedForeground, fontSize = 10.sp)
+                        }
+                        Text(
+                            Instant.ofEpochSecond(entry.airingAt).atZone(ZoneId.systemDefault())
+                                .format(DateTimeFormatter.ofPattern("EEE HH:mm", Locale.getDefault())),
+                            color = AniLifeColors.MutedForeground,
+                            fontSize = 10.sp,
+                        )
                     }
                 }
             }
         }
-        PageScrollbar(rememberScrollbarAdapter(listState), Modifier.align(Alignment.CenterEnd))
     }
 }
 
-private fun dayLabel(date: LocalDate, today: LocalDate): String = when (date) {
-    today -> "Today"
-    today.plusDays(1) -> "Tomorrow"
-    else -> date.format(DateTimeFormatter.ofPattern("EEEE, MMM d", Locale.getDefault()))
+@Composable
+private fun CalendarCard(
+    month: YearMonth,
+    counts: Map<LocalDate, Int>,
+    selectedDate: LocalDate,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+) {
+    val locale = Locale.getDefault()
+    val first = month.atDay(1)
+    val daysBeforeMonth = first.dayOfWeek.value % 7
+    val dates = (0 until 42).map { first.minusDays(daysBeforeMonth.toLong()).plusDays(it.toLong()) }
+
+    SchedulePanel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onPrevious, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Rounded.ChevronLeft, "Previous month", tint = AniLifeColors.MutedForeground, modifier = Modifier.size(17.dp))
+            }
+            Text(
+                month.format(DateTimeFormatter.ofPattern("MMMM yyyy", locale)),
+                Modifier.weight(1f),
+                color = AniLifeColors.Foreground,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            IconButton(onClick = onNext, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Rounded.ChevronRight, "Next month", tint = AniLifeColors.MutedForeground, modifier = Modifier.size(17.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)) {
+            listOf("S", "M", "T", "W", "T", "F", "S").forEach { day ->
+                Text(
+                    day,
+                    Modifier.weight(1f),
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 10.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        }
+        dates.chunked(7).forEach { week ->
+            Row(Modifier.fillMaxWidth()) {
+                week.forEach { date ->
+                    val selected = date == selectedDate
+                    val inMonth = YearMonth.from(date) == month
+                    Column(
+                        Modifier.weight(1f)
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (selected) AniLifeColors.Primary else AniLifeColors.Background.copy(alpha = 0f))
+                            .clickable { onSelectDate(date) }
+                            .pointerHoverIcon(PointerIcon.Hand),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            date.dayOfMonth.toString(),
+                            color = when {
+                                selected -> AniLifeColors.PrimaryForeground
+                                inMonth -> AniLifeColors.Foreground
+                                else -> AniLifeColors.MutedForeground.copy(alpha = 0.45f)
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        val count = counts[date] ?: 0
+                        if (count > 0) {
+                            Text(
+                                count.toString(),
+                                color = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.MutedForeground,
+                                fontSize = 8.sp,
+                                lineHeight = 8.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
+@Composable
+private fun FormatFilters(selected: Set<String>, onToggle: (String) -> Unit) {
+    val formats = listOf("TV", "TV Short", "ONA", "Special", "Movie")
+    SchedulePanel {
+        Text("Filters", color = AniLifeColors.Foreground, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            formats.take(3).forEach { format ->
+                FormatChip(format, format in selected, onToggle)
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            formats.drop(3).forEach { format ->
+                FormatChip(format, format in selected, onToggle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FormatChip(text: String, selected: Boolean, onToggle: (String) -> Unit) {
+    val shape = RoundedCornerShape(100.dp)
+    Text(
+        text,
+        Modifier.clip(shape)
+            .background(if (selected) AniLifeColors.Primary else AniLifeColors.Background.copy(alpha = 0f))
+            .border(1.dp, if (selected) AniLifeColors.Primary else AniLifeColors.Border, shape)
+            .clickable { onToggle(text) }
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        color = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
+        fontSize = 10.sp,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        maxLines = 1,
+    )
+}
+
+@Composable
+private fun SchedulePanel(content: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AniLifeColors.Card.copy(alpha = 0.55f))
+            .border(1.dp, AniLifeColors.Border, RoundedCornerShape(14.dp))
+            .padding(12.dp),
+        content = { content() },
+    )
+}
+
+@Composable
+private fun ScheduleSkeleton() {
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Shimmer(Modifier.width(180.dp).height(30.dp), RoundedCornerShape(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeat(9) {
+                Shimmer(Modifier.weight(1f).height(68.dp), RoundedCornerShape(12.dp))
+            }
+        }
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                repeat(6) {
+                    Shimmer(Modifier.fillMaxWidth().height(112.dp), RoundedCornerShape(13.dp))
+                }
+            }
+            Shimmer(Modifier.width(300.dp).fillMaxHeight(), RoundedCornerShape(16.dp))
+        }
+    }
+}
+
+internal fun scheduleDateWindow(today: LocalDate): List<LocalDate> =
+    (-2L..6L).map(today::plusDays)
+
+internal fun filterScheduleEntries(
+    entries: List<AiringEntry>,
+    formatFilters: Set<String>,
+    libraryIds: Set<Long>,
+    onlyMyList: Boolean,
+): List<AiringEntry> = entries.filter { entry ->
+    (!onlyMyList || entry.anime.id in libraryIds) &&
+        (formatFilters.isEmpty() || formatLabel(entry.anime.format) in formatFilters)
+}
+
+private fun airingDate(entry: AiringEntry, zone: ZoneId): LocalDate =
+    Instant.ofEpochSecond(entry.airingAt).atZone(zone).toLocalDate()
+
+private fun dateLabel(date: LocalDate, today: LocalDate): String = when (date) {
+    today -> "Today"
+    today.minusDays(1) -> "Yesterday"
+    today.plusDays(1) -> "Tomorrow"
+    else -> date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())
+}
+
+private fun formatLabel(format: String?): String? = when (format?.uppercase()) {
+    "TV" -> "TV"
+    "TV_SHORT" -> "TV Short"
+    "ONA" -> "ONA"
+    "SPECIAL" -> "Special"
+    "MOVIE" -> "Movie"
+    else -> format?.replace('_', ' ')?.lowercase()?.replaceFirstChar(Char::uppercase)
+}
+
+private fun relativeAiring(airingAt: Long, now: Long): String {
+    val delta = airingAt - now
+    val minutes = kotlin.math.abs(delta) / 60
+    val value = when {
+        minutes >= 1_440 -> "${minutes / 1_440}d ${minutes % 1_440 / 60}h"
+        minutes >= 60 -> "${minutes / 60}h ${minutes % 60}m"
+        else -> "${minutes.coerceAtLeast(1)}m"
+    }
+    return if (delta >= 0) "in $value" else "$value ago"
+}

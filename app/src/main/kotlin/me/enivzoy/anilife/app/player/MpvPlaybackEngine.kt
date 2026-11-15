@@ -11,6 +11,7 @@ import me.enivzoy.anilife.mpv.Mpv
 import me.enivzoy.anilife.mpv.PropertyValue
 import me.enivzoy.anilife.mpv.defaultPlayerOptions
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
+import me.enivzoy.anilife.app.data.SubtitleAppearance
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -20,6 +21,7 @@ import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image as SkiaImage
 import org.jetbrains.skia.ImageInfo
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
@@ -69,7 +71,7 @@ class MpvPlaybackEngine(
     private val startPositionSeconds: Double = 0.0,
     private val subtitlesByDefault: Boolean = true,
     private val subtitleLanguage: String = "en",
-    private val subtitleScale: Float = 1f,
+    subtitleAppearance: SubtitleAppearance = SubtitleAppearance(),
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
@@ -100,6 +102,7 @@ class MpvPlaybackEngine(
     @Volatile private var player: Mpv? = null
     @Volatile private var surface: Mpv.SoftwareVideoSurface? = null
     @Volatile private var worker: Thread? = null
+    @Volatile private var activeSubtitleAppearance = subtitleAppearance
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -110,6 +113,7 @@ class MpvPlaybackEngine(
         try {
             val mpv = Mpv(initialOptions = playbackOptions(headers))
             player = mpv
+            applySubtitleAppearanceTo(mpv, activeSubtitleAppearance)
             mpv.observeDouble("time-pos")
             mpv.observeDouble("duration")
             mpv.observeFlag("pause")
@@ -266,6 +270,17 @@ class MpvPlaybackEngine(
         player?.setPropertyValue("panscan", if (scale == "crop") "1" else "0")
     }
 
+    fun applySubtitleAppearance(appearance: SubtitleAppearance) {
+        activeSubtitleAppearance = appearance
+        player?.let { applySubtitleAppearanceTo(it, appearance) }
+    }
+
+    private fun applySubtitleAppearanceTo(mpv: Mpv, appearance: SubtitleAppearance) {
+        subtitleAppearanceOptions(appearance)
+            .filterNot { it.first == "sub-fonts-dir" }
+            .forEach { (name, value) -> mpv.setPropertyValue(name, value) }
+    }
+
     private fun refreshSubtitleTracks() {
         val text = runCatching { player?.getStringProperty("track-list") }.getOrNull() ?: return
         subtitleTracks = runCatching {
@@ -319,7 +334,8 @@ class MpvPlaybackEngine(
         options += "hwdec" to "no"
         // Captions are drawn into the rendered frame, so they follow these options too.
         options += "sub-visibility" to "yes"
-        options += "sub-scale" to subtitleScale.coerceIn(0.5f, 2f).toString()
+        options += subtitleAppearanceOptions(activeSubtitleAppearance)
+        options += "sub-ass-override" to "no"
         subtitleLanguage.trim().lowercase()
             .takeIf { it.isNotEmpty() && it != "none" }
             ?.let { options += "slang" to it }
@@ -329,5 +345,29 @@ class MpvPlaybackEngine(
         if (fields.isNotEmpty()) options += "http-header-fields" to fields.joinToString(",")
         return options
     }
+}
+
+internal fun subtitleAppearanceOptions(appearance: SubtitleAppearance): List<Pair<String, String>> {
+    val position = appearance.verticalOffset.coerceIn(0f, 30f)
+    return buildList {
+        add("sub-font" to appearance.fontFamily)
+        add("sub-scale" to appearance.scale.coerceIn(0.5f, 2f).toString())
+        add("sub-color" to mpvSubtitleColor(appearance.textColor, appearance.textOpacity))
+        add("sub-back-color" to mpvSubtitleColor(appearance.backgroundColor, appearance.backgroundOpacity))
+        add("sub-border-color" to "#FF000000")
+        add("sub-border-size" to if (appearance.edgeStyle == "outline") "2.5" else "0")
+        add("sub-shadow-color" to "#CC000000")
+        add("sub-shadow-offset" to if (appearance.edgeStyle == "shadow") "2" else "0")
+        add("sub-pos" to if (appearance.verticalPosition == "top") position.toInt().toString() else (100f - position).toInt().toString())
+        add("sub-align-x" to appearance.alignment)
+        File(appearance.fontFile).takeIf { appearance.fontFile.isNotBlank() }?.parentFile
+            ?.let { add("sub-fonts-dir" to it.absolutePath) }
+    }
+}
+
+private fun mpvSubtitleColor(color: String, opacity: Float): String {
+    val rgb = color.removePrefix("#").takeLast(6).uppercase()
+    val alpha = (opacity.coerceIn(0f, 1f) * 255).toInt().toString(16).uppercase().padStart(2, '0')
+    return "#$alpha$rgb"
 }
 

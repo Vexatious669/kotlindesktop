@@ -19,11 +19,12 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,23 +38,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import me.enivzoy.anilife.app.data.AniListSync
-import me.enivzoy.anilife.app.data.AniListUser
+import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.MyAnimeListEntry
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.ui.AniLifeColors
 
 @Composable
-fun MyAnimeListScreen() {
+fun MyAnimeListScreen(repository: AniListRepository) {
     val user by MyAnimeListSync.user.collectAsState()
     val configured by MyAnimeListSync.configured.collectAsState()
-    val anilistUser by AniListSync.user.collectAsState()
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<MyAnimeListEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    suspend fun refreshList() {
+    suspend fun refreshMalList() {
         loading = true
         error = null
         try {
@@ -67,23 +66,24 @@ fun MyAnimeListScreen() {
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(user?.id) {
-        if (user != null) refreshList()
+    LaunchedEffect(user?.id) {
+        if (user != null) refreshMalList()
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 28.dp)) {
         Text("Accounts", color = AniLifeColors.Foreground, fontSize = 30.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
         Text("Connect your tracking accounts to sync your list and watched progress.", color = AniLifeColors.MutedForeground, fontSize = 14.sp)
         Spacer(Modifier.height(20.dp))
+
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AniLifeColors.Card).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (user == null) {
-                Text("Connect your account", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                Text("Connect your MyAnimeList account", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                 Text(
-                    if (configured) "Client ID loaded from the local .env file."
-                    else "Add MAL_CLIENT_ID to the local .env file to enable sign-in.",
+                    if (configured) "MyAnimeList is available for account sync."
+                    else "MyAnimeList client configuration is unavailable.",
                     color = AniLifeColors.MutedForeground,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -96,7 +96,7 @@ fun MyAnimeListScreen() {
                             error = null
                             try {
                                 MyAnimeListSync.connect()
-                                refreshList()
+                                refreshMalList()
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (failure: Throwable) {
@@ -120,79 +120,39 @@ fun MyAnimeListScreen() {
                         Text(user?.name.orEmpty(), color = AniLifeColors.Foreground, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                         Text("Connected to MyAnimeList", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
                     }
-                    OutlinedButton(onClick = { scope.launch { refreshList() } }, enabled = !loading) {
+                    OutlinedButton(onClick = { scope.launch { refreshMalList() } }, enabled = !loading) {
                         Icon(Icons.Rounded.Refresh, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Sync now")
                     }
-                    TextButton(onClick = { scope.launch { MyAnimeListSync.disconnect(); entries = emptyList() } }) { Text("Disconnect") }
+                    TextButton(onClick = {
+                        scope.launch {
+                            MyAnimeListSync.disconnect()
+                            entries = emptyList()
+                        }
+                    }) { Text("Disconnect") }
                 }
                 Text("Completed episodes sync to your MAL list after playback finishes.", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
             }
             error?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp) }
         }
+
         Spacer(Modifier.height(18.dp))
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AniLifeColors.Card).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (anilistUser == null) {
-                Text("Connect your AniList account", color = AniLifeColors.Foreground, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                Text(
-                    "Client ID: ${me.enivzoy.anilife.app.data.AniListConfig.clientId()}",
-                    color = AniLifeColors.MutedForeground,
-                    fontSize = 11.sp,
-                )
-                Button(
-                    onClick = {
-                        AniListSync.beginAuth()
-                        val pasted = javax.swing.JOptionPane.showInputDialog(null, "Paste the code (or access token) shown on the AniList pin page", "AniList sign-in", javax.swing.JOptionPane.PLAIN_MESSAGE)
-                        if (!pasted.isNullOrBlank()) {
-                            scope.launch {
-                                loading = true
-                                error = null
-                                try {
-                                    AniListSync.submitPasted(pasted)
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (failure: Throwable) {
-                                    error = failure.message ?: "AniList sign-in failed."
-                                } finally {
-                                    loading = false
-                                }
-                            }
-                        }
-                    },
-                    enabled = !loading,
-                ) {
-                    if (loading) CircularProgressIndicator(Modifier.width(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Rounded.Person, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (loading) "Connecting…" else "Connect AniList")
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Rounded.Person, contentDescription = null, tint = AniLifeColors.Primary)
-                    Column(Modifier.weight(1f)) {
-                        Text(anilistUser?.name.orEmpty(), color = AniLifeColors.Foreground, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                        Text("Connected to AniList", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
-                    }
-                    TextButton(onClick = { AniListSync.disconnect() }) { Text("Disconnect") }
-                }
-            }
-            error?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp) }
-        }
+        AniListAccountSettings(repository)
+
         if (user != null) {
             Spacer(Modifier.height(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Rounded.Sync, contentDescription = null, tint = AniLifeColors.MutedForeground)
-                Text("My list", color = AniLifeColors.Foreground, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                Text("MyAnimeList list", color = AniLifeColors.Foreground, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                 Text("${entries.size} titles", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
             }
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 items(entries, key = { it.id }) { entry ->
                     Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(AniLifeColors.Card.copy(alpha = 0.65f)).padding(horizontal = 12.dp, vertical = 10.dp),
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                            .background(AniLifeColors.Card.copy(alpha = 0.65f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(entry.title, color = AniLifeColors.Foreground, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)

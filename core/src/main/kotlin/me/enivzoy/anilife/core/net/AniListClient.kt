@@ -336,7 +336,7 @@ class AniListClient(
         """.trimIndent()
 
         val entries = mutableListOf<AiringEntry>()
-        for (page in 1..4) {
+        for (page in 1..8) {
             val data = execute(
                 query,
                 buildJsonObject {

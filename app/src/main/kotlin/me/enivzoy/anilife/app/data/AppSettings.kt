@@ -8,6 +8,55 @@ import java.util.Properties
 
 const val DEFAULT_DISCORD_APPLICATION_ID = "1567301811604553728"
 
+enum class HomeSection(val label: String) {
+    CONTINUE_WATCHING("Continue watching"),
+    BECAUSE_YOU_WATCHED("Because you watched..."),
+    NEW_EPISODES("New episodes"),
+    TRENDING_NOW("Trending now"),
+    THIS_SEASON("This season"),
+    ALL_TIME_POPULAR("All-time popular"),
+    TOP_RATED("Top rated"),
+    MOVIES("Movies"),
+    COMING_SOON("Coming soon"),
+    MY_LIBRARY("My library"),
+    ;
+
+    companion object {
+        val defaultOrder: List<HomeSection> = entries.toList()
+
+        fun parseOrder(value: String?): List<HomeSection> {
+            val stored = value.orEmpty().split(',')
+                .mapNotNull { name -> entries.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) } }
+                .distinct()
+            return stored + entries.filterNot(stored::contains)
+        }
+
+        fun parseHidden(value: String?): Set<HomeSection> =
+            value.orEmpty().split(',')
+                .mapNotNull { name -> entries.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) } }
+                .toSet()
+
+        fun normalizeOrder(order: List<HomeSection>): List<HomeSection> {
+            val unique = order.distinct()
+            return unique + entries.filterNot(unique::contains)
+        }
+    }
+}
+
+data class SubtitleAppearance(
+    val fontFamily: String = "sans-serif",
+    val fontFile: String = "",
+    val scale: Float = 1f,
+    val textColor: String = "#FFFFFF",
+    val textOpacity: Float = 1f,
+    val backgroundColor: String = "#000000",
+    val backgroundOpacity: Float = 0f,
+    val edgeStyle: String = "outline",
+    val verticalPosition: String = "bottom",
+    val verticalOffset: Float = 3f,
+    val alignment: String = "center",
+)
+
 data class AppSettings(
     val audio: String = "sub",
     val subtitleLanguage: String = "en",
@@ -25,7 +74,7 @@ data class AppSettings(
     val volume: Int = 100,
     val subtitleScale: Float = 1f,
     val checkUpdatesOnLaunch: Boolean = true,
-    val captionFont: String = "SansSerif",
+    val captionFont: String = "sans-serif",
     val captionFontFile: String = "",
     val buttonColor: String = "#87D66A",
     val backgroundColor: String = "#0A0F0A",
@@ -45,7 +94,33 @@ data class AppSettings(
     val titleLanguage: String = "english",
     val discordPresenceEnabled: Boolean = true,
     val discordApplicationId: String = DEFAULT_DISCORD_APPLICATION_ID,
-)
+    val homeSectionOrder: List<HomeSection> = HomeSection.defaultOrder,
+    val hiddenHomeSections: Set<HomeSection> = emptySet(),
+    val captionTextColor: String = "#FFFFFF",
+    val captionTextOpacity: Float = 1f,
+    val captionBackgroundColor: String = "#000000",
+    val captionBackgroundOpacity: Float = 0f,
+    val captionEdgeStyle: String = "outline",
+    val captionVerticalPosition: String = "bottom",
+    val captionVerticalOffset: Float = 3f,
+    val captionAlignment: String = "center",
+    val captionPreset: String = "classic",
+) {
+    val subtitleAppearance: SubtitleAppearance
+        get() = SubtitleAppearance(
+            fontFamily = captionFont,
+            fontFile = captionFontFile,
+            scale = subtitleScale,
+            textColor = captionTextColor,
+            textOpacity = captionTextOpacity,
+            backgroundColor = captionBackgroundColor,
+            backgroundOpacity = captionBackgroundOpacity,
+            edgeStyle = captionEdgeStyle,
+            verticalPosition = captionVerticalPosition,
+            verticalOffset = captionVerticalOffset,
+            alignment = captionAlignment,
+        )
+}
 
 class AppSettingsStore(private val file: File = settingsFile()) {
     private val lock = Any()
@@ -79,7 +154,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             volume = properties.getProperty("volume", "100").toIntOrNull() ?: 100,
             subtitleScale = properties.getProperty("subtitleScale", "1.0").toFloatOrNull() ?: 1f,
             checkUpdatesOnLaunch = properties.getProperty("checkUpdatesOnLaunch", "true").toBooleanStrictOrNull() ?: true,
-            captionFont = properties.getProperty("captionFont", "SansSerif"),
+            captionFont = properties.getProperty("captionFont", "sans-serif"),
             captionFontFile = properties.getProperty("captionFontFile", ""),
             buttonColor = properties.getProperty("buttonColor", "#87D66A"),
             backgroundColor = properties.getProperty("backgroundColor", "#0A0F0A"),
@@ -99,6 +174,17 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             titleLanguage = properties.getProperty("titleLanguage") ?: if (properties.getProperty("preferEnglishTitles", "true").toBooleanStrictOrNull() ?: true) "english" else "romaji",
             discordPresenceEnabled = properties.getProperty("discordPresenceEnabled", "true").toBooleanStrictOrNull() ?: true,
             discordApplicationId = properties.getProperty("discordApplicationId", DEFAULT_DISCORD_APPLICATION_ID),
+            homeSectionOrder = HomeSection.parseOrder(properties.getProperty("homeSectionOrder")),
+            hiddenHomeSections = HomeSection.parseHidden(properties.getProperty("hiddenHomeSections")),
+            captionTextColor = properties.getProperty("captionTextColor", "#FFFFFF"),
+            captionTextOpacity = properties.getProperty("captionTextOpacity", "1.0").toFloatOrNull() ?: 1f,
+            captionBackgroundColor = properties.getProperty("captionBackgroundColor", "#000000"),
+            captionBackgroundOpacity = properties.getProperty("captionBackgroundOpacity", "0.0").toFloatOrNull() ?: 0f,
+            captionEdgeStyle = properties.getProperty("captionEdgeStyle", "outline"),
+            captionVerticalPosition = properties.getProperty("captionVerticalPosition", "bottom"),
+            captionVerticalOffset = properties.getProperty("captionVerticalOffset", "3.0").toFloatOrNull() ?: 3f,
+            captionAlignment = properties.getProperty("captionAlignment", "center"),
+            captionPreset = properties.getProperty("captionPreset", "classic"),
         ).validated()
     }
 
@@ -141,6 +227,17 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("titleLanguage", settings.titleLanguage)
             setProperty("discordPresenceEnabled", settings.discordPresenceEnabled.toString())
             setProperty("discordApplicationId", settings.discordApplicationId)
+            setProperty("homeSectionOrder", settings.homeSectionOrder.joinToString(",") { it.name })
+            setProperty("hiddenHomeSections", settings.hiddenHomeSections.joinToString(",") { it.name })
+            setProperty("captionTextColor", settings.captionTextColor)
+            setProperty("captionTextOpacity", settings.captionTextOpacity.toString())
+            setProperty("captionBackgroundColor", settings.captionBackgroundColor)
+            setProperty("captionBackgroundOpacity", settings.captionBackgroundOpacity.toString())
+            setProperty("captionEdgeStyle", settings.captionEdgeStyle)
+            setProperty("captionVerticalPosition", settings.captionVerticalPosition)
+            setProperty("captionVerticalOffset", settings.captionVerticalOffset.toString())
+            setProperty("captionAlignment", settings.captionAlignment)
+            setProperty("captionPreset", settings.captionPreset)
         }
         file.outputStream().use { properties.store(it, null) }
     }
@@ -153,7 +250,8 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         skipButtonSeconds = skipButtonSeconds.coerceIn(10, 300),
         volume = volume.coerceIn(0, 100),
         subtitleScale = subtitleScale.takeIf(Float::isFinite)?.coerceIn(0.5f, 2f) ?: 1f,
-        captionFont = captionFont.takeIf { it in fontFamilies } ?: "SansSerif",
+        captionFont = captionFont.trim().take(128).ifBlank { "sans-serif" }
+            .let { if (it.equals("SansSerif", ignoreCase = true)) "sans-serif" else it },
         buttonColor = validColor(buttonColor, "#87D66A"),
         backgroundColor = validColor(backgroundColor, "#0A0F0A"),
         animeCardColor = validColor(animeCardColor, "#111A11"),
@@ -168,6 +266,17 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         appFontFile = appFontFile.take(2048),
         downloadDirectory = downloadDirectory?.let { runCatching { Path.of(it).toAbsolutePath().normalize().toString() }.getOrNull() },
         discordApplicationId = discordApplicationId.filter(Char::isDigit).take(20),
+        homeSectionOrder = HomeSection.normalizeOrder(homeSectionOrder),
+        hiddenHomeSections = hiddenHomeSections.intersect(HomeSection.entries.toSet()),
+        captionTextColor = validColor(captionTextColor, "#FFFFFF"),
+        captionTextOpacity = captionTextOpacity.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 1f,
+        captionBackgroundColor = validColor(captionBackgroundColor, "#000000"),
+        captionBackgroundOpacity = captionBackgroundOpacity.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 0f,
+        captionEdgeStyle = captionEdgeStyle.takeIf { it in captionEdgeStyles } ?: "outline",
+        captionVerticalPosition = captionVerticalPosition.takeIf { it in captionVerticalPositions } ?: "bottom",
+        captionVerticalOffset = captionVerticalOffset.takeIf(Float::isFinite)?.coerceIn(0f, 30f) ?: 3f,
+        captionAlignment = captionAlignment.takeIf { it in captionAlignments } ?: "center",
+        captionPreset = captionPreset.takeIf { it in captionPresets } ?: "custom",
     )
 
     companion object {
@@ -175,6 +284,10 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         val contentScales = listOf("fit", "crop", "fill")
         val supportedSubtitleLanguages = listOf("en", "ja", "es", "pt", "fr", "de", "it", "ru", "ar", "zh", "none")
         val fontFamilies = listOf("SansSerif", "Serif", "Monospaced", "Cursive")
+        val captionEdgeStyles = setOf("none", "outline", "shadow")
+        val captionVerticalPositions = setOf("top", "bottom")
+        val captionAlignments = setOf("left", "center", "right")
+        val captionPresets = setOf("classic", "boxed", "cinema", "high-contrast", "custom")
         val sidebarShapes = listOf("rounded", "circle", "rectangular")
         private fun validColor(value: String, fallback: String): String =
             value.trim().uppercase().takeIf { it.matches(Regex("#[0-9A-F]{6}([0-9A-F]{2})?")) } ?: fallback

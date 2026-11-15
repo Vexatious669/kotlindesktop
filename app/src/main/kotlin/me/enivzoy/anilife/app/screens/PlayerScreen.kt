@@ -3,6 +3,7 @@
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -65,6 +66,7 @@ import me.enivzoy.anilife.app.data.AnimeEpisode
 import me.enivzoy.anilife.app.data.AnimeVideoSource
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.AppSettings
+import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.player.MpvPlaybackEngine
 import me.enivzoy.anilife.core.model.AnimeCard
@@ -145,9 +147,12 @@ fun PlayerScreen(
                 startPositionSeconds = resumePosition,
                 subtitlesByDefault = settings.subtitlesByDefault,
                 subtitleLanguage = settings.subtitleLanguage,
-                subtitleScale = settings.subtitleScale,
+                subtitleAppearance = settings.subtitleAppearance,
             )
         }
+    }
+    LaunchedEffect(engine, settings.subtitleAppearance) {
+        engine?.applySubtitleAppearance(settings.subtitleAppearance)
     }
     LaunchedEffect(engine, settings.subtitlesByDefault, settings.subtitleLanguage) {
         engine?.applyDefaultSubtitles()
@@ -314,6 +319,13 @@ fun PlayerScreen(
             runCatching { MyAnimeListSync.syncCompletedEpisode(malId, watched) }
         }
     }
+    LaunchedEffect(engine, engine?.hasEnded, animeCard?.id, episode) {
+        if (engine?.hasEnded == true) {
+            val anime = animeCard ?: return@LaunchedEffect
+            val watched = episode ?: return@LaunchedEffect
+            AniListSync.syncCompletedEpisode(anime, watched)
+        }
+    }
 
     LaunchedEffect(engine, settings.volume, engine?.isLoading) {
         if (engine?.isLoading == false) engine.setVolume(settings.volume)
@@ -342,7 +354,8 @@ fun PlayerScreen(
 
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusRequester) {
-        runCatching { focusRequester.requestFocus() }
+        withFrameNanos { }
+        focusRequester.requestFocus()
     }
     val shortcutState = rememberUpdatedState(
         PlayerShortcuts(
@@ -395,6 +408,7 @@ fun PlayerScreen(
                 }
             }
             .focusRequester(focusRequester)
+            .focusable()
             // The mouse moving anywhere over the picture brings the chrome back. Desktop reports
             // movement as a Move event, which the pointer block below would otherwise miss.
             .onPointerEvent(PointerEventType.Move) {

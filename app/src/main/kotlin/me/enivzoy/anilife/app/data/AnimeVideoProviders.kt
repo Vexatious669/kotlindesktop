@@ -20,7 +20,12 @@ import java.time.Duration
 import java.util.zip.GZIPInputStream
 import java.util.concurrent.ConcurrentHashMap
 
-data class AnimeEpisode(val number: Double, val title: String?, val thumbnail: String? = null) {
+data class AnimeEpisode(
+    val number: Double,
+    val title: String?,
+    val thumbnail: String? = null,
+    val airedOn: String? = null,
+) {
     val label: String get() = "Episode ${if (number % 1.0 == 0.0) number.toLong() else number}"
 }
 
@@ -63,16 +68,7 @@ class AnimeVideoProviders(
             val title = title(anilistId) ?: return@runCatching emptyList()
             val root = json.parseToJsonElement(get("v1/anime/${path(title)}/episodes", mapOf("limit" to "10000"))) as? JsonObject
                 ?: return@runCatching emptyList()
-            root.array("data").orEmpty().mapNotNull { item ->
-            val episode = item as? JsonObject ?: return@mapNotNull null
-            if (episode.string("kind")?.equals("regular", true) == false) return@mapNotNull null
-            val number = episode.string("episode_number")?.toDoubleOrNull() ?: return@mapNotNull null
-            AnimeEpisode(
-                number,
-                episode.string("title"),
-                sequenceOf("thumbnail", "image", "cover").mapNotNull { episode.string(it) }.firstOrNull(String::isNotBlank),
-            )
-            }
+            parseAnimeEpisodes(root)
         }.getOrDefault(emptyList())
         val episodes = catalogEpisodes.ifEmpty {
             (1..expectedCount.orZero().coerceIn(0, MAX_FALLBACK_EPISODES)).map { AnimeEpisode(it.toDouble(), null) }
@@ -145,6 +141,24 @@ class AnimeVideoProviders(
             throw IOException("MyAnimeList episode lookup was interrupted.", error)
         }
     }
+
+    internal fun parseAnimeEpisodes(root: JsonObject): List<AnimeEpisode> =
+        (root["data"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val episode = item as? JsonObject ?: return@mapNotNull null
+            val kind = (episode["kind"] as? JsonPrimitive)?.contentOrNull
+            if (kind?.equals("regular", ignoreCase = true) == false) return@mapNotNull null
+            val number = (episode["episode_number"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+                ?: return@mapNotNull null
+            fun value(name: String) = (episode[name] as? JsonPrimitive)?.contentOrNull
+            AnimeEpisode(
+                number = number,
+                title = value("title"),
+                thumbnail = sequenceOf("thumbnail_url", "thumbnail", "image", "cover")
+                    .mapNotNull(::value)
+                    .firstOrNull(String::isNotBlank),
+                airedOn = value("aired_on")?.takeIf(String::isNotBlank),
+            )
+        }
 
     suspend fun sources(
         anilistId: Long,

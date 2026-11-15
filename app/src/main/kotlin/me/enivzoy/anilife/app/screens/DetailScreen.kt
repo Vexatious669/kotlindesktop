@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AniListRepository
+import me.enivzoy.anilife.app.data.AniListSync
+import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AnimePosterCard
 import me.enivzoy.anilife.app.ui.AnimeRow
@@ -77,6 +80,8 @@ import me.enivzoy.anilife.core.model.countdown
 import me.enivzoy.anilife.core.model.formatLabel
 import me.enivzoy.anilife.core.model.seasonLabel
 import me.enivzoy.anilife.core.model.statusLabel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import java.io.IOException
 
  
@@ -86,14 +91,20 @@ import java.io.IOException
 @Composable
 fun DetailScreen(
     repository: AniListRepository,
+    providers: AnimeVideoProviders,
     id: Long,
     onBack: () -> Unit,
     onOpen: (Long) -> Unit,
-    onWatch: (AnimeDetail) -> Unit,
+    onWatch: (AnimeDetail, Double?) -> Unit,
 ) {
     var attempt by remember(id) { mutableIntStateOf(0) }
     var state by remember(id) { mutableStateOf<LoadState<AnimeDetail>>(LoadState.Loading) }
     val library by repository.libraryEntries.collectAsState()
+    val aniListUser by AniListSync.user.collectAsState()
+    val aniListEntries by AniListSync.entries.collectAsState()
+    val scope = rememberCoroutineScope()
+    var aniListActionError by remember(id) { mutableStateOf<String?>(null) }
+    var aniListActionPending by remember(id) { mutableStateOf(false) }
 
     LaunchedEffect(id, attempt) {
         state = LoadState.Loading
@@ -108,19 +119,46 @@ fun DetailScreen(
             }
             is LoadState.Ready -> DetailContent(
                 detail = current.value,
+                providers = providers,
                 onOpen = onOpen,
-                onWatch = { onWatch(current.value) },
-                inLibrary = library.any { it.id == current.value.id },
+                onWatch = { episode -> onWatch(current.value, episode) },
+                inLibrary = if (aniListUser != null) {
+                    aniListEntries.any { it.anime.id == current.value.id }
+                } else {
+                    library.any { it.id == current.value.id }
+                },
+                libraryUsesAniList = aniListUser != null,
+                libraryActionError = aniListActionError,
+                libraryActionPending = aniListActionPending,
                 onToggleLibrary = {
-                    try {
-                        if (library.any { it.id == current.value.id }) {
-                            repository.removeFromLibrary(current.value.id)
-                        } else {
-                            repository.addToLibrary(current.value.toCard())
+                    val remoteEntry = aniListEntries.firstOrNull { it.anime.id == current.value.id }
+                    if (aniListUser != null) {
+                        scope.launch {
+                            aniListActionPending = true
+                            aniListActionError = null
+                            try {
+                                if (remoteEntry != null) AniListSync.deleteEntry(remoteEntry)
+                                else AniListSync.addToList(current.value.toCard())
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (failure: Throwable) {
+                                aniListActionError = failure.message ?: "Couldn't update your AniList list."
+                            } finally {
+                                aniListActionPending = false
+                            }
                         }
                         null
-                    } catch (error: IOException) {
-                        error.message ?: "Check that AniLife can write to your app data folder."
+                    } else {
+                        try {
+                            if (library.any { it.id == current.value.id }) {
+                                repository.removeFromLibrary(current.value.id)
+                            } else {
+                                repository.addToLibrary(current.value.toCard())
+                            }
+                            null
+                        } catch (error: IOException) {
+                            error.message ?: "Check that AniLife can write to your app data folder."
+                        }
                     }
                 },
             )
@@ -155,9 +193,13 @@ private fun BackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
 @Composable
 private fun DetailContent(
     detail: AnimeDetail,
+    providers: AnimeVideoProviders,
     onOpen: (Long) -> Unit,
-    onWatch: () -> Unit,
+    onWatch: (Double?) -> Unit,
     inLibrary: Boolean,
+    libraryUsesAniList: Boolean,
+    libraryActionError: String?,
+    libraryActionPending: Boolean,
     onToggleLibrary: () -> String?,
 ) {
     var expanded by remember(detail.id) { mutableStateOf(false) }
@@ -268,7 +310,7 @@ private fun DetailContent(
 
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(
-                                onClick = onWatch,
+                                onClick = { onWatch(null) },
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.height(44.dp),
                                 contentPadding = PaddingValues(horizontal = 20.dp),
@@ -287,6 +329,7 @@ private fun DetailContent(
                                         notice = "Couldn't update library" to message
                                     }
                                 },
+                                enabled = !libraryActionPending,
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.height(44.dp),
                                 contentPadding = PaddingValues(horizontal = 20.dp),
@@ -302,11 +345,19 @@ private fun DetailContent(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    if (inLibrary) "Remove from library" else "Add to library",
+                                    when {
+                                        libraryUsesAniList && inLibrary -> "Remove from AniList"
+                                        libraryUsesAniList -> "Add to AniList"
+                                        inLibrary -> "Remove from library"
+                                        else -> "Add to library"
+                                    },
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
                                 )
                             }
+                        }
+                        if (libraryActionPending) {
+                            Text("Updating your list…", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
                         }
 
                         if (detail.genres.isNotEmpty()) {
@@ -366,34 +417,15 @@ private fun DetailContent(
                     DetailsCard(detail)
                 }
 
-                if (detail.characters.isNotEmpty()) {
-                    Spacer(Modifier.height(34.dp))
-                    Text(
-                        text = "Characters",
-                        color = AniLifeColors.Foreground,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 32.dp),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 32.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        itemsIndexed(
-                            items = detail.characters,
-                            key = { index, character -> "${character.name}-$index" },
-                        ) { _, character ->
-                            CharacterCard(character)
-                        }
-                    }
-                }
-
                 val relationCards = detail.relations.map { it.anime }.distinctBy { it.id }
-                if (relationCards.isNotEmpty()) {
-                    Spacer(Modifier.height(38.dp))
-                    AnimeRow(title = "Related", items = relationCards, onOpen = onOpen)
-                }
+                Spacer(Modifier.height(34.dp))
+                DetailSections(
+                    detail = detail,
+                    providers = providers,
+                    relationCards = relationCards,
+                    onOpen = onOpen,
+                    onWatch = onWatch,
+                )
 
                 val relatedIds = relationCards.map { it.id }.toSet()
                 val suggestions = detail.recommendations.filter { it.id !in relatedIds && it.id != detail.id }
@@ -407,6 +439,10 @@ private fun DetailContent(
         }
         }
         PageScrollbar(rememberScrollbarAdapter(scrollState), Modifier.align(Alignment.CenterEnd))
+    }
+
+    LaunchedEffect(libraryActionError) {
+        if (libraryActionError != null) notice = "Couldn't update AniList" to libraryActionError
     }
 
     if (notice != null) {
@@ -423,6 +459,78 @@ private fun DetailContent(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun DetailSections(
+    detail: AnimeDetail,
+    providers: AnimeVideoProviders,
+    relationCards: List<me.enivzoy.anilife.core.model.AnimeCard>,
+    onOpen: (Long) -> Unit,
+    onWatch: (Double?) -> Unit,
+) {
+    val tabs = buildList {
+        add("Episodes")
+        if (detail.characters.isNotEmpty()) add("Characters")
+        if (relationCards.isNotEmpty()) add("Watch order")
+    }
+    var selectedTab by remember(detail.id) { mutableIntStateOf(0) }
+    val activeTab = selectedTab.coerceIn(tabs.indices)
+
+    Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            tabs.forEachIndexed { index, label ->
+                val shape = RoundedCornerShape(8.dp)
+                Box(
+                    Modifier.clip(shape)
+                        .background(if (activeTab == index) AniLifeColors.CardHover else Color.Transparent)
+                        .border(
+                            1.dp,
+                            if (activeTab == index) AniLifeColors.Border else Color.Transparent,
+                            shape,
+                        )
+                        .clickable { selectedTab = index }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        label,
+                        color = if (activeTab == index) AniLifeColors.Foreground else AniLifeColors.MutedForeground,
+                        fontSize = 13.sp,
+                        fontWeight = if (activeTab == index) FontWeight.SemiBold else FontWeight.Medium,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        when (tabs[activeTab]) {
+            "Episodes" -> EpisodeSection(detail, providers) { episode ->
+                onWatch(episode)
+            }
+            "Characters" -> LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                itemsIndexed(
+                    items = detail.characters,
+                    key = { index, character -> "${character.name}-$index" },
+                ) { _, character ->
+                    CharacterCard(character)
+                }
+            }
+            "Watch order" -> {
+                Text(
+                    "Direct AniList relations, ordered by release year. This is not a complete franchise guide.",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                AnimeRow(
+                    title = "Related titles",
+                    items = (relationCards + detail.toCard()).distinctBy { it.id }.sortedWith(
+                        compareBy({ it.year ?: Int.MAX_VALUE }, { it.id }),
+                    ),
+                    onOpen = onOpen,
+                )
+            }
+        }
     }
 }
 

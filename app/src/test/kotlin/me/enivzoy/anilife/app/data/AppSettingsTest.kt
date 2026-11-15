@@ -65,6 +65,17 @@ class AppSettingsTest {
                     volume = 140,
                     contentScale = "invalid",
                     subtitleScale = 4f,
+                    captionFont = "  Custom Anime Font  ",
+                    captionFontFile = root.resolve("custom.otf").toString(),
+                    captionTextColor = "#AABBCC",
+                    captionTextOpacity = 0.7f,
+                    captionBackgroundColor = "#112233",
+                    captionBackgroundOpacity = 0.45f,
+                    captionEdgeStyle = "shadow",
+                    captionVerticalPosition = "top",
+                    captionVerticalOffset = 12f,
+                    captionAlignment = "right",
+                    captionPreset = "cinema",
                     downloadDirectory = root.toString(),
                     themeCss = ":root {\n  --background: #101010;\n}",
                 )
@@ -82,6 +93,17 @@ class AppSettingsTest {
             assertEquals(100, persisted.volume)
             assertEquals("fit", persisted.contentScale)
             assertEquals(2f, persisted.subtitleScale)
+            assertEquals("Custom Anime Font", persisted.captionFont)
+            assertEquals(root.resolve("custom.otf").toString(), persisted.captionFontFile)
+            assertEquals("#AABBCC", persisted.captionTextColor)
+            assertEquals(0.7f, persisted.captionTextOpacity)
+            assertEquals("#112233", persisted.captionBackgroundColor)
+            assertEquals(0.45f, persisted.captionBackgroundOpacity)
+            assertEquals("shadow", persisted.captionEdgeStyle)
+            assertEquals("top", persisted.captionVerticalPosition)
+            assertEquals(12f, persisted.captionVerticalOffset)
+            assertEquals("right", persisted.captionAlignment)
+            assertEquals("cinema", persisted.captionPreset)
             assertEquals(root.toAbsolutePath().normalize().toString(), persisted.downloadDirectory)
             assertEquals(":root {\n  --background: #101010;\n}", persisted.themeCss)
         } finally {
@@ -97,6 +119,32 @@ class AppSettingsTest {
             val store = AppSettingsStore(file)
             store.update { it.copy(subtitleLanguage = "unsupported") }
             assertEquals("en", AppSettingsStore(file).settings.value.subtitleLanguage)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun homeSectionOrderAndVisibilityPersistAndMissingSectionsAreRestored() {
+        val root = Files.createTempDirectory("AniLife-settings-home")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val store = AppSettingsStore(file)
+            store.update {
+                it.copy(
+                    homeSectionOrder = listOf(HomeSection.MOVIES, HomeSection.NEW_EPISODES),
+                    hiddenHomeSections = setOf(HomeSection.CONTINUE_WATCHING),
+                )
+            }
+
+            val persisted = AppSettingsStore(file).settings.value
+
+            assertEquals(
+                listOf(HomeSection.MOVIES, HomeSection.NEW_EPISODES) +
+                    HomeSection.entries.filterNot { it == HomeSection.MOVIES || it == HomeSection.NEW_EPISODES },
+                persisted.homeSectionOrder,
+            )
+            assertEquals(setOf(HomeSection.CONTINUE_WATCHING), persisted.hiddenHomeSections)
         } finally {
             root.toFile().deleteRecursively()
         }

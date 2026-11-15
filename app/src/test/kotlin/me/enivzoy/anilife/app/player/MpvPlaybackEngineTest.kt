@@ -1,5 +1,6 @@
 ﻿package me.enivzoy.anilife.app.player
 
+import me.enivzoy.anilife.app.data.SubtitleAppearance
 import me.enivzoy.anilife.mpv.Mpv
 import java.io.File
 import kotlin.test.Test
@@ -8,6 +9,36 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MpvPlaybackEngineTest {
+
+    @Test
+    fun subtitleAppearanceMapsToMpvOptions() {
+        val fontFile = File("custom-fonts/Anime Font.ttf").absoluteFile
+        val options = subtitleAppearanceOptions(
+            SubtitleAppearance(
+                fontFamily = "Anime Font",
+                fontFile = fontFile.path,
+                scale = 1.25f,
+                textColor = "#AABBCC",
+                textOpacity = 0.5f,
+                backgroundColor = "#112233",
+                backgroundOpacity = 0.75f,
+                edgeStyle = "shadow",
+                verticalPosition = "top",
+                verticalOffset = 12f,
+                alignment = "right",
+            ),
+        ).toMap()
+
+        assertEquals("Anime Font", options["sub-font"])
+        assertEquals("1.25", options["sub-scale"])
+        assertEquals("#7FAABBCC", options["sub-color"])
+        assertEquals("#BF112233", options["sub-back-color"])
+        assertEquals("0", options["sub-border-size"])
+        assertEquals("2", options["sub-shadow-offset"])
+        assertEquals("12", options["sub-pos"])
+        assertEquals("right", options["sub-align-x"])
+        assertEquals(fontFile.parentFile.absolutePath, options["sub-fonts-dir"])
+    }
 
     @Test
     fun picksThePreferredCaptionLanguageAndFallsBackToAnyTrack() {

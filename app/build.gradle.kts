@@ -33,6 +33,7 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.materialIconsExtended)
     implementation("net.java.dev.jna:jna:5.14.0")
+    implementation("net.java.dev.jna:jna-platform:5.14.0")
     implementation("xyz.orbitary:perigee:0.0.2")
     implementation("org.jetbrains.compose.material3:material3-desktop:1.7.3")
     implementation("org.jetbrains.compose.foundation:foundation-desktop:1.7.3")
