@@ -36,7 +36,17 @@ data class DiscordPresenceState(
     val status: DiscordPresenceStatus = DiscordPresenceStatus.Disabled,
     /** The Discord account the desktop client is signed in as, once the pipe is ready. */
     val accountName: String? = null,
-)
+    val username: String? = null,
+    val userId: String? = null,
+    val avatarHash: String? = null,
+) {
+    val avatarUrl: String?
+        get() = if (!userId.isNullOrBlank() && !avatarHash.isNullOrBlank()) {
+            "https://cdn.discordapp.com/avatars/$userId/$avatarHash.png?size=256"
+        } else {
+            null
+        }
+}
 
 internal fun buildDiscordPresenceActivity(
     target: DiscordPresenceTarget?,
@@ -169,9 +179,18 @@ class DiscordPresenceManager : AutoCloseable {
 
         newClient.on(Ready::class.java) { ready ->
             if (client === newClient) {
-                val name = ready.user()?.globalName()?.takeIf(String::isNotBlank)
-                    ?: ready.user()?.username()?.takeIf(String::isNotBlank)
-                publishState(DiscordPresenceState(DiscordPresenceStatus.Connected, name))
+                val user = ready.user()
+                val displayName = user?.globalName()?.takeIf(String::isNotBlank)
+                    ?: user?.username()?.takeIf(String::isNotBlank)
+                publishState(
+                    DiscordPresenceState(
+                        status = DiscordPresenceStatus.Connected,
+                        accountName = displayName,
+                        username = user?.username()?.takeIf(String::isNotBlank),
+                        userId = user?.id()?.takeIf(String::isNotBlank),
+                        avatarHash = user?.avatar()?.takeIf(String::isNotBlank),
+                    ),
+                )
             }
         }
         newClient.on(Disconnected::class.java) { event ->
