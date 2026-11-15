@@ -82,6 +82,7 @@ internal fun buildDiscordPresenceActivity(
             if (target != null) {
                 target.cover?.takeIf(String::isNotBlank)?.let { cover ->
                     largeImage(cover.trim(), target.title.discordText())
+                    smallImage(ANILIFE_ICON_URL, "AniLife")
                 }
             } else {
                 largeImage(ANILIFE_ICON_URL, "AniLife")
