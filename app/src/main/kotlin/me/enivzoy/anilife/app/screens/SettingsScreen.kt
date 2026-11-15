@@ -53,10 +53,12 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
@@ -989,12 +991,13 @@ private fun AccountSettings(
 ) {
     SettingsRow(
         "Discord Rich Presence",
-        "Show “Idling” or the anime open in the player on your Discord profile.",
+        "Show \"Watching AniLife\" with an elapsed timer, or the anime open in the player, on your Discord profile.",
     ) {
         SettingsSwitch(settings.discordPresenceEnabled) { enabled ->
             onSettingsChange { it.copy(discordPresenceEnabled = enabled) }
         }
     }
+    DiscordPresencePreview(enabled = settings.discordPresenceEnabled)
     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
         DiscordConnectionRow(
             state = discordState,
@@ -1547,6 +1550,58 @@ private fun SettingsButton(text: String, enabled: Boolean = true, onClick: () ->
             text,
             color = if (enabled) AniLifeColors.Foreground else AniLifeColors.MutedForeground,
             fontSize = 12.sp,
+        )
+    }
+}
+
+@Composable
+private fun DiscordPresencePreview(enabled: Boolean) {
+    // A dummy elapsed timer so the presence can be configured/previewed without a live session.
+    var elapsedSeconds by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            elapsedSeconds++
+        }
+    }
+    val minutes = elapsedSeconds / 60
+    val seconds = elapsedSeconds % 60
+    val timer = "%d:%02d elapsed".format(minutes, seconds)
+    val alpha = if (enabled) 1f else 0.45f
+
+    Column(
+        Modifier.fillMaxWidth().padding(bottom = 14.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF111214))
+            .border(1.dp, Color(0xFF1E1F22), RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "WATCHING ANILIFE",
+            color = Color(0xFFB5BAC1).copy(alpha = alpha),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.6.sp,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A261A)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("A", color = AniLifeColors.Primary.copy(alpha = alpha), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("AniLife", color = Color.White.copy(alpha = alpha), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("AniLife", color = Color(0xFFDBDEE1).copy(alpha = alpha), fontSize = 12.sp)
+                Text("i love anilife", color = Color(0xFFB5BAC1).copy(alpha = alpha), fontSize = 12.sp)
+                Text(timer, color = Color(0xFFB5BAC1).copy(alpha = alpha), fontSize = 12.sp)
+            }
+        }
+        Text(
+            "Example player preview · timer is a dummy value for configuration",
+            color = AniLifeColors.MutedForeground.copy(alpha = alpha),
+            fontSize = 11.sp,
         )
     }
 }
