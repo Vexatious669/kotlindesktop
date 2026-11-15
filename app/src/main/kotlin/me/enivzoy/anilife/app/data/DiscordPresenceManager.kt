@@ -1,8 +1,14 @@
 ﻿package me.enivzoy.anilife.app.data
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import xyz.orbitary.perigee.PerigeeClient
 import xyz.orbitary.perigee.activity.Activity
 import xyz.orbitary.perigee.activity.ActivityType
@@ -115,6 +121,10 @@ private fun watchingDetails(target: DiscordPresenceTarget): String {
  */
 class DiscordPresenceManager : AutoCloseable {
     private val closed = AtomicBoolean(false)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    @Volatile
+    private var lastPublishTime: Instant? = null
+    private var pendingPublishJob: Job? = null
     private val executor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "discord-rich-presence").apply { isDaemon = true }
     }
@@ -168,11 +178,31 @@ class DiscordPresenceManager : AutoCloseable {
                 ensureClient(id)
 
                 println("[Discord]   (exec) hasPublished=$hasPublished lastPublishedTarget=${lastPublishedTarget?.title} target=${target?.title} reconnect=$reconnect")
-                if (reconnect || !hasPublished || target != lastPublishedTarget) {
-                    println("[Discord]   (exec) calling publishCurrent()")
+                // Discord rate-limits SET_ACTIVITY to once every 15 seconds. Schedule the publish
+                // respecting that window instead of dropping updates silently.
+                pendingPublishJob?.cancel()
+                val now = Instant.now()
+                val last = lastPublishTime
+                val elapsed = if (last != null) java.time.Duration.between(last, now) else java.time.Duration.ofSeconds(16)
+                val rateLimit = java.time.Duration.ofSeconds(15)
+                if (reconnect || !hasPublished || target != lastPublishedTarget || elapsed >= rateLimit) {
+                    println("[Discord]   (exec) publishing now")
                     publishCurrent()
+                    lastPublishTime = Instant.now()
                 } else {
-                    println("[Discord]   (exec) SKIPPING publishCurrent (target unchanged)")
+                    val delayMs = (rateLimit.toMillis() - elapsed.toMillis()).coerceAtLeast(1000L)
+                    println("[Discord]   (exec) rate-limited; scheduling publish in ${delayMs}ms")
+                    pendingPublishJob = scope.launch {
+                        delay(delayMs)
+                        if (!closed.get()) {
+                            executor.execute {
+                                if (closed.get()) return@execute
+                                println("[Discord]   (delayed) publishing now")
+                                publishCurrent()
+                                lastPublishTime = Instant.now()
+                            }
+                        }
+                    }
                 }
             }
         } catch (_: RejectedExecutionException) {
@@ -181,6 +211,7 @@ class DiscordPresenceManager : AutoCloseable {
     }
 
     override fun close() {
+        pendingPublishJob?.cancel()
         if (!closed.compareAndSet(false, true)) return
         try {
             executor.execute {
@@ -259,6 +290,7 @@ class DiscordPresenceManager : AutoCloseable {
             println("[Discord] publishCurrent skipped: client is null")
             return
         }
+        lastPublishTime = Instant.now()
         val target = wantedTarget
         val activity = buildDiscordPresenceActivity(target, sessionStartedAt)
         lastPublishedTarget = target
