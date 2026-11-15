@@ -208,6 +208,9 @@ class DiscordPresenceManager : AutoCloseable {
                         avatarHash = user?.avatar()?.takeIf(String::isNotBlank),
                     ),
                 )
+                // The pipe is live now: (re)publish the current activity in case update() ran
+                // before the connection was ready.
+                publishCurrent()
             }
         }
         newClient.on(Disconnected::class.java) { event ->
