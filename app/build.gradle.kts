@@ -1,4 +1,5 @@
 ﻿import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.api.tasks.WriteProperties
 
 plugins {
     kotlin("jvm")
@@ -49,9 +50,23 @@ dependencies {
 }
 
 // Overridable from CI: -PappVersion=1.2.3 -Pportable=true
-val defaultVersion = "1.0.0"
+val defaultVersion = "1.0.5"
 val appVersion = providers.gradleProperty("appVersion").orNull ?: defaultVersion
 val portableBuild = providers.gradleProperty("portable").orNull == "true"
+val generatedVersionResources = layout.buildDirectory.dir("generated/versionResources")
+
+val generateVersionProperties = tasks.register<WriteProperties>("generateVersionProperties") {
+    destinationFile.set(generatedVersionResources.get().file("version/version.properties"))
+    property("version", appVersion)
+}
+
+sourceSets.main {
+    resources.srcDir(generatedVersionResources)
+}
+
+tasks.processResources {
+    dependsOn(generateVersionProperties)
+}
 
 compose.desktop {
     application {

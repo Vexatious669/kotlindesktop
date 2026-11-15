@@ -83,6 +83,10 @@ fun SettingsScreen(
     discordState: DiscordPresenceState,
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
     onDiscordConnect: () -> Unit,
+    currentVersion: String = "unknown",
+    updateCheckStatus: String? = null,
+    checkingForUpdates: Boolean = false,
+    onCheckForUpdates: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Player) }
@@ -147,7 +151,14 @@ fun SettingsScreen(
                         SettingsPage.Content -> ContentSettings(settings, onSettingsChange)
                         SettingsPage.Appearance -> AppearanceSettings(settings, onSettingsChange)
                         SettingsPage.Data -> DataSettings(settings, onSettingsChange)
-                        SettingsPage.App -> AppSettingsPage(settings, onSettingsChange)
+                        SettingsPage.App -> AppSettingsPage(
+                            settings = settings,
+                            onSettingsChange = onSettingsChange,
+                            currentVersion = currentVersion,
+                            updateCheckStatus = updateCheckStatus,
+                            checkingForUpdates = checkingForUpdates,
+                            onCheckForUpdates = onCheckForUpdates,
+                        )
                         SettingsPage.About -> AboutSettings(mpvLibrary)
                     }
                 }
@@ -172,7 +183,7 @@ private enum class SettingsPage(
     Content("Content", "Titles and what the app opens with", Icons.Rounded.VideoLibrary, "title language romaji english native"),
     Appearance("Appearance", "Theme and type", Icons.Rounded.Palette, "css theme colors palette font typeface editor"),
     Data("Data", "Buffers, cache, and storage", Icons.Rounded.Storage, "buffer memory cache storage"),
-    App("App", "Decoding, performance, and startup", Icons.Rounded.Apps, "hardware decoding gpu startup intro splash"),
+    App("App", "Updates, decoding, performance, and startup", Icons.Rounded.Apps, "updates version release hardware decoding gpu startup intro splash"),
     About("About", "Version and credits", Icons.Rounded.Info, "app version metadata player providers credits"),
 }
 
@@ -205,6 +216,8 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Playback buffer", SettingsPage.Data, "stream buffering memory"),
     SettingSearchEntry("Play startup intro", SettingsPage.App, "animation splash opening startup"),
     SettingSearchEntry("Hardware decoding", SettingsPage.App, "gpu acceleration decoder cpu"),
+    SettingSearchEntry("Check for updates on launch", SettingsPage.App, "automatic updates release startup"),
+    SettingSearchEntry("Check for updates now", SettingsPage.App, "update version release check"),
     SettingSearchEntry("About AniLife", SettingsPage.About, "app version metadata player credits"),
 )
 
@@ -621,18 +634,47 @@ private fun DataSettings(settings: AppSettings, onSettingsChange: ((AppSettings)
 }
 
 @Composable
-private fun AppSettingsPage(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
-    SettingsRow(
-        "Play startup intro",
-        "Show the AniLife animation when the app opens.",
-    ) {
-        SettingsSwitch(settings.playIntro) { enabled -> onSettingsChange { it.copy(playIntro = enabled) } }
+private fun AppSettingsPage(
+    settings: AppSettings,
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
+    currentVersion: String,
+    updateCheckStatus: String?,
+    checkingForUpdates: Boolean,
+    onCheckForUpdates: () -> Unit,
+) {
+    SettingsSection("Updates") {
+        SettingsRow(
+            "Check for updates on launch",
+            "Look for a newer AniLife release when the app starts. You choose whether to install it.",
+        ) {
+            SettingsSwitch(settings.checkUpdatesOnLaunch) { enabled ->
+                onSettingsChange { it.copy(checkUpdatesOnLaunch = enabled) }
+            }
+        }
+        SettingsRow(
+            "Check now",
+            updateCheckStatus ?: "Installed version $currentVersion",
+        ) {
+            SettingsButton(
+                text = if (checkingForUpdates) "Checking…" else "Check for updates",
+                enabled = !checkingForUpdates,
+                onClick = onCheckForUpdates,
+            )
+        }
     }
-    SettingsRow(
-        "Hardware decoding",
-        "Reduce CPU use. Turn it off if playback has visual artifacts.",
-    ) {
-        SettingsSwitch(settings.hardwareDecoding) { enabled -> onSettingsChange { it.copy(hardwareDecoding = enabled) } }
+    SettingsSection("Startup") {
+        SettingsRow(
+            "Play startup intro",
+            "Show the AniLife animation when the app opens.",
+        ) {
+            SettingsSwitch(settings.playIntro) { enabled -> onSettingsChange { it.copy(playIntro = enabled) } }
+        }
+        SettingsRow(
+            "Hardware decoding",
+            "Reduce CPU use. Turn it off if playback has visual artifacts.",
+        ) {
+            SettingsSwitch(settings.hardwareDecoding) { enabled -> onSettingsChange { it.copy(hardwareDecoding = enabled) } }
+        }
     }
 }
 
@@ -860,16 +902,20 @@ private fun SettingsDropdown(
 }
 
 @Composable
-private fun SettingsButton(text: String, onClick: () -> Unit) {
+private fun SettingsButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
         Modifier.clip(RoundedCornerShape(8.dp))
             .background(AniLifeColors.SettingsControl)
             .border(1.dp, AniLifeColors.SettingsControlBorder, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, color = AniLifeColors.Foreground, fontSize = 12.sp)
+        Text(
+            text,
+            color = if (enabled) AniLifeColors.Foreground else AniLifeColors.MutedForeground,
+            fontSize = 12.sp,
+        )
     }
 }
 

@@ -55,4 +55,19 @@ class UpdaterTest {
             update?.url,
         )
     }
+
+    @Test
+    fun doesNotOfferTheInstalledVersionAgain() {
+        val manifest = """
+            {
+              "version": "1.0.4",
+              "assets": [{
+                "platform": "windows",
+                "url": "https://example.com/anilife-1.0.4.exe"
+              }]
+            }
+        """.trimIndent()
+
+        assertNull(parseUpdateManifest(manifest, currentVersion = "1.0.4", platform = "windows"))
+    }
 }

@@ -69,6 +69,7 @@ import me.enivzoy.anilife.app.data.Updater
 import me.enivzoy.anilife.app.data.MpvBootstrap
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.ReleaseNotifier
+import me.enivzoy.anilife.core.model.Update
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AppSidebar
 import me.enivzoy.anilife.mpv.Mpv
@@ -83,7 +84,11 @@ import kotlinx.coroutines.launch
 
 
 @Composable
-fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) -> Unit = {}) {
+fun AniLifeApp(
+    settingsStore: AppSettingsStore,
+    onPlayerFullscreen: (Boolean) -> Unit = {},
+    onExitApplication: () -> Unit = {},
+) {
     val animeVideoProviders = remember { AnimeVideoProviders() }
     val repository = remember {
         AniListRepository(
@@ -105,6 +110,10 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
     var homeLoaded by remember { mutableStateOf(false) }
     var playerFullscreen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    var updateCheckStatus by remember { mutableStateOf<String?>(null) }
+    var checkingForUpdates by remember { mutableStateOf(false) }
+    var updateActionStatus by remember { mutableStateOf<String?>(null) }
+    var installingUpdate by remember { mutableStateOf(false) }
     val presenceTarget = (screen as? Screen.Player)?.let { player ->
         val detail = player.detail
         val showTitle = detail?.title?.takeIf(String::isNotBlank)
@@ -120,16 +129,68 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
         )
     }
 
+    suspend fun checkForUpdates(showUpToDate: Boolean) {
+        if (checkingForUpdates) return
+        checkingForUpdates = true
+        updateCheckStatus = if (showUpToDate) "Checking for updates…" else null
+        updateActionStatus = null
+        updater.clear()
+        try {
+            val currentVersion = Updater.currentVersion()
+            val update = updater.check(currentVersion)
+            updateCheckStatus = if (update == null && showUpToDate) {
+                "AniLife $currentVersion is up to date."
+            } else {
+                null
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            val detail = failure.message?.takeIf(String::isNotBlank) ?: "Unknown error"
+            updateCheckStatus = "Update check failed: $detail"
+            System.err.println("[Updater] update check failed: $detail")
+        } finally {
+            checkingForUpdates = false
+        }
+    }
+
+    fun installUpdate(update: Update) {
+        if (installingUpdate) return
+        scope.launch {
+            installingUpdate = true
+            updateActionStatus = "Downloading and verifying AniLife ${update.version}…"
+            try {
+                val destination = Updater.updatesDirectory().resolve("anilife-${update.version}.exe")
+                if (!updater.download(update, destination)) {
+                    updateActionStatus = "Download or verification failed. Check your connection and retry."
+                    return@launch
+                }
+                updateActionStatus = "Starting the installer…"
+                updater.installWindows(destination)
+                updater.clear()
+                onExitApplication()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                val detail = failure.message?.takeIf(String::isNotBlank) ?: "Unknown error"
+                updateActionStatus = "Update failed: $detail"
+                System.err.println("[Updater] install failed: $detail")
+            } finally {
+                installingUpdate = false
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         MyAnimeListSync.configure()
         MyAnimeListSync.restore()
     }
     LaunchedEffect(settings.checkUpdatesOnLaunch) {
-        if (!settings.checkUpdatesOnLaunch) return@LaunchedEffect
-        val update = updater.check(Updater.currentVersion()) ?: return@LaunchedEffect
-        val destination = Updater.updatesDirectory().resolve("anilife-${update.version}.exe")
-        if (updater.download(update, destination) { downloaded, _ -> }) {
-            updater.installWindows(destination)
+        if (settings.checkUpdatesOnLaunch) {
+            checkForUpdates(showUpToDate = false)
+        } else {
+            updater.clear()
+            updateCheckStatus = null
         }
     }
     LaunchedEffect(Unit) {
@@ -301,6 +362,10 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
                         discordState = discordState,
                         onSettingsChange = ::updateSettings,
                         onDiscordConnect = ::connectDiscord,
+                        currentVersion = Updater.currentVersion(),
+                        updateCheckStatus = updateCheckStatus,
+                        checkingForUpdates = checkingForUpdates,
+                        onCheckForUpdates = { scope.launch { checkForUpdates(showUpToDate = true) } },
                     )
                     Screen.Providers -> ProvidersScreen(catalog = mediaProviders)
                     Screen.Notifications -> NotificationsScreen(
@@ -444,26 +509,45 @@ fun AniLifeApp(settingsStore: AppSettingsStore, onPlayerFullscreen: (Boolean) ->
 
     availableUpdate?.let { update ->
         AlertDialog(
-            onDismissRequest = { updater.clear() },
+            onDismissRequest = {
+                if (!installingUpdate) {
+                    updater.clear()
+                    updateActionStatus = null
+                }
+            },
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
             title = { Text("Update available", fontWeight = FontWeight.SemiBold) },
             text = {
                 Text(
-                    if (update.changelog.isBlank()) "AniLife ${update.version} is available."
-                    else "AniLife ${update.version} is available.\n\n${update.changelog}",
+                    text = (if (update.changelog.isBlank()) "AniLife ${update.version} is available."
+                    else "AniLife ${update.version} is available.\n\n${update.changelog}") +
+                        updateActionStatus?.let { "\n\n$it" }.orEmpty(),
                     fontSize = 14.sp,
                     lineHeight = 21.sp,
                 )
             },
             confirmButton = {
-                TextButton(onClick = { updater.clear() }) {
-                    Text("Update now", color = AniLifeColors.Primary, fontWeight = FontWeight.SemiBold)
+                TextButton(
+                    onClick = { installUpdate(update) },
+                    enabled = !installingUpdate,
+                ) {
+                    Text(
+                        if (installingUpdate) "Please wait…" else "Update now",
+                        color = AniLifeColors.Primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { updater.clear() }) {
+                TextButton(
+                    onClick = {
+                        updater.clear()
+                        updateActionStatus = null
+                    },
+                    enabled = !installingUpdate,
+                ) {
                     Text("Later", color = AniLifeColors.MutedForeground, fontWeight = FontWeight.SemiBold)
                 }
             },

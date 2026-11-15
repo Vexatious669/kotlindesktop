@@ -1,6 +1,8 @@
 package me.enivzoy.anilife.app.data
 
 import me.enivzoy.anilife.core.model.Update
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,10 +13,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.StandardCopyOption
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -41,12 +46,10 @@ class Updater(
     val update: StateFlow<Update?> = mutableUpdate.asStateFlow()
 
     /** Returns the newer [Update] for [currentVersion], or null when the app is up to date. */
-    suspend fun check(currentVersion: String): Update? {
-        val update = runCatching { fetchUpdate(currentVersion) }
-            .onFailure { System.err.println("[Updater] update check failed: ${it.message}") }
-            .getOrNull() ?: return null
+    suspend fun check(currentVersion: String): Update? = withContext(Dispatchers.IO) {
+        val update = fetchUpdate(currentVersion)
         mutableUpdate.value = update
-        return update
+        update
     }
 
     fun clear() {
@@ -54,10 +57,14 @@ class Updater(
     }
 
     /** Downloads the release asset and verifies its SHA-256 against the manifest. */
-    suspend fun download(update: Update, destination: Path, onProgress: (Long, Long?) -> Unit = { _, _ -> }): Boolean {
+    suspend fun download(
+        update: Update,
+        destination: Path,
+        onProgress: (Long, Long?) -> Unit = { _, _ -> },
+    ): Boolean = withContext(Dispatchers.IO) {
         val uri = httpUri(update.url) ?: run {
             System.err.println("[Updater] invalid download URL for version ${update.version}")
-            return false
+            return@withContext false
         }
         val request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(600))
@@ -68,36 +75,45 @@ class Updater(
         val response = http.send(request, HttpResponse.BodyHandlers.ofByteArray())
         if (response.statusCode() >= 400) {
             println("[Updater] asset download failed (HTTP ${response.statusCode()})")
-            return false
+            return@withContext false
         }
         val bytes = response.body()
-        Files.createDirectories(destination.parent)
-        Files.newOutputStream(destination).use { stream -> stream.write(bytes) }
-        onProgress(bytes.size.toLong(), bytes.size.toLong())
+        if (update.sizeBytes > 0L && bytes.size.toLong() != update.sizeBytes) {
+            System.err.println("[Updater] asset size mismatch for ${update.version}")
+            return@withContext false
+        }
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(bytes)
             .joinToString("") { "%02x".format(it) }
         if (update.sha256.isNotBlank() && digest.lowercase() != update.sha256.lowercase()) {
-            println("[Updater] sha256 mismatch for ${update.version}")
-            return false
+            System.err.println("[Updater] sha256 mismatch for ${update.version}")
+            return@withContext false
         }
-        return true
+        val parent = destination.toAbsolutePath().parent
+        Files.createDirectories(parent)
+        val temporary = Files.createTempFile(parent, destination.fileName.toString(), ".part")
+        try {
+            Files.write(temporary, bytes)
+            try {
+                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING)
+            }
+            onProgress(bytes.size.toLong(), bytes.size.toLong())
+            true
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
     }
 
-    /**
-     * Launches the downloaded installer. Windows: MSI via msiexec, portable executable by
-     * running it directly (it self-extracts and hands off to the app). The host app should exit
-     * after the installer hands control back.
-     */
-    fun installWindows(installer: Path): Boolean {
+    /** Starts the downloaded Windows installer; the caller should exit after this succeeds. */
+    fun installWindows(installer: Path) {
         val name = installer.fileName.toString()
-        val process = if (name.lowercase().endsWith(".msi")) {
+        if (name.lowercase().endsWith(".msi")) {
             ProcessBuilder("msiexec", "/i", installer.toString(), "/qn", "/norestart").start()
         } else {
             ProcessBuilder(installer.toString()).start()
         }
-        val exited = process.waitFor(0L, java.util.concurrent.TimeUnit.MILLISECONDS)
-        return !exited
     }
 
     private suspend fun fetchUpdate(currentVersion: String): Update? {
@@ -111,8 +127,7 @@ class Updater(
             .build()
         val response = http.send(request, HttpResponse.BodyHandlers.ofString())
         if (response.statusCode() >= 400) {
-            println("[Updater] update manifest fetch failed (HTTP ${response.statusCode()})")
-            return null
+            throw IOException("Update manifest fetch failed (HTTP ${response.statusCode()}).")
         }
         return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
     }
