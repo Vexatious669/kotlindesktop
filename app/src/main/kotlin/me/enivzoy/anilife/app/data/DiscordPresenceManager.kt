@@ -250,17 +250,22 @@ class DiscordPresenceManager : AutoCloseable {
     }
 
     private fun publishCurrent() {
-        val activeClient = client ?: return
+        val activeClient = client
+        if (activeClient == null) {
+            println("[Discord] publishCurrent skipped: client is null")
+            return
+        }
         val target = wantedTarget
         val activity = buildDiscordPresenceActivity(target, sessionStartedAt)
         lastPublishedTarget = target
         hasPublished = true
+        println("[Discord] publishing activity: ${activity.details()} / ${activity.state()} largeImage=${activity.assets()?.largeImage()} buttons=${activity.buttons()}")
         activeClient.setActivity(activity).whenComplete { _, failure ->
             if (failure != null && !closed.get()) {
                 System.err.println("Discord Rich Presence update failed: ${failure.message}")
                 failure.printStackTrace()
             } else if (!closed.get()) {
-                println("[Discord] activity published: ${activity.details()} / ${activity.state()} buttons=${activity.buttons()}")
+                println("[Discord] activity published OK: ${activity.details()} / ${activity.state()}")
             }
         }
     }
