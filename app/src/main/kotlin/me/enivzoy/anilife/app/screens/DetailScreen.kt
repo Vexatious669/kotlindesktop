@@ -171,49 +171,41 @@ fun DetailScreen(
                 if (showEntryEditor) {
                     val account = aniListUser
                     if (remoteEntry != null && account != null) {
-                    AlertDialog(
-                        onDismissRequest = { showEntryEditor = false },
-                        title = { Text(remoteEntry.anime.title) },
-                        text = {
-                            AniListEntryControls(
-                                entry = remoteEntry,
-                                scoreFormat = account.scoreFormat,
-                                busy = aniListActionPending,
-                                onUpdate = { status, progress, score ->
-                                    scope.launch {
-                                        aniListActionPending = true
-                                        aniListActionError = null
-                                        try {
-                                            AniListSync.updateEntry(remoteEntry, status, progress, score)
-                                        } catch (cancelled: CancellationException) {
-                                            throw cancelled
-                                        } catch (failure: Throwable) {
-                                            aniListActionError = failure.message ?: "Couldn't update your AniList list."
-                                        } finally {
-                                            aniListActionPending = false
-                                        }
-                                    }
-                                },
-                                onDelete = {
-                                    scope.launch {
-                                        aniListActionPending = true
-                                        aniListActionError = null
-                                        try {
-                                            AniListSync.deleteEntry(remoteEntry)
-                                            showEntryEditor = false
-                                        } catch (cancelled: CancellationException) {
-                                            throw cancelled
-                                        } catch (failure: Throwable) {
-                                            aniListActionError = failure.message ?: "Couldn't update your AniList list."
-                                        } finally {
-                                            aniListActionPending = false
-                                        }
-                                    }
-                                },
-                            )
+                    AniListEntryEditorDialog(
+                        entry = remoteEntry,
+                        scoreFormat = account.scoreFormat,
+                        busy = aniListActionPending,
+                        onClose = { showEntryEditor = false },
+                        onUpdate = { status, progress, score ->
+                            scope.launch {
+                                aniListActionPending = true
+                                aniListActionError = null
+                                try {
+                                    AniListSync.updateEntry(remoteEntry, status, progress, score)
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (failure: Throwable) {
+                                    aniListActionError = failure.message ?: "Couldn't update your AniList list."
+                                } finally {
+                                    aniListActionPending = false
+                                }
+                            }
                         },
-                        confirmButton = {
-                            TextButton(onClick = { showEntryEditor = false }) { Text("Close") }
+                        onDelete = {
+                            scope.launch {
+                                aniListActionPending = true
+                                aniListActionError = null
+                                try {
+                                    AniListSync.deleteEntry(remoteEntry)
+                                    showEntryEditor = false
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (failure: Throwable) {
+                                    aniListActionError = failure.message ?: "Couldn't update your AniList list."
+                                } finally {
+                                    aniListActionPending = false
+                                }
+                            }
                         },
                     )
                     }

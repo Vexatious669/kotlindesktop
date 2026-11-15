@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -246,48 +247,40 @@ private fun AniListLibrary(
                             )
                         }
                         if (showEditor) {
-                            AlertDialog(
-                                onDismissRequest = { showEditor = false },
-                                title = { Text(entry.anime.title) },
-                                text = {
-                                    AniListEntryControls(
-                                        entry = entry,
-                                        scoreFormat = scoreFormat,
-                                        busy = busyEntry == entry.entryId,
-                                        onUpdate = { status, progress, score ->
-                                            scope.launch {
-                                                busyEntry = entry.entryId
-                                                error = null
-                                                try {
-                                                    AniListSync.updateEntry(entry, status, progress, score)
-                                                } catch (cancelled: CancellationException) {
-                                                    throw cancelled
-                                                } catch (failure: Throwable) {
-                                                    error = failure.message ?: "Couldn't update AniList."
-                                                } finally {
-                                                    busyEntry = null
-                                                }
-                                            }
-                                        },
-                                        onDelete = {
-                                            scope.launch {
-                                                busyEntry = entry.entryId
-                                                error = null
-                                                try {
-                                                    AniListSync.deleteEntry(entry)
-                                                } catch (cancelled: CancellationException) {
-                                                    throw cancelled
-                                                } catch (failure: Throwable) {
-                                                    error = failure.message ?: "Couldn't remove this AniList entry."
-                                                } finally {
-                                                    busyEntry = null
-                                                }
-                                            }
-                                        },
-                                    )
+                            AniListEntryEditorDialog(
+                                entry = entry,
+                                scoreFormat = scoreFormat,
+                                busy = busyEntry == entry.entryId,
+                                onClose = { showEditor = false },
+                                onUpdate = { status, progress, score ->
+                                    scope.launch {
+                                        busyEntry = entry.entryId
+                                        error = null
+                                        try {
+                                            AniListSync.updateEntry(entry, status, progress, score)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (failure: Throwable) {
+                                            error = failure.message ?: "Couldn't update AniList."
+                                        } finally {
+                                            busyEntry = null
+                                        }
+                                    }
                                 },
-                                confirmButton = {
-                                    TextButton(onClick = { showEditor = false }) { Text("Close") }
+                                onDelete = {
+                                    scope.launch {
+                                        busyEntry = entry.entryId
+                                        error = null
+                                        try {
+                                            AniListSync.deleteEntry(entry)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (failure: Throwable) {
+                                            error = failure.message ?: "Couldn't remove this AniList entry."
+                                        } finally {
+                                            busyEntry = null
+                                        }
+                                    }
                                 },
                             )
                         }
@@ -297,6 +290,38 @@ private fun AniListLibrary(
             }
         }
     }
+}
+
+/**
+ * The AniList entry editor, presented as a flat rectangular dialog in the Anime Info card color.
+ */
+@Composable
+internal fun AniListEntryEditorDialog(
+    entry: AniListListEntry,
+    scoreFormat: AniListScoreFormat,
+    busy: Boolean,
+    onClose: () -> Unit,
+    onUpdate: (AniListListStatus, Int, Double) -> Unit,
+    onDelete: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(entry.anime.title, color = AniLifeColors.Foreground, fontWeight = FontWeight.SemiBold) },
+        text = {
+            AniListEntryControls(
+                entry = entry,
+                scoreFormat = scoreFormat,
+                busy = busy,
+                onUpdate = onUpdate,
+                onDelete = onDelete,
+            )
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
+        shape = RectangleShape,
+        containerColor = AniLifeColors.Card,
+        titleContentColor = AniLifeColors.Foreground,
+        textContentColor = AniLifeColors.Foreground,
+    )
 }
 
 @Composable
@@ -313,9 +338,8 @@ internal fun AniListEntryControls(
     val total = entry.anime.episodes?.takeIf { it > 0 }
 
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-            .background(AniLifeColors.Card).padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box {
