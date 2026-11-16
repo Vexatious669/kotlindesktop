@@ -26,11 +26,9 @@ private class FakeAccount(
     var unreachable: Boolean = false,
 ) : AccountLists {
     val pushed = mutableListOf<List<AnimeCard>>()
-    var reads = 0
     override fun active() = service
     override fun accountName() = name
     override suspend fun read(): List<AccountEntry> {
-        reads++
         if (unreachable) error("offline")
         return entries
     }
@@ -196,7 +194,7 @@ class AccountTransferTest {
     }
 
     @Test
-    fun aRestoreNeverTouchesTheAccount() = stand(FakeAccount()).use { s ->
+    fun aRestoreAddsTheSavedTitlesToTheAccountToo() = stand(FakeAccount()).use { s ->
         val backup = AppBackup.decode(
             """{"format":"anilili-backup","version":1,"watchlist":[
                 {"anilistId":101,"title":"First","cover":null,"addedAt":5},
@@ -205,10 +203,8 @@ class AccountTransferTest {
 
         val summary = runBlocking { s.transfer.restore(backup, applySettings = {}) }
 
-        assertTrue(s.account.pushed.isEmpty())
-        assertEquals(0, s.account.reads)
-        assertNull(summary.accountNote)
-        assertEquals(setOf(101L, 102L), s.library.entries.value.map { it.id }.toSet())
+        assertEquals(setOf(101L, 102L), s.account.pushed.single().map { it.id }.toSet())
+        assertEquals("2 added to MyAnimeList Plan to Watch.", summary.accountNote)
     }
 
     @Test

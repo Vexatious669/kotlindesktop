@@ -117,7 +117,7 @@ class DataTransfer(
                 add("Some titles were saved without their full details because AniList could not be reached. They fill in the next time you use Export MyAnimeList XML while online.")
             }
         }
-        return RestoreSummary(settingsApplied, added, restoredHistory, notRestored, warnings)
+        return RestoreSummary(settingsApplied, added, restoredHistory, notRestored, warnings, pushSavedToAccount())
     }
 
     /**
