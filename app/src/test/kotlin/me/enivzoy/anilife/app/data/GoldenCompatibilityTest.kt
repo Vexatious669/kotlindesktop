@@ -50,6 +50,27 @@ class GoldenCompatibilityTest {
         assertEquals(8, parsed.count { it.status == "Plan to Watch" })
     }
 
+    @Test
+    fun theSettingsWrittenAreTheSixTheFileAlwaysHadPlusTheOneNewSharedSetting() {
+        val golden = AppBackup.decode(resource("windows-backup.json")).settings
+        val settings = AppSettings(
+            autoplayNextEpisode = false,
+            audio = "sub",
+            subtitlesByDefault = true,
+            autoSkipIntro = false,
+            autoSkipOutro = false,
+            skipButtonSeconds = 30,
+            subtitleLanguage = "en",
+        )
+
+        val written = BackupSettings.toBackup(settings)
+
+        // Every key and value in the file from before is still written exactly as it was.
+        golden.forEach { (key, value) -> assertEquals(value, written[key], key) }
+        assertEquals(setOf("sync_saved_to_anilist"), written.keys - golden.keys)
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(true), written["sync_saved_to_anilist"])
+    }
+
     // Full-size checks against real files; skipped unless ANILIFE_REAL_FILES is set.
 
     private fun real(name: String): String? =
@@ -64,7 +85,8 @@ class GoldenCompatibilityTest {
 
         assertEquals(1163, document.watchlist.size)
         assertEquals(7, document.history.size)
-        assertEquals(6, BackupSettings.applyTo(AppSettings(), document.settings).second)
+        // The six shared settings it always had, plus "sync saved titles", which both apps now share.
+        assertEquals(7, BackupSettings.applyTo(AppSettings(), document.settings).second)
     }
 
     @Test
