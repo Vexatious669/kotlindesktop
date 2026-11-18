@@ -4,12 +4,11 @@ Providers in AniLife are sandboxed WebAssembly (`.wasm`) modules, one per anime 
 
 Because modules run in a Wasmtime Component Model sandbox, they have no direct filesystem or socket access. Everything goes through a small host interface: allowlisted HTTP requests, stderr logging, and an in-memory cache.
 
-## Current caveats on `main`
+## How imported providers are loaded
 
-Two host-side issues currently affect custom providers in `WasmAnimeProviders.kt`:
+On every episode lookup the app runs the nine bundled modules, then every `.wasm` file in the providers folder (`%LOCALAPPDATA%\AniLife\providers` on Windows, `~/.local/share/AniLife/providers` on Linux). A file you import or drop in there is picked up on the next lookup, with no restart. A file that has changed is reloaded. If a module cannot be loaded, the app prints `[provider] could not load <file>: <reason>` to stderr and skips it.
 
-1. **Imported files aren't executed yet.** The Providers screen lets you import `.wasm` and `.json` files into the local providers folder and lists them, but `WasmAnimeProviders.loadProviders()` only reads the bundled `PROVIDER_FILES` from app resources. Until it also loads `WasmProviderFileStore().list()`, an imported file will show up in the UI without actually running during playback lookup. To test a custom module right now, either patch `loadProviders()` or bundle it in `app/src/main/resources/providers/`.
-2. **Host interface casing mismatch.** The bundled `.wasm` modules import `anilili:provider/host@1.0.0`, while `WasmAnimeProviders.kt` defines `WIT_HOST = "AniLife:provider/host@1.0.0"`. Component Model imports are exact, case-sensitive matches, and instantiation failures are caught and treated as empty results. Change `WIT_HOST` back to `"anilili:provider/host@1.0.0"` in `WasmAnimeProviders.kt`, and keep `anilili:provider@1.0.0` in your WIT file.
+Your module can import the host interface as either `anilili:provider/host@1.0.0` (`package anilili:provider@1.0.0;`) or `AniLife:provider/host@1.0.0` (`package AniLife:provider@1.0.0;`). The app registers its host functions under both names. Component imports are exact and case-sensitive, so any other spelling fails to link, and the app treats a failed link as "no streams".
 
 ## Request lifecycle
 
@@ -239,7 +238,7 @@ impl Guest for Component {
         }
 
         let url = format!(
-            "https://api.example.com/watch?title={}&episode={}&dub={}",
+            "[https://api.example.com/watch?title=](https://api.example.com/watch?title=){}&episode={}&dub={}",
             percent_encode(title),
             query.episode,
             query.dub,
@@ -289,7 +288,7 @@ fn parse_response(text: &str) -> Result<Vec<Server>, String> {
         out.push(Server {
             name: item["name"].as_str().unwrap_or("Example").to_string(),
             dub: item["dub"].as_bool().unwrap_or(false),
-            headers: vec![("Referer".to_string(), "https://api.example.com/".to_string())],
+            headers: vec![("Referer".to_string(), "[https://api.example.com/](https://api.example.com/)".to_string())],
             streams,
         });
     }
@@ -379,8 +378,8 @@ On import, the app reads `data`, `fileName`, and `name`, and calculates the SHA-
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Doesn't appear after import | Corrupt `.wasm` or invalid JSON wrapper | Check the error message on the Providers page and verify the 8-byte header. |
-| Listed in UI, never runs | `WasmAnimeProviders.loadProviders()` only reads bundled modules | Patch `loadProviders()` or bundle in `resources/providers/`. |
-| No streams and no `[provider]` logs | Instantiation failure (WIT interface mismatch or core module instead of component) | Check `WIT_HOST` (`anilili:provider/host@1.0.0`) and verify component magic `00 61 73 6d 0d 00 01 00`. |
+| Listed in UI, never returns streams | The module failed to load or link. | Run the app from a terminal and look for `[provider] could not load`. Check the file is a component (section on file headers) and that it imports `anilili:provider/host@1.0.0` or `AniLife:provider/host@1.0.0`. |
+| No streams and no `[provider]` logs | Instantiation failure (WIT interface mismatch or core module instead of component) | Check `WIT_HOSTS` (`anilili:provider/host@1.0.0` or `AniLife:provider/host@1.0.0`) and verify component magic `00 61 73 6d 0d 00 01 00`. |
 | `Provider is not allowed to access ...` | Missing domain (or redirect domain) in `info().hosts` | Add the missing host or redirect domain. |
 | Request fails with size error | Response > 16 MiB (raw or unzipped) | Query a lighter endpoint or JSON API. |
 | Garbled response text | Host doesn't decode Brotli (`br`) | Don't send `Accept-Encoding: br`. |
@@ -391,3 +390,4 @@ On import, the app reads `data`, `fileName`, and `name`, and calculates the SHA-
 ## Coming from CloudStream
 
 ability to import cloudstream extensions will be introduced soon
+````[cite: 1]
