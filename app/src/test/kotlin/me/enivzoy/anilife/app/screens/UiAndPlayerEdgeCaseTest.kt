@@ -107,8 +107,9 @@ class UiAndPlayerEdgeCaseTest {
             DiscordPresenceTarget("1", longTitle, false, "FALL", 2026, 3.0, seasonNumber = 2),
             Instant.EPOCH,
         )
-        assertEquals(128, activity.details().codePointCount(0, activity.details().length))
-        assertTrue(activity.details().endsWith("…"))
+        val details = activity.details().orEmpty()
+        assertEquals(128, details.codePointCount(0, details.length))
+        assertTrue(details.endsWith("…"))
         assertEquals("On S02E03", activity.state())
 
         val blankTitleActivity = buildDiscordPresenceActivity(
