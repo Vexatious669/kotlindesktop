@@ -1,36 +1,240 @@
 name: Check
 
 on:
-  push:
-    branches-ignore: [main]
-    tags-ignore: ['**']
-  pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: check-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
+    push:
+        branches: [ main, master ]
+    pull_request:
+        branches: [ main, master ]
+    workflow_dispatch:
 
 jobs:
-  check:
-    runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    check:
+        name: Build, Test & Report
+        runs-on: ubuntu-latest
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: gradle
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
 
-      - name: Run checks
-        run: .\gradlew check --no-daemon --no-configuration-cache
+            - name: Set up JDK 21
+              uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: 21
+                  cache: gradle
+
+            - name: Make gradlew executable
+              run: chmod +x ./gradlew
+
+            - name: Run Gradle check across all modules
+              id: gradle_check
+              run: |
+                  set +e
+                  ./gradlew check --continue --stacktrace 2>&1 | tee build.log
+                  EXIT_CODE=${PIPESTATUS[0]}
+                  echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+                  exit 0
+
+            - name: Parse results and publish report
+              if: always()
+              env:
+                  GRADLE_EXIT_CODE: ${{ steps.gradle_check.outputs.exit_code }}
+              run: |
+                  python3 - << 'EOF'
+                  import glob
+                  import os
+                  import re
+                  import sys
+                  import xml.etree.ElementTree as ET
+
+                  exit_code = int(os.environ.get("GRADLE_EXIT_CODE", "1"))
+                  log_lines = []
+                  if os.path.exists("build.log"):
+                      with open("build.log", "r", encoding="utf-8", errors="replace") as f:
+                          log_lines = [line.rstrip("\n") for line in f]
+
+                  warnings = []
+                  compile_errors = []
+                  seen_warnings = set()
+                  seen_errors = set()
+
+                  warning_re = re.compile(r"^(\s*w:\s+.+|.+:\s*warning:\s+.+|.*DEPRECATION.*)$", re.IGNORECASE)
+                  error_re = re.compile(r"^(\s*e:\s+.+|.+:\s*error:\s+.+|FAILURE:\s+.+|\* What went wrong:.*|> Task .+ FAILED.*)$")
+
+                  for line in log_lines:
+                      stripped = line.strip()
+                      if warning_re.match(stripped) and stripped not in seen_warnings:
+                          seen_warnings.add(stripped)
+                          warnings.append(stripped)
+                      if error_re.match(stripped) and stripped not in seen_errors:
+                          seen_errors.add(stripped)
+                          compile_errors.append(stripped)
+
+                  xml_files = sorted(glob.glob("**/build/test-results/**/*.xml", recursive=True))
+
+                  total_tests = 0
+                  total_failures = 0
+                  total_errors = 0
+                  total_skipped = 0
+                  total_time = 0.0
+
+                  module_stats = {}
+                  suite_rows = []
+                  failed_cases = []
+                  skipped_cases = []
+
+                  for xml_path in xml_files:
+                      parts = xml_path.replace("\\", "/").split("/")
+                      module_name = parts[0] if len(parts) > 1 and parts[0] != "build" else "root"
+                      try:
+                          tree = ET.parse(xml_path)
+                          root = tree.getroot()
+                      except Exception as exc:
+                          compile_errors.append(f"Failed to parse {xml_path}: {exc}")
+                          continue
+
+                      suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+                      for suite in suites:
+                          s_name = suite.attrib.get("name", "unknown")
+                          s_tests = int(suite.attrib.get("tests", 0))
+                          s_failures = int(suite.attrib.get("failures", 0))
+                          s_errors = int(suite.attrib.get("errors", 0))
+                          s_skipped = int(suite.attrib.get("skipped", 0))
+                          s_time = float(suite.attrib.get("time", 0.0))
+                          s_bad = s_failures + s_errors
+                          s_passed = max(0, s_tests - s_bad - s_skipped)
+
+                          total_tests += s_tests
+                          total_failures += s_failures
+                          total_errors += s_errors
+                          total_skipped += s_skipped
+                          total_time += s_time
+
+                          m = module_stats.setdefault(module_name, {"passed": 0, "total": 0, "bad": 0, "skipped": 0, "time": 0.0})
+                          m["passed"] += s_passed
+                          m["total"] += s_tests
+                          m["bad"] += s_bad
+                          m["skipped"] += s_skipped
+                          m["time"] += s_time
+
+                          status_label = "PASS" if s_bad == 0 else "FAIL"
+                          suite_rows.append((status_label, module_name, s_name, s_passed, s_tests, s_bad, s_skipped, s_time))
+
+                          for case in suite.findall("testcase"):
+                              c_name = case.attrib.get("name", "unknown")
+                              c_class = case.attrib.get("classname", s_name)
+                              if case.find("skipped") is not None:
+                                  skip_node = case.find("skipped")
+                                  skip_msg = skip_node.attrib.get("message", "Skipped")
+                                  skipped_cases.append((module_name, c_class, c_name, skip_msg))
+                              for tag in ("failure", "error"):
+                                  node = case.find(tag)
+                                  if node is not None:
+                                      msg = node.attrib.get("message", "Assertion or runtime failure")
+                                      details = (node.text or "").strip()
+                                      short_trace = "\n".join(details.splitlines()[:10])
+                                      failed_cases.append((module_name, c_class, c_name, msg, short_trace))
+
+                  total_bad = total_failures + total_errors
+                  total_passed = max(0, total_tests - total_bad - total_skipped)
+                  executed_tests = max(0, total_tests - total_skipped)
+                  pass_rate = (total_passed / executed_tests * 100.0) if executed_tests > 0 else 0.0
+                  overall_ok = (exit_code == 0 and total_bad == 0 and total_tests > 0)
+                  headline = "SUCCESS" if overall_ok else "FAILED"
+
+                  report = []
+                  report.append(f"## AniLife Check Report: {headline}")
+                  report.append("")
+                  report.append("### Summary")
+                  report.append("| Metric | Count |")
+                  report.append("| :--- | :--- |")
+                  report.append(f"| **Status** | **{headline}** (Gradle exit code `{exit_code}`) |")
+                  report.append(f"| **Succeeded / Total** | **{total_passed} / {total_tests}** ({pass_rate:.1f}% of executed) |")
+                  report.append(f"| **Failed / Errored** | {total_bad} |")
+                  report.append(f"| **Skipped** | {total_skipped} |")
+                  report.append(f"| **Warnings** | {len(warnings)} |")
+                  report.append(f"| **Duration** | {total_time:.2f}s |")
+                  report.append("")
+
+                  if module_stats:
+                      report.append("### Module Totals")
+                      report.append("| Module | Succeeded / Total | Failed | Skipped | Time |")
+                      report.append("| :--- | :--- | :--- | :--- | :--- |")
+                      for mod, st in sorted(module_stats.items()):
+                          report.append(f"| `:{mod}` | **{st['passed']} / {st['total']}** | {st['bad']} | {st['skipped']} | {st['time']:.2f}s |")
+                      report.append("")
+
+                  if suite_rows:
+                      report.append("### Test Suites")
+                      report.append("| Status | Module | Suite | Succeeded / Total | Failed | Skipped | Time |")
+                      report.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+                      for status_label, mod, s_name, s_passed, s_tests, s_bad, s_skipped, s_time in suite_rows:
+                          report.append(f"| {status_label} | `:{mod}` | `{s_name}` | {s_passed} / {s_tests} | {s_bad} | {s_skipped} | {s_time:.2f}s |")
+                      report.append("")
+
+                  report.append(f"### Warnings ({len(warnings)})")
+                  if warnings:
+                      report.append("```text")
+                      for w in warnings[:60]:
+                          report.append(w)
+                      if len(warnings) > 60:
+                          report.append(f"... and {len(warnings) - 60} more warnings")
+                      report.append("```")
+                  else:
+                      report.append("0 warnings detected.")
+                  report.append("")
+
+                  report.append("### What Went Wrong")
+                  if overall_ok and not failed_cases and not compile_errors:
+                      report.append("Nothing went wrong. All checks and tests succeeded.")
+                  else:
+                      if failed_cases:
+                          report.append(f"#### Failed Tests ({len(failed_cases)})")
+                          for mod, c_class, c_name, msg, trace in failed_cases:
+                              report.append(f"- **[`:{mod}`] `{c_class}.{c_name}`**: {msg}")
+                              if trace:
+                                  report.append("  ```text")
+                                  for t_line in trace.splitlines():
+                                      report.append(f"  {t_line}")
+                                  report.append("  ```")
+                      if compile_errors:
+                          report.append(f"#### Build / Task Errors ({len(compile_errors)})")
+                          report.append("```text")
+                          for err in compile_errors[:50]:
+                              report.append(err)
+                          report.append("```")
+                      if not failed_cases and not compile_errors:
+                          report.append("Build exited with non-zero status. Last 40 lines of `build.log`:")
+                          report.append("```text")
+                          for tail_line in log_lines[-40:]:
+                              report.append(tail_line)
+                          report.append("```")
+
+                  if skipped_cases:
+                      report.append("")
+                      report.append(f"### Skipped Tests ({len(skipped_cases)})")
+                      for mod, c_class, c_name, skip_msg in skipped_cases:
+                          report.append(f"- `[`:{mod}`] {c_class}.{c_name}` ({skip_msg})")
+
+                  markdown_output = "\n".join(report)
+                  print(markdown_output)
+
+                  summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+                  if summary_path:
+                      with open(summary_path, "a", encoding="utf-8") as sf:
+                          sf.write(markdown_output + "\n")
+
+                  if not overall_ok:
+                      sys.exit(1)
+                  EOF
+
+            - name: Upload test reports artifact
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: check-reports
+                  path: |
+                      build.log
+                      **/build/reports/tests/**
+                      **/build/test-results/**/*.xml
+                  if-no-files-found: ignore
