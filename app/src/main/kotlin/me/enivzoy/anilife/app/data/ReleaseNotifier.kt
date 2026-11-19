@@ -1,4 +1,3 @@
-
 package me.enivzoy.anilife.app.data
 
 import kotlinx.coroutines.CancellationException
@@ -7,12 +6,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import me.enivzoy.anilife.core.model.AnimeCard
 
-/**
- * Announces new episodes of the titles in the library.
- *
- * AniList has no push of its own for an unsigned-in viewer, so the schedule is polled and any
- * episode that has aired since the last look becomes a notice. An episode is announced once.
- */
 class ReleaseNotifier(
     private val repository: AniListRepository,
     private val store: NoticeStore = NoticeStoreInstance,
@@ -41,15 +34,21 @@ class ReleaseNotifier(
             emptyList()
         }
 
-        val byId = airing.associateBy { it.anime.id }
+        val nowSeconds = System.currentTimeMillis() / 1000
+
+        val byId = airing
+            .filter { it.airingAt <= nowSeconds }
+            .associateBy { it.anime.id }
+
         var added = 0
 
         library.forEach { anime ->
             val entry = byId[anime.id] ?: return@forEach
             val episode = entry.episode
 
-            if (store.hasAnnounced(anime.id, episode)) return@forEach
-            if (entry.airingAt > System.currentTimeMillis() / 1000) return@forEach
+            if (store.hasAnnounced(anime.id, episode)) {
+                return@forEach
+            }
 
             store.add(
                 kind = "airing",
@@ -66,7 +65,6 @@ class ReleaseNotifier(
         return added
     }
 
-    /** Announces a finished download, so the notifications page shows it like any other notice. */
     fun announceDownload(anime: AnimeCard, episodes: Int) {
         store.add(
             kind = "download",
@@ -82,7 +80,6 @@ class ReleaseNotifier(
     }
 
     companion object {
-        /** How far back an episode that has aired is still announced. */
         const val AIRING_LOOKBACK_HOURS = 48
     }
 }
