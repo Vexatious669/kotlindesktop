@@ -1,10 +1,11 @@
+
 package me.enivzoy.anilife.app.data
 
 import kotlinx.coroutines.CancellationException
-import me.enivzoy.anilife.core.model.AnimeCard
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import me.enivzoy.anilife.core.model.AnimeCard
 
 /**
  * Announces new episodes of the titles in the library.
@@ -21,24 +22,35 @@ class ReleaseNotifier(
 
     suspend fun check(): Int {
         val library = repository.library.entries.value
+
         if (library.isEmpty()) {
             mutableLastCheck.value = System.currentTimeMillis()
             return 0
         }
+
         val airing = try {
             repository.recentlyAired(AIRING_LOOKBACK_HOURS)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            System.err.println(
+                "ReleaseNotifier: failed to fetch recently aired episodes: " +
+                    "${failure::class.simpleName}: ${failure.message}"
+            )
+            failure.printStackTrace()
             emptyList()
         }
+
         val byId = airing.associateBy { it.anime.id }
         var added = 0
+
         library.forEach { anime ->
             val entry = byId[anime.id] ?: return@forEach
             val episode = entry.episode
+
             if (store.hasAnnounced(anime.id, episode)) return@forEach
             if (entry.airingAt > System.currentTimeMillis() / 1000) return@forEach
+
             store.add(
                 kind = "airing",
                 title = anime.title,
@@ -46,8 +58,10 @@ class ReleaseNotifier(
                 animeId = anime.id,
                 image = anime.cover,
             )
-            added += 1
+
+            added++
         }
+
         mutableLastCheck.value = System.currentTimeMillis()
         return added
     }
@@ -57,7 +71,11 @@ class ReleaseNotifier(
         store.add(
             kind = "download",
             title = anime.title,
-            body = if (episodes == 1) "Downloaded 1 episode" else "Downloaded $episodes episodes",
+            body = if (episodes == 1) {
+                "Downloaded 1 episode"
+            } else {
+                "Downloaded $episodes episodes"
+            },
             animeId = anime.id,
             image = anime.cover,
         )
