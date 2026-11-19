@@ -1,4 +1,4 @@
-﻿package me.enivzoy.anilife.app.data
+package me.enivzoy.anilife.app.data
 
 import ai.tegmentum.wasmtime4j.WasmRuntime
 import ai.tegmentum.wasmtime4j.component.Component
@@ -16,6 +16,8 @@ import java.time.Duration
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 import java.io.ByteArrayInputStream
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.zip.GZIPInputStream
 
 internal data class WasmAnimeTitle(
@@ -24,26 +26,60 @@ internal data class WasmAnimeTitle(
     val titles: List<String>,
 )
 
-/** Runs the bundled AniLife WASI Preview 2 provider components through their shared WIT contract. */
-internal class WasmAnimeProviders {
+internal class WasmAnimeProviders(
+    private val files: WasmProviderFileStore = WasmProviderFileStore(),
+) {
     private val runtime: WasmRuntime by lazy { WasmRuntimeFactory.create() }
     private val engine: ComponentEngine by lazy { runtime.createComponentEngine() }
     private val compiled: List<LoadedProvider> by lazy { loadProviders() }
 
     fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean): List<AnimeVideoSource> =
-        compiled.flatMap { provider -> runCatching { provider.sources(title, episode, dub) }.getOrDefault(emptyList()) }
+        (compiled + runCatching { importedProviders() }.getOrDefault(emptyList())).flatMap { provider ->
+            runCatching { provider.sources(title, episode, dub) }.getOrDefault(emptyList())
+        }
 
-    /** The names the bundled provider modules report, in the order they are tried. */
     fun bundledProviderNames(): List<String> = compiled.map { provider -> provider.name }
 
     private fun loadProviders(): List<LoadedProvider> = PROVIDER_FILES.mapNotNull { file ->
         runCatching {
             val bytes = javaClass.getResourceAsStream("/providers/$file")?.use { it.readBytes() }
                 ?: error("Bundled provider $file is missing.")
-            val component = engine.compileComponent(bytes, file)
-            val info = invokeInfo(component)
-            LoadedProvider(component, info.first, info.second)
+            loadModule(file, bytes)
         }.getOrNull()
+    }
+
+    private fun loadModule(label: String, bytes: ByteArray): LoadedProvider {
+        val component = engine.compileComponent(bytes, label)
+        val info = invokeInfo(component)
+        return LoadedProvider(component, info.first, info.second)
+    }
+
+    private val importedCache = ConcurrentHashMap<String, Pair<Long, LoadedProvider?>>()
+
+    private fun importedProviders(): List<LoadedProvider> {
+        val directory = files.directory()
+        if (!Files.isDirectory(directory)) return emptyList()
+        val modules: List<Path> = Files.list(directory).use { paths ->
+            paths.filter { path ->
+                val name = path.fileName.toString()
+                Files.isRegularFile(path) && name.endsWith(".wasm", ignoreCase = true) && !name.startsWith(".")
+            }.sorted(compareBy(String.CASE_INSENSITIVE_ORDER) { it.fileName.toString() }).toList()
+        }
+        importedCache.keys.retainAll(modules.map { it.toString() }.toSet())
+        return modules.mapNotNull { path ->
+            val key = path.toString()
+            val stamp = Files.getLastModifiedTime(path).toMillis() * 31 + Files.size(path)
+            val cached = importedCache[key]
+            if (cached != null && cached.first == stamp) {
+                cached.second
+            } else {
+                val loaded = runCatching { loadModule(path.fileName.toString(), Files.readAllBytes(path)) }
+                    .onFailure { System.err.println("[provider] could not load ${path.fileName}: ${it.message}") }
+                    .getOrNull()
+                importedCache[key] = stamp to loaded
+                loaded
+            }
+        }
     }
 
     private fun invokeInfo(component: Component): Pair<String, Set<String>> {
@@ -108,39 +144,41 @@ internal class WasmAnimeProviders {
     private fun linker(hosts: Set<String>, cache: ConcurrentHashMap<String, CacheValue>): ComponentLinker<Any> {
         val linker: ComponentLinker<Any> = runtime.createComponentLinker<Any>(engine.engine)
         linker.enableWasiPreview2()
-        linker.defineFunction(WIT_HOST + "#http", ComponentHostFunction.create { args ->
-            val request = args[0].asRecord()
-            val response = providerRequest(request, hosts)
-            listOf(response.fold(
-                onSuccess = { ComponentVal.ok(responseValue(it)) },
-                onFailure = { ComponentVal.err(ComponentVal.string(it.message ?: "HTTP request failed")) },
-            ))
-        })
-        linker.defineFunction(WIT_HOST + "#browser-fetch", ComponentHostFunction.create { args ->
-            val origin = args[0].asString()
-            listOf(providerRequest(args[1].asRecord(), hosts, origin).fold(
-                onSuccess = { ComponentVal.ok(responseValue(it)) },
-                onFailure = { ComponentVal.err(ComponentVal.string("HTTP fallback for browser fetch failed: ${it.message}")) },
-            ))
-        })
-        linker.defineFunction(WIT_HOST + "#log", ComponentHostFunction.create { args ->
-            System.err.println("[provider] ${args.firstOrNull()?.asString().orEmpty()}")
-            emptyList()
-        })
-        linker.defineFunction(WIT_HOST + "#cache-get", ComponentHostFunction.create { args ->
-            val cached = cache[args[0].asString()]?.takeIf { it.expiresAt > System.currentTimeMillis() }
-            listOf(if (cached == null) ComponentVal.none() else ComponentVal.some(ComponentVal.string(cached.value)))
-        })
-        linker.defineFunction(WIT_HOST + "#cache-set", ComponentHostFunction.create { args ->
-            val ttl = args[2].asU32().coerceAtMost(MAX_CACHE_TTL_SECONDS)
-            val key = args[0].asString()
-            val value = args[1].asString()
-            require(key.length <= MAX_CACHE_KEY_CHARS && value.length <= MAX_CACHE_VALUE_CHARS) { "Provider cache entry exceeds its size limit." }
-            if (cache.containsKey(key) || cache.size < MAX_CACHE_ENTRIES) {
-                cache[key] = CacheValue(value, System.currentTimeMillis() + ttl * 1000L)
-            }
-            emptyList()
-        })
+        for (hostName in WIT_HOSTS) {
+            linker.defineFunction("$hostName#http", ComponentHostFunction.create { args ->
+                val request = args[0].asRecord()
+                val response = providerRequest(request, hosts)
+                listOf(response.fold(
+                    onSuccess = { ComponentVal.ok(responseValue(it)) },
+                    onFailure = { ComponentVal.err(ComponentVal.string(it.message ?: "HTTP request failed")) },
+                ))
+            })
+            linker.defineFunction("$hostName#browser-fetch", ComponentHostFunction.create { args ->
+                val origin = args[0].asString()
+                listOf(providerRequest(args[1].asRecord(), hosts, origin).fold(
+                    onSuccess = { ComponentVal.ok(responseValue(it)) },
+                    onFailure = { ComponentVal.err(ComponentVal.string("HTTP fallback for browser fetch failed: ${it.message}")) },
+                ))
+            })
+            linker.defineFunction("$hostName#log", ComponentHostFunction.create { args ->
+                System.err.println("[provider] ${args.firstOrNull()?.asString().orEmpty()}")
+                emptyList()
+            })
+            linker.defineFunction("$hostName#cache-get", ComponentHostFunction.create { args ->
+                val cached = cache[args[0].asString()]?.takeIf { it.expiresAt > System.currentTimeMillis() }
+                listOf(if (cached == null) ComponentVal.none() else ComponentVal.some(ComponentVal.string(cached.value)))
+            })
+            linker.defineFunction("$hostName#cache-set", ComponentHostFunction.create { args ->
+                val ttl = args[2].asU32().coerceAtMost(MAX_CACHE_TTL_SECONDS)
+                val key = args[0].asString()
+                val value = args[1].asString()
+                require(key.length <= MAX_CACHE_KEY_CHARS && value.length <= MAX_CACHE_VALUE_CHARS) { "Provider cache entry exceeds its size limit." }
+                if (cache.containsKey(key) || cache.size < MAX_CACHE_ENTRIES) {
+                    cache[key] = CacheValue(value, System.currentTimeMillis() + ttl * 1000L)
+                }
+                emptyList()
+            })
+        }
         return linker
     }
 
@@ -249,7 +287,7 @@ internal class WasmAnimeProviders {
 
     private companion object {
         val PROVIDER_FILES = listOf("zoko.wasm", "megaplay.wasm", "animeonsen.wasm", "rift.wasm", "uniquestream.wasm", "anipm.wasm", "animeheaven.wasm", "animepahe.wasm", "anizone.wasm")
-        const val WIT_HOST = "AniLife:provider/host@1.0.0"
+        val WIT_HOSTS = listOf("anilili:provider/host@1.0.0", "AniLife:provider/host@1.0.0")
         const val FUEL_LIMIT = 100_000_000L
         const val MEMORY_LIMIT_BYTES = 64L * 1024 * 1024
         const val CALL_TIMEOUT_SECONDS = 45L
@@ -263,4 +301,3 @@ internal class WasmAnimeProviders {
         const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     }
 }
-
