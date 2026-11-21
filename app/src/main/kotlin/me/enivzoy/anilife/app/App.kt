@@ -50,7 +50,6 @@ import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
 import me.enivzoy.anilife.app.data.DiscordPresenceManager
 import me.enivzoy.anilife.app.data.DownloadQueueManager
-import me.enivzoy.anilife.app.data.DiscordPresenceTarget
 import me.enivzoy.anilife.app.data.ProviderCatalog
 import me.enivzoy.anilife.app.screens.BrowseScreen
 import me.enivzoy.anilife.app.screens.AnimeWatchScreen
@@ -117,20 +116,6 @@ fun AniLifeApp(
     var checkingForUpdates by remember { mutableStateOf(false) }
     var updateActionStatus by remember { mutableStateOf<String?>(null) }
     var installingUpdate by remember { mutableStateOf(false) }
-    val presenceTarget = (screen as? Screen.Player)?.let { player ->
-        val detail = player.detail
-        val showTitle = detail?.title?.takeIf(String::isNotBlank)
-            ?: player.title.substringBefore(" · Episode ")
-        DiscordPresenceTarget(
-            sessionKey = detail?.id?.toString() ?: showTitle,
-            title = showTitle,
-            isMovie = detail?.format.equals("MOVIE", ignoreCase = true),
-            season = detail?.season,
-            year = detail?.year,
-            episode = player.episode,
-            cover = detail?.cover,
-        )
-    }
 
     suspend fun checkForUpdates(showUpToDate: Boolean) {
         if (checkingForUpdates) return
@@ -205,11 +190,11 @@ fun AniLifeApp(
         }
     }
 
-    LaunchedEffect(settings.discordPresenceEnabled, settings.discordApplicationId, presenceTarget) {
-        discordPresence.update(
+    // Configuration only: the player reports position/pause/episode changes directly to the worker.
+    LaunchedEffect(settings.discordPresenceEnabled, settings.discordApplicationId) {
+        discordPresence.configure(
             enabled = settings.discordPresenceEnabled,
             configuredApplicationId = settings.discordApplicationId,
-            target = presenceTarget,
         )
     }
     DisposableEffect(discordPresence) {
@@ -226,10 +211,9 @@ fun AniLifeApp(
         if (!settings.discordPresenceEnabled || settings.discordApplicationId != id) {
             updateSettings { it.copy(discordPresenceEnabled = true, discordApplicationId = id) }
         }
-        discordPresence.update(
+        discordPresence.configure(
             enabled = true,
             configuredApplicationId = id,
-            target = presenceTarget,
             reconnect = true,
         )
     }
@@ -241,12 +225,6 @@ fun AniLifeApp(
 
     LaunchedEffect(screen) {
         playerFullscreen = screen is Screen.Player
-        println("[Discord] screen=${screen::class.simpleName} presenceTarget=${presenceTarget?.title} ep=${presenceTarget?.episode}")
-        discordPresence.update(
-            enabled = settings.discordPresenceEnabled,
-            configuredApplicationId = settings.discordApplicationId,
-            target = presenceTarget,
-        )
     }
     LaunchedEffect(playerFullscreen) { onPlayerFullscreen(playerFullscreen) }
 
@@ -464,6 +442,9 @@ fun AniLifeApp(
                         onEpisodeChange = { episode ->
                             if (target.detail != null) scope.launch { resolvePlayerEpisode(target, episode, target.audioTrack) }
                             else screen = target.copy(episode = episode, episodeTitle = target.episodeTitles[episode])
+                        },
+                        onPresence = { presence ->
+                            if (presence == null) discordPresence.clearPlayer() else discordPresence.show(presence)
                         },
                         onBack = ::goBack,
                     )
