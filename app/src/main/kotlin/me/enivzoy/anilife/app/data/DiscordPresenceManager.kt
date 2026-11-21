@@ -16,7 +16,7 @@ import xyz.orbitary.perigee.event.Disconnected
 import xyz.orbitary.perigee.event.Ready
 import java.time.Duration
 import java.time.Instant
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 
@@ -79,6 +79,12 @@ sealed class PresenceMessage {
 
     data class Show(val presence: Presence, val reportedAt: Long) : PresenceMessage()
     data class Clear(val playersOnly: Boolean = false) : PresenceMessage()
+    data class PublishResult(
+        val generation: Long,
+        val identity: String,
+        val position: Double,
+        val failure: Throwable?,
+    ) : PresenceMessage()
 }
 
 enum class DiscordPresenceStatus {
@@ -212,6 +218,8 @@ class DiscordPresenceManager : AutoCloseable {
     private var published: Published? = null
     private var nextAttempt: Long = 0L
     private var lastLoggedState: String = "none"
+    private var generation: Long = 0L
+    private var publishPending = false
 
     init {
         workerThread = Thread({ runWorker() }, "discord-rich-presence").apply { isDaemon = true }
@@ -328,6 +336,35 @@ class DiscordPresenceManager : AutoCloseable {
                     DiscordPresenceLog.w("worker DROPPED Show (worker enabled=$enabled)")
                 }
             }
+            is PresenceMessage.PublishResult -> {
+                if (message.generation != generation) {
+                    DiscordPresenceLog.d("ignoring stale SET_ACTIVITY result (gen ${message.generation})")
+                    return
+                }
+                publishPending = false
+                val now = System.currentTimeMillis()
+                if (message.failure == null) {
+                    published = Published(message.identity, message.position, now)
+                    nextAttempt = now + MIN_PUBLISH_INTERVAL
+                    DiscordPresenceLog.d("SET_ACTIVITY accepted identity=${message.identity}")
+                } else {
+                    published = null
+                    connected = false
+                    // A slow Discord reply is not a broken pipe: retry after the normal window.
+                    nextAttempt = now + if (message.failure is TimeoutException) {
+                        MIN_PUBLISH_INTERVAL
+                    } else {
+                        RECONNECT_INTERVAL
+                    }
+                    DiscordPresenceLog.e(
+                        "SET_ACTIVITY failed identity=${message.identity}: ${message.failure}",
+                        message.failure,
+                    )
+                    if (mutableState.value.status == DiscordPresenceStatus.Connected) {
+                        publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
+                    }
+                }
+            }
             is PresenceMessage.Clear -> {
                 wanted = null
                 if (message.playersOnly) {
@@ -406,6 +443,10 @@ class DiscordPresenceManager : AutoCloseable {
         if (state != lastLoggedState) {
             DiscordPresenceLog.d("IPC state -> $state (connected=$connected)")
             lastLoggedState = state
+        }
+        if (publishPending) {
+            DiscordPresenceLog.d("pump: waiting for SET_ACTIVITY acknowledgement")
+            return
         }
         if (now < nextAttempt) {
             DiscordPresenceLog.d("pump: waiting ${nextAttempt - now}ms (rate limit / backoff)")
@@ -516,6 +557,7 @@ class DiscordPresenceManager : AutoCloseable {
             }
         }
 
+        generation++
         client = newClient
         lastLoggedState = "none"
         try {
@@ -539,58 +581,46 @@ class DiscordPresenceManager : AutoCloseable {
         return false
     }
 
+    /**
+     * Submit SET_ACTIVITY without blocking the worker. Discord can take up to ~10s to acknowledge
+     * the first activity; waiting on the future used to stall the worker (and closing a client
+     * from that path could hang on the Windows pipe read). The completion is posted back through
+     * the worker channel so all state transitions stay single-threaded.
+     */
     private fun publishActivity(activity: Activity, identity: String, position: Double) {
-        val now = System.currentTimeMillis()
-        for (attempt in 0..1) {
-            if (!ensureConnected()) return
-            val activeClient = client ?: return
-            try {
-                DiscordPresenceLog.d("SET_ACTIVITY attempt=$attempt identity=$identity position=${position.toInt()}")
-                activeClient.setActivity(activity).get(5, TimeUnit.SECONDS)
-                published = Published(identity, position, now)
-                nextAttempt = now + MIN_PUBLISH_INTERVAL
-                DiscordPresenceLog.d("SET_ACTIVITY accepted identity=$identity")
-                return
-            } catch (failure: Exception) {
-                DiscordPresenceLog.e("SET_ACTIVITY failed (attempt=$attempt) identity=$identity", failure)
-                connected = false
-                published = null
-                val detail = failure.message.orEmpty()
-                if (detail.contains("Not connected", ignoreCase = true) ||
-                    detail.contains("closed", ignoreCase = true)
-                ) {
-                    // Pipe went away between the state check and the send; let Perigee reconnect.
-                    DiscordPresenceLog.d("SET_ACTIVITY will retry after Ready")
-                    return
-                }
-                if (attempt == 0) {
-                    // One immediate retry with a fresh pipe, then back off.
-                    DiscordPresenceLog.d("SET_ACTIVITY retrying with a fresh pipe")
-                    closeClient()
-                    nextAttempt = 0L
-                } else {
-                    closeClient()
-                    nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
-                    publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-                }
-            }
+        if (publishPending) return
+        if (!ensureConnected()) return
+        val activeClient = client ?: return
+        val currentGeneration = generation
+        publishPending = true
+        DiscordPresenceLog.d("SET_ACTIVITY submitted identity=$identity position=${position.toInt()}")
+        activeClient.setActivity(activity).whenComplete { _, failure ->
+            val cause = failure?.let { if (it is java.util.concurrent.CompletionException) it.cause ?: it else it }
+            send(
+                PresenceMessage.PublishResult(
+                    generation = currentGeneration,
+                    identity = identity,
+                    position = position,
+                    failure = cause,
+                ),
+            )
         }
     }
 
     private fun clearActivity() {
         val activeClient = client
         if (activeClient == null || !connected) return
-        runCatching { activeClient.clearActivity().get(5, TimeUnit.SECONDS) }
-            .onSuccess { DiscordPresenceLog.d("CLEAR_ACTIVITY accepted") }
-            .onFailure {
-                DiscordPresenceLog.e("CLEAR_ACTIVITY failed", it)
-                connected = false
-                closeClient()
-            }
+        DiscordPresenceLog.d("CLEAR_ACTIVITY submitted")
+        activeClient.clearActivity().whenComplete { _, failure ->
+            if (failure == null) DiscordPresenceLog.d("CLEAR_ACTIVITY accepted")
+            else DiscordPresenceLog.e("CLEAR_ACTIVITY failed", failure)
+        }
     }
 
     private fun closeClient() {
         val current = client
+        generation++
+        publishPending = false
         client = null
         connected = false
         if (current != null) DiscordPresenceLog.d("closing IPC client")
