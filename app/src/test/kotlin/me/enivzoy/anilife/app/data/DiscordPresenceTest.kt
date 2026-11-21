@@ -8,7 +8,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import xyz.orbitary.perigee.activity.ActivityType
-import xyz.orbitary.perigee.activity.StatusDisplayType
 
 class DiscordPresenceTest {
     private fun playing(
@@ -47,20 +46,17 @@ class DiscordPresenceTest {
     }
 
     @Test
-    fun activityRendersEpisodeCounterCoverAndProgressTimestamps() {
+    fun activityRendersEpisodeCounterAndProgressTimestamps() {
         val card = playing(episodeTitle = "The News")
         val activity = buildActivity(card)
 
         assertEquals(ActivityType.WATCHING, activity.type())
-        assertEquals(StatusDisplayType.DETAILS, activity.statusDisplayType())
         assertEquals("My Series", activity.details())
         assertEquals("Ep: 3/12 - The News", activity.state())
-        assertEquals(card.cover, activity.assets().largeImage())
-        assertEquals("icon", activity.assets().smallImage())
-        assertNull(activity.assets().smallText())
-        assertEquals(1, activity.buttons().size)
-        assertEquals("Join the Anilili Discord", activity.buttons()[0].label())
-        assertEquals("https://discord.gg/Anilili", activity.buttons()[0].url())
+        // Minimal IPC payload: images/buttons/statusDisplay have caused Discord to ignore it.
+        assertNull(activity.assets().largeImage())
+        assertNull(activity.assets().smallImage())
+        assertTrue(activity.buttons().isEmpty())
 
         val timestamps = assertNotNull(activity.timestamps())
         val start = assertNotNull(timestamps.start())
@@ -71,11 +67,11 @@ class DiscordPresenceTest {
     }
 
     @Test
-    fun pausedActivityDropsTimestampsAndSwapsToPauseBadge() {
+    fun pausedActivityDropsTimestampsAndKeepsTextOnlyBadge() {
         val activity = buildActivity(playing(paused = true))
 
-        assertEquals("paused", activity.assets().smallImage())
-        assertEquals("Paused", activity.assets().smallText())
+        assertNull(activity.assets().smallImage())
+        assertNull(activity.assets().smallText())
         assertNull(activity.timestamps())
     }
 
