@@ -56,7 +56,8 @@ class DiscordPresenceTest {
         assertEquals("My Series", activity.details())
         assertEquals("Ep: 3/12 - The News", activity.state())
         assertEquals(card.cover, activity.assets().largeImage())
-        assertEquals("icon", activity.assets().smallImage())
+        // Unregistered asset keys can make Discord reject SET_ACTIVITY, so no small image is sent.
+        assertNull(activity.assets().smallImage())
         assertNull(activity.assets().smallText())
         assertEquals(1, activity.buttons().size)
         assertEquals("Join the Anilili Discord", activity.buttons()[0].label())
@@ -71,11 +72,11 @@ class DiscordPresenceTest {
     }
 
     @Test
-    fun pausedActivityDropsTimestampsAndSwapsToPauseBadge() {
+    fun pausedActivityDropsTimestampsAndKeepsTextOnlyBadge() {
         val activity = buildActivity(playing(paused = true))
 
-        assertEquals("paused", activity.assets().smallImage())
-        assertEquals("Paused", activity.assets().smallText())
+        assertNull(activity.assets().smallImage())
+        assertNull(activity.assets().smallText())
         assertNull(activity.timestamps())
     }
 

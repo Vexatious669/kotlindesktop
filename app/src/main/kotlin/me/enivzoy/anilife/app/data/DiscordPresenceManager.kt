@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
+import xyz.orbitary.perigee.ConnectionState
 import xyz.orbitary.perigee.PerigeeClient
 import xyz.orbitary.perigee.activity.Activity
 import xyz.orbitary.perigee.activity.ActivityType
@@ -163,9 +164,9 @@ internal fun buildActivity(p: Presence): Activity {
         .statusDisplay(StatusDisplayType.DETAILS)
         .details(p.title.trim().ifBlank { "Anime" }.discordText())
         .state(state.discordText())
-        .smallImage(if (p.paused) "paused" else "icon")
+        // Do not send unregistered asset keys ("icon"/"paused") here: Discord can reject the
+        // entire SET_ACTIVITY when an app has no such assets. Pause state is already in `state`.
         .apply {
-            if (p.paused) smallImage("paused", "Paused")
             p.cover?.trim()?.takeIf(String::isNotBlank)?.let { cover ->
                 largeImage(cover, p.title.discordText())
             }
@@ -210,10 +211,12 @@ class DiscordPresenceManager : AutoCloseable {
     private var wanted: Wanted? = null
     private var published: Published? = null
     private var nextAttempt: Long = 0L
+    private var lastLoggedState: String = "none"
 
     init {
         workerThread = Thread({ runWorker() }, "discord-rich-presence").apply { isDaemon = true }
         workerThread.start()
+        DiscordPresenceLog.d("worker started; log file = ${DiscordPresenceLog.logFile()}")
     }
 
     /** Configure the pipe (and the settings guard). Reconnect forces a fresh IPC connection. */
@@ -223,6 +226,10 @@ class DiscordPresenceManager : AutoCloseable {
         val active = enabled && id.isNotEmpty() && id.all(Char::isDigit)
         this.enabled = active
         this.applicationId = id.takeIf { active }
+        DiscordPresenceLog.d(
+            "configure enabled=$enabled id='$configuredApplicationId' active=$active reconnect=$reconnect " +
+                "(note: OAuth2 sign-in is unrelated to the local Discord IPC pipe)",
+        )
         send(PresenceMessage.Configure(active, id, reconnect))
     }
 
@@ -255,19 +262,31 @@ class DiscordPresenceManager : AutoCloseable {
 
     /** Called by the player on every meaningful transport update. */
     fun show(presence: Presence) {
-        if (closed.get() || !enabled) return
+        if (closed.get() || !enabled) {
+            DiscordPresenceLog.d(
+                "show DROPPED (closed=${closed.get()} enabled=$enabled): ${presence.title} " +
+                    "ep=${presence.episode} pos=${presence.position.toInt()} paused=${presence.paused}",
+            )
+            return
+        }
+        DiscordPresenceLog.d(
+            "show: ${presence.title} ep=${presence.episode} pos=${presence.position.toInt()}/${presence.duration.toInt()} " +
+                "paused=${presence.paused} identity=${presence.identity()}",
+        )
         send(PresenceMessage.Show(presence, System.currentTimeMillis()))
     }
 
     /** Playback stopped: drop the player card and fall back to the idle card. */
     fun clearPlayer() {
         if (closed.get()) return
+        DiscordPresenceLog.d("clearPlayer")
         send(PresenceMessage.Clear(playersOnly = true))
     }
 
     /** Presence disabled: clear the card and shut the pipe down. */
     fun clear() {
         if (closed.get()) return
+        DiscordPresenceLog.d("clear (disable presence)")
         enabled = false
         applicationId = null
         send(PresenceMessage.Clear(playersOnly = false))
@@ -302,15 +321,22 @@ class DiscordPresenceManager : AutoCloseable {
         when (message) {
             is PresenceMessage.Configure -> applyConfiguration(message)
             is PresenceMessage.Show -> {
-                if (enabled) wanted = Wanted(message.presence, message.reportedAt)
+                if (enabled) {
+                    wanted = Wanted(message.presence, message.reportedAt)
+                    DiscordPresenceLog.d("worker accepted Show -> wanted")
+                } else {
+                    DiscordPresenceLog.w("worker DROPPED Show (worker enabled=$enabled)")
+                }
             }
             is PresenceMessage.Clear -> {
                 wanted = null
                 if (message.playersOnly) {
+                    DiscordPresenceLog.d("worker Clear(playersOnly) -> clearing activity")
                     clearActivity()
                     published = null
                     nextAttempt = System.currentTimeMillis() + MIN_PUBLISH_INTERVAL
                 } else {
+                    DiscordPresenceLog.d("worker Clear(all) -> disabling")
                     enabled = false
                     applicationId = null
                     closeClient()
@@ -325,6 +351,9 @@ class DiscordPresenceManager : AutoCloseable {
         val previousId = applicationId
         enabled = message.enabled
         applicationId = message.applicationId.takeIf { enabled }
+        DiscordPresenceLog.d(
+            "worker Configure enabled=$enabled appId=$applicationId previousId=$previousId reconnect=${message.reconnect}",
+        )
         if (!enabled || applicationId.isNullOrBlank()) {
             wanted = null
             published = null
@@ -333,6 +362,7 @@ class DiscordPresenceManager : AutoCloseable {
             return
         }
         if (message.reconnect || previousId != applicationId) {
+            DiscordPresenceLog.d("worker forcing fresh IPC client")
             closeClient()
             published = null
             nextAttempt = 0L
@@ -342,24 +372,45 @@ class DiscordPresenceManager : AutoCloseable {
 
     /** True when the card is stale; the returned value is the rate-limit gate timestamp. */
     private fun due(now: Long): Long? {
-        val current = wanted ?: return null
+        val current = wanted ?: run {
+            DiscordPresenceLog.d("due: no wanted presence")
+            return null
+        }
         val p = current.presence
-        val stale = when (val pub = published) {
-            null -> true
+        val reason = when (val pub = published) {
+            null -> "never published"
             else -> {
                 val drifted = if (!p.paused) {
                     val elapsed = (now - pub.at) / 1000.0
                     abs(p.position - (pub.position + elapsed)) > SEEK_TOLERANCE
                 } else false
-                pub.identity != p.identity() || drifted || now - pub.at >= REFRESH_INTERVAL
+                when {
+                    pub.identity != p.identity() -> "identity changed (${pub.identity} -> ${p.identity()})"
+                    drifted -> "seek drift > ${SEEK_TOLERANCE.toInt()}s"
+                    now - pub.at >= REFRESH_INTERVAL -> "refresh"
+                    else -> null
+                }
             }
         }
-        return if (stale) nextAttempt else null
+        if (reason == null) {
+            DiscordPresenceLog.d("due: no (unchanged card)")
+            return null
+        }
+        DiscordPresenceLog.d("due: YES ($reason), gate at ${nextAttempt - now}ms")
+        return nextAttempt
     }
 
     private fun pump() {
         val now = System.currentTimeMillis()
-        if (now < nextAttempt) return
+        val state = client?.state()?.name ?: "none"
+        if (state != lastLoggedState) {
+            DiscordPresenceLog.d("IPC state -> $state (connected=$connected)")
+            lastLoggedState = state
+        }
+        if (now < nextAttempt) {
+            DiscordPresenceLog.d("pump: waiting ${nextAttempt - now}ms (rate limit / backoff)")
+            return
+        }
         if (client == null || !connected) {
             if (!ensureConnected()) return
         }
@@ -368,6 +419,7 @@ class DiscordPresenceManager : AutoCloseable {
         if (current == null) {
             val pub = published
             if (pub == null || pub.identity != IDLE_IDENTITY || now - pub.at >= REFRESH_INTERVAL) {
+                DiscordPresenceLog.d("pump: publishing idle card")
                 publishActivity(buildDiscordPresenceActivity(null, Instant.ofEpochMilli(now)), IDLE_IDENTITY, 0.0)
             }
             return
@@ -379,25 +431,61 @@ class DiscordPresenceManager : AutoCloseable {
         val position = if (p.paused) p.position
         else p.position + (now - current.reportedAt) / 1000.0
         val card = p.copy(position = position.coerceAtLeast(0.0))
+        DiscordPresenceLog.d("pump: publishing player card identity=${card.identity()} position=${card.position.toInt()}")
         publishActivity(buildActivity(card), card.identity(), card.position)
     }
 
+    /**
+     * Start (or reuse) the IPC client. `connect()` is deliberately non-blocking: Perigee keeps
+     * retrying in the background until Discord's pipe appears. Blocking on a 5s timeout and then
+     * closing the client killed that retry loop, which is why presence never appeared when Discord
+     * was launched after the app or took a moment to expose the pipe.
+     */
     private fun ensureConnected(): Boolean {
         val id = applicationId
-        if (id.isNullOrBlank()) return false
+        if (id.isNullOrBlank()) {
+            DiscordPresenceLog.w("ensureConnected: no valid numeric application id")
+            return false
+        }
         val current = client
-        if (current != null && connected) return true
+        if (current != null) {
+            if (current.isReady()) {
+                if (!connected) DiscordPresenceLog.d("existing client became Ready")
+                connected = true
+                published = null
+                nextAttempt = 0L
+                if (mutableState.value.status != DiscordPresenceStatus.Connected) {
+                    publishState(DiscordPresenceState(DiscordPresenceStatus.Connected))
+                }
+                return true
+            }
+            // Already connecting/backing off inside Perigee; its Ready handler will wake us.
+            return false
+        }
         val now = System.currentTimeMillis()
-        if (now < nextAttempt) return false
+        if (now < nextAttempt) {
+            DiscordPresenceLog.d("ensureConnected: backoff ${nextAttempt - now}ms")
+            return false
+        }
 
+        DiscordPresenceLog.d("ensureConnected: building PerigeeClient appId=$id")
         publishState(DiscordPresenceState(DiscordPresenceStatus.Connecting))
-        val newClient = PerigeeClient.builder(id)
-            .autoReconnect(true)
-            .reconnectDelay(Duration.ofSeconds(2), Duration.ofSeconds(30))
-            .build()
+        val newClient = try {
+            PerigeeClient.builder(id)
+                .autoReconnect(true)
+                .reconnectDelay(Duration.ofSeconds(2), Duration.ofSeconds(30))
+                .build()
+        } catch (failure: Exception) {
+            DiscordPresenceLog.e("could not build PerigeeClient", failure)
+            connected = false
+            nextAttempt = now + RECONNECT_INTERVAL
+            publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
+            return false
+        }
 
         newClient.on(Ready::class.java) { ready ->
             if (client === newClient) {
+                DiscordPresenceLog.d("Ready: Discord IPC is live")
                 connected = true
                 published = null
                 nextAttempt = 0L
@@ -421,31 +509,34 @@ class DiscordPresenceManager : AutoCloseable {
                 published = null
                 nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
                 publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-                val suffix = if (event.reconnecting()) " (retrying)" else ""
-                System.err.println("Discord Rich Presence disconnected$suffix: ${event.cause()?.message ?: "unknown"}")
+                val suffix = if (event.reconnecting()) " (Perigee retrying)" else ""
+                DiscordPresenceLog.w(
+                    "Disconnected$suffix: ${event.cause()?.message ?: "unknown cause"}",
+                )
             }
         }
 
         client = newClient
-        // Bound the initial wait so Settings doesn't say "Connecting" forever when Discord is
-        // absent. A later Ready event still flips the state to Connected.
-        return try {
-            newClient.connect(Duration.ofSeconds(5)).get(6, TimeUnit.SECONDS)
-            connected = true
-            published = null
-            nextAttempt = 0L
-            if (mutableState.value.status != DiscordPresenceStatus.Connected) {
-                publishState(DiscordPresenceState(DiscordPresenceStatus.Connected))
-            }
-            true
+        lastLoggedState = "none"
+        try {
+            // No timeout wait: Perigee owns reconnection. A Ready event flips `connected` and
+            // the next pump publishes the card that is already waiting in `wanted`.
+            newClient.connect()
+            DiscordPresenceLog.d("connect() started; state=${newClient.state()}")
         } catch (failure: Exception) {
-            connected = false
+            DiscordPresenceLog.e("connect() failed immediately", failure)
             closeClient()
             nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
             publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-            System.err.println("Discord Rich Presence connection unavailable: ${failure.message}")
-            false
+            return false
         }
+        if (newClient.isReady()) {
+            connected = true
+            published = null
+            nextAttempt = 0L
+            return true
+        }
+        return false
     }
 
     private fun publishActivity(activity: Activity, identity: String, position: Double) {
@@ -454,21 +545,33 @@ class DiscordPresenceManager : AutoCloseable {
             if (!ensureConnected()) return
             val activeClient = client ?: return
             try {
+                DiscordPresenceLog.d("SET_ACTIVITY attempt=$attempt identity=$identity position=${position.toInt()}")
                 activeClient.setActivity(activity).get(5, TimeUnit.SECONDS)
                 published = Published(identity, position, now)
                 nextAttempt = now + MIN_PUBLISH_INTERVAL
+                DiscordPresenceLog.d("SET_ACTIVITY accepted identity=$identity")
                 return
             } catch (failure: Exception) {
+                DiscordPresenceLog.e("SET_ACTIVITY failed (attempt=$attempt) identity=$identity", failure)
                 connected = false
-                closeClient()
                 published = null
+                val detail = failure.message.orEmpty()
+                if (detail.contains("Not connected", ignoreCase = true) ||
+                    detail.contains("closed", ignoreCase = true)
+                ) {
+                    // Pipe went away between the state check and the send; let Perigee reconnect.
+                    DiscordPresenceLog.d("SET_ACTIVITY will retry after Ready")
+                    return
+                }
                 if (attempt == 0) {
                     // One immediate retry with a fresh pipe, then back off.
+                    DiscordPresenceLog.d("SET_ACTIVITY retrying with a fresh pipe")
+                    closeClient()
                     nextAttempt = 0L
                 } else {
+                    closeClient()
                     nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
                     publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-                    System.err.println("Discord Rich Presence update failed: ${failure.message}")
                 }
             }
         }
@@ -478,7 +581,9 @@ class DiscordPresenceManager : AutoCloseable {
         val activeClient = client
         if (activeClient == null || !connected) return
         runCatching { activeClient.clearActivity().get(5, TimeUnit.SECONDS) }
+            .onSuccess { DiscordPresenceLog.d("CLEAR_ACTIVITY accepted") }
             .onFailure {
+                DiscordPresenceLog.e("CLEAR_ACTIVITY failed", it)
                 connected = false
                 closeClient()
             }
@@ -488,11 +593,15 @@ class DiscordPresenceManager : AutoCloseable {
         val current = client
         client = null
         connected = false
+        if (current != null) DiscordPresenceLog.d("closing IPC client")
         current?.let { runCatching { it.close() } }
     }
 
     private fun publishState(next: DiscordPresenceState) {
-        if (!closed.get()) mutableState.value = next
+        if (!closed.get()) {
+            DiscordPresenceLog.d("state -> ${next.status}")
+            mutableState.value = next
+        }
     }
 }
 
