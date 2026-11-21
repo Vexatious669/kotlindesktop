@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ScheduledExecutorService
@@ -36,6 +37,7 @@ private const val OP_PING = 3
 private const val OP_PONG = 4
 private const val MAX_FRAME = 1 shl 20
 private const val REQUEST_TIMEOUT_SECONDS = 10L
+private const val CLOSE_GRACE_MS = 1_500L
 private const val MIN_RECONNECT_MS = 2_000L
 private const val MAX_RECONNECT_MS = 30_000L
 
@@ -61,7 +63,10 @@ class DiscordIpcClient(
 
     @Volatile private var state: ConnectionState = ConnectionState.IDLE
     @Volatile private var pipe: RandomAccessFile? = null
+    @Volatile private var closeDeadline = 0L
+    @Volatile private var connectionStarted = false
     private val closed = AtomicBoolean(false)
+    private val stopped = CountDownLatch(1)
     private val outgoing = LinkedBlockingQueue<OutgoingFrame>()
     private val pending = ConcurrentHashMap<String, CompletableFuture<Map<String, Any?>>>()
     private val timer: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { task ->
@@ -73,13 +78,15 @@ class DiscordIpcClient(
 
     /** Starts the connection loop in the background. Repeated calls are ignored. */
     fun connect() {
-        if (state != ConnectionState.IDLE) return
+        if (closed.get() || state != ConnectionState.IDLE) return
+        connectionStarted = true
         state = ConnectionState.CONNECTING
         Thread({ connectionLoop() }, "discord-ipc-connection").apply { isDaemon = true }.start()
     }
 
     private fun connectionLoop() {
         var attempt = 0
+        try {
         while (!closed.get()) {
             var active: RandomAccessFile? = null
             var wasReady = false
@@ -105,8 +112,12 @@ class DiscordIpcClient(
 
                 // All reads and writes happen on this thread. available() tells us when a reply
                 // is waiting so we never block in readFrame() before queued writes are flushed.
-                while (!closed.get()) {
+                // On close we still flush pending frames and wait briefly for their ACKs, so a
+                // queued CLEAR_ACTIVITY is not thrown away by shutdown.
+                while (true) {
                     flushOutgoing(active)
+                    if (closed.get() && outgoing.isEmpty() && pending.isEmpty()) break
+                    if (closed.get() && System.currentTimeMillis() >= closeDeadline) break
                     val readable = try {
                         availability.available() > 0
                     } catch (failure: IOException) {
@@ -160,7 +171,11 @@ class DiscordIpcClient(
                 break
             }
         }
-        if (!closed.get()) state = ConnectionState.CLOSED
+        } finally {
+            timer.shutdownNow()
+            stopped.countDown()
+            if (!closed.get()) state = ConnectionState.CLOSED
+        }
     }
 
     /** Send SET_ACTIVITY. Discord usually replies in a few milliseconds. */
@@ -285,14 +300,26 @@ class DiscordIpcClient(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        closeDeadline = System.currentTimeMillis() + CLOSE_GRACE_MS
         state = ConnectionState.CLOSED
+        DiscordPresenceLog.d("IPC close requested (${outgoing.size} queued frame(s))")
+        // Never write from here: while the connection thread is polling a synchronous pipe handle,
+        // a write from another thread can hang forever. The connection loop flushes the queue and
+        // waits for ACKs before stopping; bound that wait so shutdown cannot hang.
+        if (!connectionStarted) {
+            timer.shutdownNow()
+            stopped.countDown()
+            DiscordPresenceLog.d("IPC client closed")
+            return
+        }
+        try {
+            if (!stopped.await(CLOSE_GRACE_MS, TimeUnit.MILLISECONDS)) {
+                DiscordPresenceLog.w("IPC close timed out waiting for the connection thread")
+            }
+        } catch (interrupt: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
         timer.shutdownNow()
-        outgoing.clear()
-        pending.values.forEach { it.completeExceptionally(IOException("IPC client closed")) }
-        pending.clear()
-        // Never write from here: while the connection thread is blocked on a synchronous pipe read,
-        // a write from another thread can hang forever. The daemon read exits when Discord replies
-        // or the pipe closes; the OS releases the handle when the process exits.
         DiscordPresenceLog.d("IPC client closed")
     }
 }
