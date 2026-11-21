@@ -10,7 +10,6 @@ import xyz.orbitary.perigee.ConnectionState
 import xyz.orbitary.perigee.PerigeeClient
 import xyz.orbitary.perigee.activity.Activity
 import xyz.orbitary.perigee.activity.ActivityType
-import xyz.orbitary.perigee.activity.StatusDisplayType
 import xyz.orbitary.perigee.activity.Timestamps
 import xyz.orbitary.perigee.event.Disconnected
 import xyz.orbitary.perigee.event.Ready
@@ -24,6 +23,11 @@ import kotlin.math.abs
 private const val TICK_MS = 250L
 /** Discord rejects SET_ACTIVITY bursts; never publish twice inside this window. */
 private const val MIN_PUBLISH_INTERVAL = 5_000L
+/**
+ * Discord does not always answer SET_ACTIVITY (unregistered assets, disabled Rich Presence, ...).
+ * Perigee's future can then stay incomplete forever, so expire an unacknowledged publish ourselves.
+ */
+private const val ACK_TIMEOUT = 15_000L
 /** Backoff after a failed connect or two failed SET_ACTIVITY attempts. */
 private const val RECONNECT_INTERVAL = 30_000L
 /** Ignore position drift smaller than this; Discord's own timer handles it. */
@@ -81,6 +85,7 @@ sealed class PresenceMessage {
     data class Clear(val playersOnly: Boolean = false) : PresenceMessage()
     data class PublishResult(
         val generation: Long,
+        val submission: Long,
         val identity: String,
         val position: Double,
         val failure: Throwable?,
@@ -133,22 +138,9 @@ internal fun buildDiscordPresenceActivity(
     return Activity.builder()
         .name("AniLife")
         .type(ActivityType.WATCHING)
-        // The member list says "Watching AniLife" or "Watching <series>" instead of the app name.
-        .statusDisplay(StatusDisplayType.DETAILS)
         .details(details.discordText())
         .state(state.discordText())
-        .apply {
-            startedAt(startedAt)
-            if (target != null) {
-                target.cover?.takeIf(String::isNotBlank)?.let { cover ->
-                    largeImage(cover.trim(), target.title.discordText())
-                }
-            } else {
-                largeImage(ANILIFE_ICON_URL, "AniLife")
-            }
-        }
-        .button("Visit AniLife", "https://anilife.cc")
-        .button("Star on GitHub", "https://github.com/anilifecommunity/kotlindesktop")
+        .apply { startedAt(startedAt) }
         .build()
 }
 
@@ -164,20 +156,14 @@ internal fun buildActivity(p: Presence): Activity {
     val state = p.episodeTitle?.trim()?.takeIf(String::isNotBlank)
         ?.let { "$label - $it" } ?: label
 
+    // Keep the IPC payload minimal. External cover URLs, unregistered asset keys and social-SDK
+    // fields have all been observed to make Discord ignore SET_ACTIVITY instead of replying.
+    // Pause state stays in `state`; the card is still a normal "Watching AniLife" presence.
     val builder = Activity.builder()
         .name("AniLife")
         .type(ActivityType.WATCHING)
-        .statusDisplay(StatusDisplayType.DETAILS)
         .details(p.title.trim().ifBlank { "Anime" }.discordText())
         .state(state.discordText())
-        // Do not send unregistered asset keys ("icon"/"paused") here: Discord can reject the
-        // entire SET_ACTIVITY when an app has no such assets. Pause state is already in `state`.
-        .apply {
-            p.cover?.trim()?.takeIf(String::isNotBlank)?.let { cover ->
-                largeImage(cover, p.title.discordText())
-            }
-        }
-        .button("Join the Anilili Discord", "https://discord.gg/Anilili")
 
     val now = Instant.now()
     if (!p.paused && p.duration > 0.0) {
@@ -220,6 +206,9 @@ class DiscordPresenceManager : AutoCloseable {
     private var lastLoggedState: String = "none"
     private var generation: Long = 0L
     private var publishPending = false
+    private var pendingSubmission: Long = 0L
+    private var submissionCounter: Long = 0L
+    private var pendingSince: Long = 0L
 
     init {
         workerThread = Thread({ runWorker() }, "discord-rich-presence").apply { isDaemon = true }
@@ -337,8 +326,11 @@ class DiscordPresenceManager : AutoCloseable {
                 }
             }
             is PresenceMessage.PublishResult -> {
-                if (message.generation != generation) {
-                    DiscordPresenceLog.d("ignoring stale SET_ACTIVITY result (gen ${message.generation})")
+                if (message.generation != generation || message.submission != pendingSubmission) {
+                    DiscordPresenceLog.d(
+                        "ignoring stale SET_ACTIVITY result (gen ${message.generation}/${generation}, " +
+                            "sub ${message.submission}/$pendingSubmission)",
+                    )
                     return
                 }
                 publishPending = false
@@ -445,13 +437,22 @@ class DiscordPresenceManager : AutoCloseable {
             lastLoggedState = state
         }
         if (publishPending) {
-            DiscordPresenceLog.d("pump: waiting for SET_ACTIVITY acknowledgement")
+            if (now - pendingSince >= ACK_TIMEOUT) {
+                DiscordPresenceLog.w(
+                    "SET_ACTIVITY not acknowledged after ${ACK_TIMEOUT}ms; expiring and retrying",
+                )
+                publishPending = false
+                // Invalidate a late acknowledgement so it cannot overwrite the retry's state.
+                pendingSubmission = ++submissionCounter
+                published = null
+                nextAttempt = now + MIN_PUBLISH_INTERVAL
+                if (mutableState.value.status == DiscordPresenceStatus.Connected) {
+                    publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
+                }
+            }
             return
         }
-        if (now < nextAttempt) {
-            DiscordPresenceLog.d("pump: waiting ${nextAttempt - now}ms (rate limit / backoff)")
-            return
-        }
+        if (now < nextAttempt) return
         if (client == null || !connected) {
             if (!ensureConnected()) return
         }
@@ -592,13 +593,17 @@ class DiscordPresenceManager : AutoCloseable {
         if (!ensureConnected()) return
         val activeClient = client ?: return
         val currentGeneration = generation
+        val submission = ++submissionCounter
         publishPending = true
-        DiscordPresenceLog.d("SET_ACTIVITY submitted identity=$identity position=${position.toInt()}")
+        pendingSubmission = submission
+        pendingSince = System.currentTimeMillis()
+        DiscordPresenceLog.d("SET_ACTIVITY submitted #$submission identity=$identity position=${position.toInt()}")
         activeClient.setActivity(activity).whenComplete { _, failure ->
             val cause = failure?.let { if (it is java.util.concurrent.CompletionException) it.cause ?: it else it }
             send(
                 PresenceMessage.PublishResult(
                     generation = currentGeneration,
+                    submission = submission,
                     identity = identity,
                     position = position,
                     failure = cause,
@@ -621,6 +626,7 @@ class DiscordPresenceManager : AutoCloseable {
         val current = client
         generation++
         publishPending = false
+        pendingSubmission = ++submissionCounter
         client = null
         connected = false
         if (current != null) DiscordPresenceLog.d("closing IPC client")

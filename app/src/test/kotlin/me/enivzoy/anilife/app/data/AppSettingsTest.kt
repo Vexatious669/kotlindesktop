@@ -3,9 +3,9 @@
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import java.time.Instant
 import xyz.orbitary.perigee.activity.ActivityType
-import xyz.orbitary.perigee.activity.StatusDisplayType
 
 class AppSettingsTest {
     @Test
@@ -30,19 +30,13 @@ class AppSettingsTest {
         assertEquals("Idling", idle.details())
         assertEquals("AniLife", idle.name())
         assertEquals("App developed by witherbl_de", idle.state())
-        assertEquals(StatusDisplayType.DETAILS, idle.statusDisplayType())
         assertEquals("My Movie", movie.details())
         assertEquals("My Series", series.details())
         assertEquals("My Series", missingSeason.details())
         assertEquals("On S01E08", series.state())
         assertEquals("On S01E08", missingSeason.state())
-        assertEquals(cover, series.assets().largeImage())
-        assertEquals("My Series", series.assets().largeText())
         assertEquals(startedAt, series.timestamps()?.start())
-        assertEquals(2, idle.buttons().size)
-        assertEquals("Visit AniLife", idle.buttons()[0].label())
-        assertEquals("https://anilife.cc", idle.buttons()[0].url())
-        assertEquals("Star on GitHub", idle.buttons()[1].label())
+        assertTrue(idle.buttons().isEmpty())
     }
 
     @Test
