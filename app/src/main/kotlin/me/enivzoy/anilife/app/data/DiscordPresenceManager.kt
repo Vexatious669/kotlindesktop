@@ -334,27 +334,24 @@ class DiscordPresenceManager : AutoCloseable {
                     return
                 }
                 publishPending = false
-                val now = System.currentTimeMillis()
                 if (message.failure == null) {
-                    published = Published(message.identity, message.position, now)
-                    nextAttempt = now + MIN_PUBLISH_INTERVAL
-                    DiscordPresenceLog.d("SET_ACTIVITY accepted identity=${message.identity}")
+                    DiscordPresenceLog.d("SET_ACTIVITY acknowledged identity=${message.identity}")
+                } else if (message.failure is TimeoutException) {
+                    // Discord often applies the card without replying. Do not claim it failed.
+                    DiscordPresenceLog.w(
+                        "SET_ACTIVITY not acknowledged identity=${message.identity} " +
+                            "(presence may still be visible)",
+                    )
                 } else {
-                    published = null
-                    connected = false
-                    // A slow Discord reply is not a broken pipe: retry after the normal window.
-                    nextAttempt = now + if (message.failure is TimeoutException) {
-                        MIN_PUBLISH_INTERVAL
-                    } else {
-                        RECONNECT_INTERVAL
-                    }
                     DiscordPresenceLog.e(
                         "SET_ACTIVITY failed identity=${message.identity}: ${message.failure}",
                         message.failure,
                     )
-                    if (mutableState.value.status == DiscordPresenceStatus.Connected) {
-                        publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-                    }
+                    published = null
+                    connected = false
+                    closeClient()
+                    nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
+                    publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
                 }
             }
             is PresenceMessage.Clear -> {
@@ -438,17 +435,13 @@ class DiscordPresenceManager : AutoCloseable {
         }
         if (publishPending) {
             if (now - pendingSince >= ACK_TIMEOUT) {
+                // Discord may have applied the card without replying; just stop treating the
+                // future as in-flight so a later update is not blocked. Do not clear `published`.
                 DiscordPresenceLog.w(
-                    "SET_ACTIVITY not acknowledged after ${ACK_TIMEOUT}ms; expiring and retrying",
+                    "SET_ACTIVITY still unacknowledged after ${ACK_TIMEOUT}ms; allowing next update",
                 )
                 publishPending = false
-                // Invalidate a late acknowledgement so it cannot overwrite the retry's state.
                 pendingSubmission = ++submissionCounter
-                published = null
-                nextAttempt = now + MIN_PUBLISH_INTERVAL
-                if (mutableState.value.status == DiscordPresenceStatus.Connected) {
-                    publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-                }
             }
             return
         }
@@ -597,6 +590,10 @@ class DiscordPresenceManager : AutoCloseable {
         publishPending = true
         pendingSubmission = submission
         pendingSince = System.currentTimeMillis()
+        // Optimistic: Discord frequently applies the card without sending an IPC reply, and
+        // waiting for one used to freeze the state machine in "waiting for acknowledgement".
+        published = Published(identity, position, pendingSince)
+        nextAttempt = pendingSince + MIN_PUBLISH_INTERVAL
         DiscordPresenceLog.d("SET_ACTIVITY submitted #$submission identity=$identity position=${position.toInt()}")
         activeClient.setActivity(activity).whenComplete { _, failure ->
             val cause = failure?.let { if (it is java.util.concurrent.CompletionException) it.cause ?: it else it }
