@@ -66,6 +66,8 @@ import me.enivzoy.anilife.app.data.AnimeEpisode
 import me.enivzoy.anilife.app.data.AnimeVideoSource
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.AppSettings
+import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
+import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.player.MpvPlaybackEngine
@@ -111,6 +113,7 @@ fun PlayerScreen(
     onSourceSelect: (AnimeVideoSource) -> Unit = {},
     onAudioChange: (String) -> Unit = {},
     onEpisodeChange: (Double) -> Unit = {},
+    onPresence: (Presence?) -> Unit = {},
     onBack: () -> Unit,
 ) {
     val orderedEpisodes = remember(episodes) { episodes.filter { it.isFinite() }.distinct().sorted() }
@@ -137,6 +140,20 @@ fun PlayerScreen(
         if (!settings.resumePlayback) return@remember 0.0
         ContinueStoreInstance.positionFor(animeId, ep) ?: 0.0
     }
+    val playbackInfo = remember(detail?.id, showTitle, title, episode, episodeTitle, detail?.episodes, detail?.cover) {
+        DiscordPlaybackInfo(
+            animeId = detail?.id ?: 0L,
+            title = showTitle.ifBlank { title },
+            episode = episode?.takeIf { it > 0.0 } ?: 1.0,
+            episodeTitle = episodeTitle,
+            total = detail?.episodes?.takeIf { it > 0 },
+            cover = detail?.cover,
+        )
+    }
+    // Keep the callback stable so the engine (created once per stream) never captures a stale one.
+    val presenceReporter = rememberUpdatedState(onPresence)
+    val reportPresence = remember { { p: Presence? -> presenceReporter.value(p) } }
+
     val engine = remember(url, headers, selectedSource?.subtitles, resumePosition) {
         url?.takeIf(String::isNotBlank)?.let { stream ->
             MpvPlaybackEngine(
@@ -148,6 +165,8 @@ fun PlayerScreen(
                 subtitlesByDefault = settings.subtitlesByDefault,
                 subtitleLanguage = settings.subtitleLanguage,
                 subtitleAppearance = settings.subtitleAppearance,
+                presenceInfo = playbackInfo,
+                onPresence = reportPresence,
             )
         }
     }
@@ -164,6 +183,9 @@ fun PlayerScreen(
             withFrameNanos { }
             engine.start()
         }
+    }
+    LaunchedEffect(engine, playbackInfo) {
+        engine?.setPresenceInfo(playbackInfo)
     }
     DisposableEffect(engine) {
         onDispose { engine?.close() }
@@ -186,6 +208,28 @@ fun PlayerScreen(
     val positionSeconds = engine?.positionSeconds ?: simulatedPosition
     val durationSeconds = engine?.durationSeconds?.takeIf { it > 0.0 } ?: fallbackDurationSeconds
     val isPlaying = engine?.isPlaying ?: simulatedPlaying
+
+    // The simulated timeline (no stream yet) still drives presence; a real engine reports itself.
+    LaunchedEffect(engine, playbackInfo, simulatedPlaying, simulatedPosition, fallbackDurationSeconds) {
+        if (engine != null) return@LaunchedEffect
+        reportPresence(
+            Presence(
+                animeId = playbackInfo.animeId,
+                title = playbackInfo.title,
+                episode = playbackInfo.episode,
+                episodeTitle = playbackInfo.episodeTitle,
+                total = playbackInfo.total,
+                cover = playbackInfo.cover,
+                position = simulatedPosition,
+                duration = fallbackDurationSeconds,
+                paused = !simulatedPlaying,
+            ),
+        )
+    }
+    val simulatedWasActive = rememberUpdatedState(engine == null)
+    DisposableEffect(simulatedWasActive) {
+        onDispose { if (simulatedWasActive.value) reportPresence(null) }
+    }
 
     val animeCard = remember(detail, title, showTitle) {
         detail?.let { d ->

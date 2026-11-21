@@ -11,6 +11,8 @@ import me.enivzoy.anilife.mpv.Mpv
 import me.enivzoy.anilife.mpv.PropertyValue
 import me.enivzoy.anilife.mpv.defaultPlayerOptions
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
+import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
+import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.SubtitleAppearance
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -75,6 +77,9 @@ class MpvPlaybackEngine(
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
+    /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
+    private var presenceInfo: DiscordPlaybackInfo? = null,
+    private val onPresence: (Presence?) -> Unit = {},
 ) : AutoCloseable {
 
     var positionSeconds by mutableStateOf(0.0)
@@ -103,6 +108,7 @@ class MpvPlaybackEngine(
     @Volatile private var surface: Mpv.SoftwareVideoSurface? = null
     @Volatile private var worker: Thread? = null
     @Volatile private var activeSubtitleAppearance = subtitleAppearance
+    @Volatile private var lastPresenceReportAt = 0L
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -149,11 +155,19 @@ class MpvPlaybackEngine(
             is Event.PropertyChange -> when (event.name) {
                 "time-pos" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
                     positionSeconds = it.coerceAtLeast(0.0)
+                    // Position-only updates are throttled; transport changes report immediately.
+                    reportPresence()
                 }
                 "duration" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
-                    if (it.isFinite() && it > 0.0) durationSeconds = it
+                    if (it.isFinite() && it > 0.0) {
+                        durationSeconds = it
+                        reportPresence(force = true)
+                    }
                 }
-                "pause" -> (event.value as? PropertyValue.Flag)?.value?.let { isPlaying = !it }
+                "pause" -> (event.value as? PropertyValue.Flag)?.value?.let {
+                    isPlaying = !it
+                    reportPresence(force = true)
+                }
             }
             Event.FileLoaded -> {
                 isLoading = false
@@ -173,6 +187,7 @@ class MpvPlaybackEngine(
                     positionSeconds = target
                     runCatching { player?.seekTo(target) }
                 }
+                reportPresence(force = true)
             }
             is Event.EndFile -> {
                 if (event.reason == EndReason.EOF) {
@@ -183,6 +198,7 @@ class MpvPlaybackEngine(
                     error = event.error ?: "mpv could not play this stream"
                 }
                 isLoading = false
+                onPresence(null)
             }
             is Event.Log -> {
                 val level = event.level
@@ -195,10 +211,39 @@ class MpvPlaybackEngine(
         }
     }
 
+    /** Keeps presence metadata current when the episode changes without swapping the stream. */
+    fun setPresenceInfo(info: DiscordPlaybackInfo?) {
+        presenceInfo = info
+        reportPresence(force = true)
+    }
+
+    /** Feeds the Discord worker a playback-state snapshot; caller throttles position-only drift. */
+    private fun reportPresence(force: Boolean = false) {
+        val info = presenceInfo ?: return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastPresenceReportAt < 1_000L) return
+        lastPresenceReportAt = now
+        onPresence(
+            Presence(
+                animeId = info.animeId,
+                title = info.title,
+                episode = info.episode,
+                episodeTitle = info.episodeTitle,
+                total = info.total,
+                cover = info.cover,
+                position = positionSeconds,
+                duration = durationSeconds,
+                paused = !isPlaying,
+                embedded = info.embedded,
+            ),
+        )
+    }
+
     fun togglePause() {
         val playing = !isPlaying
         isPlaying = playing
         player?.setPaused(!playing)
+        reportPresence(force = true)
     }
 
     fun seekTo(seconds: Double) {
@@ -209,11 +254,13 @@ class MpvPlaybackEngine(
         }
         positionSeconds = target
         player?.seekTo(target)
+        reportPresence(force = true)
     }
 
     fun seekRelative(deltaSeconds: Double) {
         player?.seekRelative(deltaSeconds)
         positionSeconds = (positionSeconds + deltaSeconds).coerceAtLeast(0.0)
+        reportPresence(force = true)
     }
 
     fun selectSubtitleTrack(id: Int?) {
@@ -315,6 +362,7 @@ class MpvPlaybackEngine(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        onPresence(null)
         worker?.let { runCatching { it.join(3_000L) } }
         release()
     }
