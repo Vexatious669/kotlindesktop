@@ -6,14 +6,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
-import xyz.orbitary.perigee.ConnectionState
-import xyz.orbitary.perigee.PerigeeClient
 import xyz.orbitary.perigee.activity.Activity
 import xyz.orbitary.perigee.activity.ActivityType
 import xyz.orbitary.perigee.activity.Timestamps
-import xyz.orbitary.perigee.event.Disconnected
-import xyz.orbitary.perigee.event.Ready
-import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -25,7 +20,7 @@ private const val TICK_MS = 250L
 private const val MIN_PUBLISH_INTERVAL = 5_000L
 /**
  * Discord does not always answer SET_ACTIVITY (unregistered assets, disabled Rich Presence, ...).
- * Perigee's future can then stay incomplete forever, so expire an unacknowledged publish ourselves.
+ * The IPC future can then stay incomplete forever, so expire an unacknowledged publish ourselves.
  */
 private const val ACK_TIMEOUT = 15_000L
 /** Backoff after a failed connect or two failed SET_ACTIVITY attempts. */
@@ -196,7 +191,7 @@ class DiscordPresenceManager : AutoCloseable {
 
     @Volatile private var enabled: Boolean = false
     @Volatile private var applicationId: String? = null
-    @Volatile private var client: PerigeeClient? = null
+    @Volatile private var client: DiscordIpcClient? = null
     @Volatile private var connected: Boolean = false
 
     // Worker-owned fields: only touched from workerThread or the event callbacks it registers.
@@ -471,7 +466,7 @@ class DiscordPresenceManager : AutoCloseable {
     }
 
     /**
-     * Start (or reuse) the IPC client. `connect()` is deliberately non-blocking: Perigee keeps
+     * Start (or reuse) the IPC client. `connect()` is deliberately non-blocking: the client keeps
      * retrying in the background until Discord's pipe appears. Blocking on a 5s timeout and then
      * closing the client killed that retry loop, which is why presence never appeared when Discord
      * was launched after the app or took a moment to expose the pipe.
@@ -494,7 +489,7 @@ class DiscordPresenceManager : AutoCloseable {
                 }
                 return true
             }
-            // Already connecting/backing off inside Perigee; its Ready handler will wake us.
+            // Already connecting/backing off; the Ready handler will wake us.
             return false
         }
         val now = System.currentTimeMillis()
@@ -503,60 +498,58 @@ class DiscordPresenceManager : AutoCloseable {
             return false
         }
 
-        DiscordPresenceLog.d("ensureConnected: building PerigeeClient appId=$id")
+        DiscordPresenceLog.d("ensureConnected: building DiscordIpcClient appId=$id")
         publishState(DiscordPresenceState(DiscordPresenceStatus.Connecting))
+        // The generation token identifies this connection; closeClient() advances it so callbacks
+        // from a discarded client can never mutate the current state.
+        val token = ++generation
         val newClient = try {
-            PerigeeClient.builder(id)
-                .autoReconnect(true)
-                .reconnectDelay(Duration.ofSeconds(2), Duration.ofSeconds(30))
-                .build()
+            DiscordIpcClient(
+                applicationId = id,
+                onReady = { user ->
+                    if (generation == token && !closed.get()) {
+                        DiscordPresenceLog.d("Ready: Discord IPC is live")
+                        connected = true
+                        published = null
+                        nextAttempt = 0L
+                        val displayName = user.globalName?.takeIf(String::isNotBlank)
+                            ?: user.username?.takeIf(String::isNotBlank)
+                        publishState(
+                            DiscordPresenceState(
+                                status = DiscordPresenceStatus.Connected,
+                                accountName = displayName,
+                                username = user.username?.takeIf(String::isNotBlank),
+                                userId = user.id?.takeIf(String::isNotBlank),
+                                avatarHash = user.avatar?.takeIf(String::isNotBlank),
+                            ),
+                        )
+                    }
+                },
+                onDisconnected = { cause ->
+                    if (generation == token && !closed.get()) {
+                        connected = false
+                        published = null
+                        nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
+                        publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
+                        DiscordPresenceLog.w(
+                            "Disconnected (retrying): ${cause?.message ?: "unknown cause"}",
+                        )
+                    }
+                },
+            )
         } catch (failure: Exception) {
-            DiscordPresenceLog.e("could not build PerigeeClient", failure)
+            DiscordPresenceLog.e("could not build DiscordIpcClient", failure)
             connected = false
             nextAttempt = now + RECONNECT_INTERVAL
             publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
             return false
         }
 
-        newClient.on(Ready::class.java) { ready ->
-            if (client === newClient) {
-                DiscordPresenceLog.d("Ready: Discord IPC is live")
-                connected = true
-                published = null
-                nextAttempt = 0L
-                val user = ready.user()
-                val displayName = user?.globalName()?.takeIf(String::isNotBlank)
-                    ?: user?.username()?.takeIf(String::isNotBlank)
-                publishState(
-                    DiscordPresenceState(
-                        status = DiscordPresenceStatus.Connected,
-                        accountName = displayName,
-                        username = user?.username()?.takeIf(String::isNotBlank),
-                        userId = user?.id()?.takeIf(String::isNotBlank),
-                        avatarHash = user?.avatar()?.takeIf(String::isNotBlank),
-                    ),
-                )
-            }
-        }
-        newClient.on(Disconnected::class.java) { event ->
-            if (client === newClient) {
-                connected = false
-                published = null
-                nextAttempt = System.currentTimeMillis() + RECONNECT_INTERVAL
-                publishState(DiscordPresenceState(DiscordPresenceStatus.Unavailable))
-                val suffix = if (event.reconnecting()) " (Perigee retrying)" else ""
-                DiscordPresenceLog.w(
-                    "Disconnected$suffix: ${event.cause()?.message ?: "unknown cause"}",
-                )
-            }
-        }
-
-        generation++
         client = newClient
         lastLoggedState = "none"
         try {
-            // No timeout wait: Perigee owns reconnection. A Ready event flips `connected` and
-            // the next pump publishes the card that is already waiting in `wanted`.
+            // No timeout wait: the IPC client owns reconnection. A Ready event flips `connected`
+            // and the next pump publishes the card that is already waiting in `wanted`.
             newClient.connect()
             DiscordPresenceLog.d("connect() started; state=${newClient.state()}")
         } catch (failure: Exception) {

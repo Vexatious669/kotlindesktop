@@ -7,10 +7,9 @@ import java.time.format.DateTimeFormatter
 /**
  * Small self-contained logger for Rich Presence diagnostics.
  *
- * Perigee has its own logger, but without a timestamped trace of what the app submitted and what
- * the worker decided, "nothing shows up on Discord" is impossible to diagnose. Every line goes to
- * stdout (visible when launched with `gradlew :app:run`) and to a bounded file so it can be read
- * after the app has been closed.
+ * Without a timestamped trace of what the app submitted and what the worker decided, "nothing shows
+ * up on Discord" is impossible to diagnose. Every line goes to stdout (visible when launched with
+ * `gradlew :app:run`) and to a bounded file so it can be read after the app has been closed.
  */
 object DiscordPresenceLog {
     private const val MAX_FILE_BYTES = 256 * 1024
@@ -32,6 +31,9 @@ object DiscordPresenceLog {
 
     @Synchronized
     fun w(message: String) = write("WARN", message, null)
+
+    @Synchronized
+    fun w(message: String, failure: Throwable?) = write("WARN", message, failure)
 
     @Synchronized
     fun e(message: String, failure: Throwable? = null) = write("ERROR", message, failure)
