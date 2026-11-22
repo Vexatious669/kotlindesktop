@@ -77,6 +77,7 @@ class MpvPlaybackEngine(
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
+    private val playbackBufferSize: String = "auto",
     /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
     private var presenceInfo: DiscordPlaybackInfo? = null,
     private val onPresence: (Presence?) -> Unit = {},
@@ -377,9 +378,24 @@ class MpvPlaybackEngine(
     private fun playbackOptions(headers: Map<String, String>): List<Pair<String, String>> {
         val options = defaultPlayerOptions()
             .filterNot { it.first == "hwdec" }
+            .filterNot { it.first == "cache-secs" }
+            .filterNot { it.first == "demuxer-max-bytes" }
+            .filterNot { it.first == "demuxer-max-back-bytes" }
             .toMutableList()
         // The software renderer needs decoded frames in system memory.
         options += "hwdec" to "no"
+        // Apply buffer size setting to mpv cache.
+        val (cacheSecs, maxBytes, backBytes) = when (playbackBufferSize) {
+            "small" -> Triple("30", "50MiB", "15MiB")
+            "medium" -> Triple("60", "100MiB", "30MiB")
+            "large" -> Triple("180", "300MiB", "100MiB")
+            else -> Triple("120", "150MiB", "50MiB")
+        }
+        options += "cache-secs" to cacheSecs
+        options += "demuxer-max-bytes" to maxBytes
+        options += "demuxer-max-back-bytes" to backBytes
+        // Enable multithreaded decoding.
+        options += "vd-lavc-threads" to "0"
         // Captions are drawn into the rendered frame, so they follow these options too.
         options += "sub-visibility" to "yes"
         options += subtitleAppearanceOptions(activeSubtitleAppearance)
