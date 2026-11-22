@@ -45,8 +45,28 @@ data class AnimeVideoSource(
     val url: String,
     val headers: Map<String, String>,
     val subtitles: List<AnimeSubtitleSource> = emptyList(),
+    val language: String = "",
 ) {
     val label: String get() = listOfNotNull(provider, server, quality, format.uppercase()).joinToString(" · ")
+    val resolvedLanguage: String get() = language.ifBlank {
+        if (audio.equals("dub", true)) detectDubLanguage(provider, server) else "Japanese (Sub)"
+    }
+}
+
+private fun detectDubLanguage(provider: String, server: String): String {
+    val text = "$provider $server".lowercase()
+    return when {
+        text.contains("spanish") || text.contains("español") || text.contains("castellano") || text.contains("latino") -> "Spanish"
+        text.contains("portuguese") || text.contains("português") || text.contains("brazilian") -> "Portuguese"
+        text.contains("french") || text.contains("français") -> "French"
+        text.contains("german") || text.contains("deutsch") -> "German"
+        text.contains("italian") || text.contains("italiano") -> "Italian"
+        text.contains("russian") || text.contains("русский") -> "Russian"
+        text.contains("arabic") || text.contains("عربي") -> "Arabic"
+        text.contains("hindi") -> "Hindi"
+        text.contains("english") -> "English"
+        else -> "English (Dub)"
+    }
 }
 
 /** Miruro's public catalog API, following the same AniList-id → episode → provider flow as AniLife. */
