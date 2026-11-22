@@ -341,6 +341,17 @@ fun AniLifeApp(
                         settings = settings,
                         onSettingsChange = ::updateSettings,
                         onOpen = { navigateTo(Screen.Detail(it)) },
+                        onContinue = { entry ->
+                            scope.launch {
+                                val detail = runCatching { repository.detail(entry.anime.id) }.getOrNull()
+                                if (detail != null) {
+                                    val nextEp = (entry.progress.episode).takeIf { it > 0.0 }
+                                    navigateTo(Screen.Watch(detail, nextEp))
+                                } else {
+                                    navigateTo(Screen.Detail(entry.anime.id))
+                                }
+                            }
+                        },
                         onContentReady = { homeLoaded = true },
                     )
                     Screen.Browse -> BrowseScreen(repository = repository, onOpen = { navigateTo(Screen.Detail(it)) })

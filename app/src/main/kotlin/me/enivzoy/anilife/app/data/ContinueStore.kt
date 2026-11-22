@@ -24,6 +24,16 @@ data class ContinueEntry(
 )
 
 class ContinueStore(private val file: File = continueFile()) {
+
+    /** Seed a continue row from an AniList CURRENT entry, opening the next unwatched episode. */
+    fun upsertFromAniList(anime: AnimeCard, progress: Int) {
+        if (progress < 0) return
+        val nextEpisode = (progress + 1).toDouble()
+        // Don't overwrite a more recent local row for the same anime.
+        val existing = mutableEntries.value.firstOrNull { it.anime.id == anime.id }
+        if (existing != null && existing.updatedAt > System.currentTimeMillis() - 60_000L) return
+        upsert(anime, nextEpisode, 0.0, 1.0)
+    }
     private val lock = Any()
     private val mutableEntries = MutableStateFlow(readEntries())
     val entries: StateFlow<List<ContinueEntry>> = mutableEntries.asStateFlow()
