@@ -124,20 +124,23 @@ private fun SourcesPanel(
         }
     }
     Spacer(Modifier.height(16.dp))
-    if (sources.isEmpty()) EmptyPanelMessage("No servers are available for this episode.")
+    val filtered = sources.filter { it.audio.equals(audio, true) }
+    if (filtered.isEmpty()) EmptyPanelMessage("No servers are available for this audio.")
     else {
-        val grouped = sources.groupBy { it.resolvedLanguage }
+        val grouped = filtered.groupBy { it.resolvedLanguage }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             grouped.forEach { (language, langSources) ->
-                item(key = "lang-$language") {
-                    Text(
-                        language.uppercase(),
-                        color = AniLifeColors.MutedForeground,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                    )
+                if (grouped.size > 1) {
+                    item(key = "lang-$language") {
+                        Text(
+                            language.uppercase(),
+                            color = AniLifeColors.MutedForeground,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                    }
                 }
                 items(langSources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
                     val selected = source.url == selectedUrl
