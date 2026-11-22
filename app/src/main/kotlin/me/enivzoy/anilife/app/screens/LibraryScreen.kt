@@ -140,19 +140,18 @@ private fun LocalLibrary(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 168.dp),
+                    columns = GridCells.Adaptive(minSize = 160.dp),
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(26.dp),
                 ) {
                     items(items = entries, key = { it.id }) { anime ->
                         AnimePosterCard(
                             anime = anime,
                             onClick = { onOpen(anime.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                            width = null,
+                            width = 160.dp,
                         )
                     }
                 }
@@ -216,11 +215,11 @@ private fun AniListLibrary(
         } else {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 190.dp),
+                    columns = GridCells.Adaptive(minSize = 160.dp),
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(22.dp),
                 ) {
                     items(entries, key = { it.entryId }) { entry ->
@@ -242,8 +241,7 @@ private fun AniListLibrary(
                             AnimePosterCard(
                                 anime = entry.anime,
                                 onClick = { onOpen(entry.anime.id) },
-                                modifier = Modifier.fillMaxWidth(),
-                                width = null,
+                                width = 160.dp,
                             )
                         }
                         if (showEditor) {
