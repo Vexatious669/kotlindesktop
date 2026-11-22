@@ -241,21 +241,38 @@ fun AnimeWatchScreen(
                     activeEpisode == null -> EmptyState("Pick an episode to see available servers.")
                     resolving == activeEpisode && sources.isEmpty() -> LoadingState("Checking servers")
                     sources.isEmpty() -> EmptyState(error ?: "No servers are available for this episode.")
-                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(sources, key = { "${it.provider}:${it.audio}:${it.server}:${it.url}" }) { source ->
-                            ServerRow(source = source) {
-                                val ep = episodeNumber(activeEpisode)
-                                onPlay(
-                                    "$title · Episode $ep · ${source.provider} ${source.quality ?: source.format.uppercase()}",
-                                    source.url,
-                                    source.headers,
-                                    sources,
-                                    activeEpisode,
-                                    episodes.firstOrNull { it.number == activeEpisode }?.title?.takeIf(String::isNotBlank),
-                                    episodes.map(AnimeEpisode::number),
-                                    episodes.mapNotNull { ep -> ep.title?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
-                                    episodes.mapNotNull { ep -> ep.thumbnail?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
-                                )
+                    else -> {
+                        val grouped = sources.groupBy { it.resolvedLanguage }
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            grouped.forEach { (language, langSources) ->
+                                if (true) {
+                                    item(key = "lang-$language") {
+                                        Text(
+                                            language.uppercase(),
+                                            color = AniLifeColors.MutedForeground,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 1.5.sp,
+                                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                                        )
+                                    }
+                                }
+                                items(langSources, key = { "${it.provider}:${it.audio}:${it.server}:${it.url}" }) { source ->
+                                    ServerRow(source = source) {
+                                        val ep = episodeNumber(activeEpisode)
+                                        onPlay(
+                                            "$title · Episode $ep · ${source.provider} ${source.quality ?: source.format.uppercase()}",
+                                            source.url,
+                                            source.headers,
+                                            sources,
+                                            activeEpisode,
+                                            episodes.firstOrNull { it.number == activeEpisode }?.title?.takeIf(String::isNotBlank),
+                                            episodes.map(AnimeEpisode::number),
+                                            episodes.mapNotNull { ep -> ep.title?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
+                                            episodes.mapNotNull { ep -> ep.thumbnail?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

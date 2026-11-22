@@ -130,7 +130,7 @@ private fun SourcesPanel(
         val grouped = filtered.groupBy { it.resolvedLanguage }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             grouped.forEach { (language, langSources) ->
-                if (grouped.size > 1) {
+                if (true) {
                     item(key = "lang-$language") {
                         Text(
                             language.uppercase(),

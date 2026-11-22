@@ -254,6 +254,7 @@ internal class WasmAnimeProviders(
         val server = value as? Map<*, *> ?: return emptyList()
         val serverName = server["name"] as? String ?: providerName
         val dub = server["dub"] as? Boolean ?: requestedDub
+        val language = server["language"] as? String ?: ""
         val headers = (server["headers"] as? List<*>)?.mapNotNull { pair ->
             val parts = pair as? List<*> ?: return@mapNotNull null
             val key = parts.getOrNull(0) as? String ?: return@mapNotNull null
@@ -273,6 +274,7 @@ internal class WasmAnimeProviders(
                 quality = stream["quality"] as? String,
                 url = url,
                 headers = headers,
+                language = language,
             )
         }
     }
