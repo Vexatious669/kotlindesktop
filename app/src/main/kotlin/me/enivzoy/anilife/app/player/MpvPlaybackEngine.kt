@@ -402,9 +402,6 @@ class MpvPlaybackEngine(
             .toMutableList()
         // The software renderer needs decoded frames in system memory.
         options += "hwdec" to "no"
-        // Enable multithreaded decoding.
-        options += "vd-lavc-threads" to "4"
-        options += "ad-lavc-threads" to "2"
         // Captions are drawn into the rendered frame, so they follow these options too.
         options += "sub-visibility" to "yes"
         options += subtitleAppearanceOptions(activeSubtitleAppearance)
