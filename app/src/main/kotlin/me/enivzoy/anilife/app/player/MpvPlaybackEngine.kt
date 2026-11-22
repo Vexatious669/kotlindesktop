@@ -110,6 +110,8 @@ class MpvPlaybackEngine(
     @Volatile private var worker: Thread? = null
     @Volatile private var activeSubtitleAppearance = subtitleAppearance
     @Volatile private var lastPresenceReportAt = 0L
+    @Volatile private var lastMpvPosition = 0.0
+    @Volatile private var lastMpvPositionAt = 0L
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -130,6 +132,14 @@ class MpvPlaybackEngine(
             mpv.loadfile(url)
 
             while (!closed.get()) {
+                // Smooth position tracking: advance positionSeconds between mpv's time-pos reports.
+                if (isPlaying && lastMpvPositionAt > 0L) {
+                    val elapsed = (System.currentTimeMillis() - lastMpvPositionAt) / 1000.0
+                    val interpolated = (lastMpvPosition + elapsed).coerceAtMost(durationSeconds.takeIf { it > 0.0 } ?: Double.MAX_VALUE)
+                    if (interpolated > positionSeconds) {
+                        positionSeconds = interpolated
+                    }
+                }
                 if (target.needsRender()) {
                     val bytes = target.render() ?: continue
                     videoFrame = SkiaImage.makeRaster(
@@ -155,7 +165,9 @@ class MpvPlaybackEngine(
         when (event) {
             is Event.PropertyChange -> when (event.name) {
                 "time-pos" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
-                    positionSeconds = it.coerceAtLeast(0.0)
+                    lastMpvPosition = it.coerceAtLeast(0.0)
+                    lastMpvPositionAt = System.currentTimeMillis()
+                    positionSeconds = lastMpvPosition
                     // Position-only updates are throttled; transport changes report immediately.
                     reportPresence()
                 }
@@ -167,6 +179,15 @@ class MpvPlaybackEngine(
                 }
                 "pause" -> (event.value as? PropertyValue.Flag)?.value?.let {
                     isPlaying = !it
+                    if (it) {
+                        // Paused: sync position to last mpv report.
+                        lastMpvPosition = positionSeconds
+                        lastMpvPositionAt = System.currentTimeMillis()
+                    } else {
+                        // Resumed: reset tracking.
+                        lastMpvPosition = positionSeconds
+                        lastMpvPositionAt = System.currentTimeMillis()
+                    }
                     reportPresence(force = true)
                 }
             }
