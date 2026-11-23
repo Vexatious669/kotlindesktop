@@ -10,10 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,15 +24,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -49,13 +51,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AudioType
 import me.enivzoy.anilife.app.ui.DownloadConfig
 import me.enivzoy.anilife.app.ui.RemoteImage
@@ -63,14 +65,7 @@ import me.enivzoy.anilife.app.ui.Resolution
 import me.enivzoy.anilife.core.model.AnimeDetail
 import java.io.File
 
-private val ModalBg = Color(0xFF141416)
-private val ModalSurface = Color(0xFF1E1E21)
-private val ModalSurfaceAlt = Color(0xFF2A2A2E)
-private val ModalBorder = Color(0xFF2E2E33)
-private val ModalText = Color(0xFFF5F5F7)
-private val ModalMuted = Color(0xFF9A9AA2)
-private val ModalInk = Color(0xFF0B0B0C)
-private val ModalShape = RoundedCornerShape(24.dp)
+private val DialogShape = RoundedCornerShape(16.dp)
 
 @Composable
 fun DownloadConfigDialog(
@@ -104,9 +99,10 @@ fun DownloadConfigDialog(
     val selectedPerRange by remember {
         derivedStateOf { ranges.map { range -> range.count { it in selectedEpisodes } } }
     }
-    val perEpisodeMb = (330 * selectedResolution.factor).toInt()
-    val estimatedMb = selectedCount * perEpisodeMb
-    val selectedSizeText = if (estimatedMb >= 1024) "%.1f GB".format(estimatedMb / 1024f) else "$estimatedMb MB"
+    val selectedSizeText = remember(selectedCount, selectedResolution) {
+        val megabytes = selectedCount * (330 * selectedResolution.factor).toInt()
+        if (megabytes >= 1024) "%.1f GB".format(megabytes / 1024f) else "$megabytes MB"
+    }
     val freeBytes = remember(defaultSaveDirectory) { usableBytes(defaultSaveDirectory) }
     val totalBytes = remember(defaultSaveDirectory) { totalBytes(defaultSaveDirectory) }
 
@@ -126,27 +122,28 @@ fun DownloadConfigDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Column(
-                Modifier.fillMaxWidth(0.9f)
-                    .fillMaxHeight(0.9f)
-                    .clip(ModalShape)
-                    .background(ModalBg)
-                    .border(1.dp, ModalBorder, ModalShape),
+                Modifier.width(850.dp)
+                    .heightIn(max = 900.dp)
+                    .clip(DialogShape)
+                    .background(AniLifeColors.Card)
+                    .border(1.dp, AniLifeColors.Border, DialogShape),
             ) {
                 Header(detail = detail, totalEpisodes = episodes.size, onClose = onDismiss)
+                HorizontalDivider(color = AniLifeColors.Border)
 
                 Column(
                     Modifier.weight(1f)
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 28.dp, vertical = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         SectionLabel("Audio")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PillChip("Sub", selectedAudio == AudioType.Sub) { selectedAudio = AudioType.Sub }
-                            PillChip("Dub", selectedAudio == AudioType.Dub) { selectedAudio = AudioType.Dub }
+                            SelectChip("Sub", selectedAudio == AudioType.Sub) { selectedAudio = AudioType.Sub }
+                            SelectChip("Dub", selectedAudio == AudioType.Dub) { selectedAudio = AudioType.Dub }
                         }
                     }
 
@@ -160,13 +157,13 @@ fun DownloadConfigDialog(
                         SectionLabel("Quality")
                         Text(
                             "The best rendition at or below the resolution chosen.",
-                            color = ModalMuted,
+                            color = AniLifeColors.MutedForeground,
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Resolution.values().forEach { resolution ->
-                                PillChip(
+                                SelectChip(
                                     label = if (resolution == Resolution.Auto) "Best" else resolution.label,
                                     selected = selectedResolution == resolution,
                                     onClick = { selectedResolution = resolution },
@@ -182,7 +179,7 @@ fun DownloadConfigDialog(
                         onCheckedChange = { switchServers = it },
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         SectionLabel("Episodes")
                         ToggleRow(
                             title = "Skip filler episodes",
@@ -192,7 +189,7 @@ fun DownloadConfigDialog(
                         )
 
                         if (episodes.isEmpty()) {
-                            Text("No episodes available.", color = ModalMuted, fontSize = 13.sp)
+                            Text("No episodes available.", color = AniLifeColors.MutedForeground, fontSize = 13.sp)
                         } else {
                             Row(
                                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -201,19 +198,32 @@ fun DownloadConfigDialog(
                                 ranges.forEachIndexed { index, range ->
                                     val count = selectedPerRange.getOrElse(index) { 0 }
                                     val label = "${range.first()}-${range.last()}" + if (count > 0) " ($count)" else ""
-                                    OutlineChip(label, active = activeRange == index) { activeRange = index }
+                                    RangeChip(label, active = activeRange == index) { activeRange = index }
                                 }
                             }
 
-                            Row(
-                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                val active = ranges.getOrElse(activeRange) { emptyList() }
-                                OutlineChip("Select these ${active.size}") { selectRange(active) }
-                                OutlineChip("Unwatched") { selectFrom(startEpisode) }
-                                OutlineChip("From episode $startEpisode") { selectFrom(startEpisode) }
-                                OutlineChip("Clear all") { selectedEpisodes.clear() }
+                            val active = ranges.getOrElse(activeRange) { emptyList() }
+                            val activeReady = availableIn(active)
+                            val allActiveSelected = activeReady.isNotEmpty() &&
+                                activeReady.all { it in selectedEpisodes }
+                            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                                QuickAction(
+                                    label = if (allActiveSelected) {
+                                        "Clear these ${activeReady.size}"
+                                    } else {
+                                        "Select these ${activeReady.size}"
+                                    },
+                                    onClick = {
+                                        if (allActiveSelected) {
+                                            selectedEpisodes.removeAll(activeReady.toSet())
+                                        } else {
+                                            activeReady.forEach { if (it !in selectedEpisodes) selectedEpisodes.add(it) }
+                                        }
+                                    },
+                                )
+                                QuickAction("Unwatched") { selectFrom(startEpisode) }
+                                QuickAction("From episode $startEpisode") { selectFrom(startEpisode) }
+                                QuickAction("Clear all") { selectedEpisodes.clear() }
                             }
 
                             EpisodeGrid(
@@ -228,7 +238,7 @@ fun DownloadConfigDialog(
 
                             Text(
                                 "$selectedCount of ${episodes.size} selected · fetched one at a time; you can keep using the app while they run.",
-                                color = ModalMuted,
+                                color = AniLifeColors.MutedForeground,
                                 fontSize = 12.sp,
                                 lineHeight = 17.sp,
                             )
@@ -242,28 +252,26 @@ fun DownloadConfigDialog(
                             selectedCount = selectedCount,
                             freeBytes = freeBytes,
                             totalBytes = totalBytes,
-                            estimatedMb = estimatedMb,
+                            estimatedMb = selectedCount * (330 * selectedResolution.factor).toInt().toLong(),
                         )
-
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Rounded.Folder,
                                 contentDescription = null,
-                                tint = ModalMuted,
+                                tint = AniLifeColors.MutedForeground,
                                 modifier = Modifier.size(16.dp),
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 "Saved as files in $defaultSaveDirectory",
-                                color = ModalMuted,
+                                color = AniLifeColors.MutedForeground,
                                 fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-
                         if (episodes.isNotEmpty() && episodes.all { it in downloadedEpisodeNumbers }) {
-                            Text("All episodes are already downloaded.", color = ModalMuted, fontSize = 12.sp)
+                            Text("All episodes are already downloaded.", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
                         }
                     }
                 }
@@ -294,67 +302,55 @@ fun DownloadConfigDialog(
 
 @Composable
 private fun Header(detail: AnimeDetail, totalEpisodes: Int, onClose: () -> Unit) {
-    Box(Modifier.fillMaxWidth().height(172.dp)) {
+    Box(Modifier.fillMaxWidth()) {
         val banner = detail.banner
         if (!banner.isNullOrBlank()) {
             RemoteImage(
                 url = banner,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize().alpha(0.35f),
-                placeholderColor = ModalSurface,
+                modifier = Modifier.matchParentSize().alpha(0.3f),
+                placeholderColor = AniLifeColors.Card,
             )
         }
         Box(
-            Modifier.fillMaxSize().background(
+            Modifier.matchParentSize().background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF26262B).copy(alpha = 0.85f), ModalBg),
+                    listOf(AniLifeColors.Card.copy(alpha = 0.35f), AniLifeColors.Card),
                 ),
             ),
         )
         Row(
-            Modifier.fillMaxSize().padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            Modifier.fillMaxWidth().padding(24.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             RemoteImage(
                 url = detail.cover,
                 contentDescription = detail.title,
-                modifier = Modifier.width(80.dp).height(112.dp).clip(RoundedCornerShape(10.dp)),
-                placeholderColor = ModalSurfaceAlt,
+                modifier = Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)),
+                placeholderColor = AniLifeColors.CardHover,
             )
-            Spacer(Modifier.width(18.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     "DOWNLOAD EPISODES",
-                    color = ModalMuted,
+                    color = AniLifeColors.MutedForeground,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 2.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
                 )
                 Text(
                     detail.title,
-                    color = ModalText,
-                    fontSize = 24.sp,
-                    lineHeight = 30.sp,
+                    color = AniLifeColors.Foreground,
+                    fontSize = 20.sp,
+                    lineHeight = 26.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    "$totalEpisodes episodes",
-                    color = ModalMuted,
-                    fontSize = 14.sp,
-                )
+                Text("$totalEpisodes episodes", color = AniLifeColors.MutedForeground, fontSize = 14.sp)
             }
-        }
-        IconButton(
-            onClick = onClose,
-            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).size(32.dp),
-        ) {
-            Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(ModalSurfaceAlt.copy(alpha = 0.8f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.Close, contentDescription = "Close", tint = ModalText, modifier = Modifier.size(18.dp))
+            IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Close", tint = AniLifeColors.MutedForeground, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -364,24 +360,24 @@ private fun Header(detail: AnimeDetail, totalEpisodes: Int, onClose: () -> Unit)
 private fun SectionLabel(text: String) {
     Text(
         text.uppercase(),
-        color = ModalMuted,
+        color = AniLifeColors.MutedForeground,
         fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 2.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
     )
 }
 
 @Composable
-private fun PillChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun SelectChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier.clip(RoundedCornerShape(18.dp))
-            .background(if (selected) Color.White else ModalSurfaceAlt)
+            .background(if (selected) AniLifeColors.Primary else AniLifeColors.Secondary)
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 7.dp),
     ) {
         Text(
             label,
-            color = if (selected) ModalInk else ModalText,
+            color = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
         )
@@ -389,34 +385,46 @@ private fun PillChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun OutlineChip(label: String, active: Boolean = false, onClick: () -> Unit) {
+private fun RangeChip(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier.clip(RoundedCornerShape(18.dp))
-            .background(if (active) ModalSurfaceAlt else Color.Transparent)
-            .border(1.dp, if (active) Color.White.copy(alpha = 0.35f) else ModalBorder, RoundedCornerShape(18.dp))
+            .background(if (active) AniLifeColors.Secondary else AniLifeColors.Card)
+            .border(1.dp, if (active) AniLifeColors.Primary else AniLifeColors.Border, RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
-        Text(label, color = if (active) ModalText else ModalMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = AniLifeColors.Foreground, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
+}
+
+@Composable
+private fun QuickAction(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        color = AniLifeColors.Foreground,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick).padding(vertical = 2.dp),
+    )
 }
 
 @Composable
 private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, color = ModalText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = ModalMuted, fontSize = 12.sp, lineHeight = 17.sp)
+            Text(title, color = AniLifeColors.Foreground, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = AniLifeColors.MutedForeground, fontSize = 12.sp, lineHeight = 17.sp)
         }
         Spacer(Modifier.width(16.dp))
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = Color(0xFF4A4A50),
-                uncheckedThumbColor = Color(0xFFB0B0B8),
-                uncheckedTrackColor = ModalSurfaceAlt,
+                checkedThumbColor = AniLifeColors.PrimaryForeground,
+                checkedTrackColor = AniLifeColors.Primary,
+                uncheckedThumbColor = AniLifeColors.MutedForeground,
+                uncheckedTrackColor = AniLifeColors.Secondary,
+                uncheckedBorderColor = AniLifeColors.Border,
             ),
         )
     }
@@ -427,10 +435,10 @@ private fun ServerRow(selected: String, options: List<String>, onSelect: (String
     var expanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text("First-choice server", color = ModalText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("First-choice server", color = AniLifeColors.Foreground, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Text(
                 "Tried first for each episode. If it fails, another may be used for the same audio.",
-                color = ModalMuted,
+                color = AniLifeColors.MutedForeground,
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
             )
@@ -438,25 +446,25 @@ private fun ServerRow(selected: String, options: List<String>, onSelect: (String
         Spacer(Modifier.width(16.dp))
         Box {
             Row(
-                Modifier.clip(RoundedCornerShape(10.dp))
-                    .background(ModalSurfaceAlt)
-                    .border(1.dp, ModalBorder, RoundedCornerShape(10.dp))
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(AniLifeColors.Secondary)
+                    .border(1.dp, AniLifeColors.Border, RoundedCornerShape(8.dp))
                     .clickable { expanded = true }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(selected, color = ModalText, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.width(6.dp))
-                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null, tint = ModalMuted, modifier = Modifier.size(16.dp))
+                Text(selected, color = AniLifeColors.Foreground, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(10.dp))
+                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = null, tint = AniLifeColors.MutedForeground, modifier = Modifier.size(16.dp))
             }
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(ModalSurface),
+                modifier = Modifier.background(AniLifeColors.Secondary),
             ) {
                 options.forEach { option ->
                     DropdownMenuItem(
-                        text = { Text(option, color = ModalText, fontSize = 12.sp) },
+                        text = { Text(option, color = AniLifeColors.Foreground, fontSize = 12.sp) },
                         onClick = {
                             onSelect(option)
                             expanded = false
@@ -476,32 +484,33 @@ private fun EpisodeGrid(
     onToggle: (Int) -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Fixed(12),
-        modifier = Modifier.fillMaxWidth().height(260.dp),
+        columns = GridCells.Adaptive(minSize = 56.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(episodes, key = { it }) { episode ->
             val isDownloaded = episode in downloaded
             val isSelected = episode in selected
-            val bg = when {
-                isDownloaded -> Color(0xFF1A1A1D)
-                isSelected -> Color.White
-                else -> ModalSurfaceAlt
-            }
             Box(
-                Modifier.aspectRatio(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bg)
+                Modifier.aspectRatio(1.6f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        when {
+                            isDownloaded -> AniLifeColors.CardHover.copy(alpha = 0.5f)
+                            isSelected -> AniLifeColors.Primary
+                            else -> AniLifeColors.Secondary
+                        },
+                    )
                     .then(if (isDownloaded) Modifier else Modifier.clickable { onToggle(episode) }),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     episode.toString(),
                     color = when {
-                        isDownloaded -> ModalMuted.copy(alpha = 0.5f)
-                        isSelected -> ModalInk
-                        else -> ModalText
+                        isDownloaded -> AniLifeColors.MutedForeground.copy(alpha = 0.5f)
+                        isSelected -> AniLifeColors.PrimaryForeground
+                        else -> AniLifeColors.Foreground
                     },
                     fontSize = 12.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
@@ -517,39 +526,38 @@ private fun StorageCard(
     selectedCount: Int,
     freeBytes: Long,
     totalBytes: Long,
-    estimatedMb: Int,
+    estimatedMb: Long,
 ) {
-    val afterBytes = (freeBytes - estimatedMb.toLong() * 1024 * 1024).coerceAtLeast(0L)
+    val afterBytes = (freeBytes - estimatedMb * 1024 * 1024).coerceAtLeast(0L)
     val usedFraction = if (totalBytes > 0) ((totalBytes - freeBytes).toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
-    Column(
+    Box(
         Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(ModalSurface)
-            .border(1.dp, ModalBorder, RoundedCornerShape(12.dp))
-            .padding(14.dp),
+            .background(AniLifeColors.Secondary)
+            .border(1.dp, AniLifeColors.Border, RoundedCornerShape(12.dp))
+            .padding(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "≈ $sizeText · $selectedCount ${if (selectedCount == 1) "episode" else "episodes"}",
-                color = ModalText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${formatBytes(freeBytes)} free · ${formatBytes(afterBytes)} after",
-                color = ModalMuted,
-                fontSize = 12.sp,
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        Box(
-            Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(ModalSurfaceAlt),
-        ) {
-            Box(
-                Modifier.fillMaxWidth(usedFraction).fillMaxHeight()
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.7f)),
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "≈ $sizeText · $selectedCount ${if (selectedCount == 1) "episode" else "episodes"}",
+                    color = AniLifeColors.Foreground,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${formatBytes(freeBytes)} free · ${formatBytes(afterBytes)} after",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 13.sp,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { usedFraction },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                color = AniLifeColors.Primary,
+                trackColor = AniLifeColors.Border,
             )
         }
     }
@@ -563,17 +571,20 @@ private fun Footer(
     onConfirm: () -> Unit,
 ) {
     Column {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(ModalBorder))
+        HorizontalDivider(color = AniLifeColors.Border)
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+            Modifier.fillMaxWidth().padding(24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(
                 onClick = onCancel,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = ModalSurfaceAlt, contentColor = ModalText),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AniLifeColors.Secondary,
+                    contentColor = AniLifeColors.Foreground,
+                ),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
             ) {
                 Text("Cancel", fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -584,10 +595,10 @@ private fun Footer(
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.height(40.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White,
-                    contentColor = ModalInk,
-                    disabledContainerColor = ModalSurfaceAlt,
-                    disabledContentColor = ModalMuted,
+                    containerColor = AniLifeColors.Primary,
+                    contentColor = AniLifeColors.PrimaryForeground,
+                    disabledContainerColor = AniLifeColors.Secondary,
+                    disabledContentColor = AniLifeColors.MutedForeground,
                 ),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
             ) {
