@@ -980,15 +980,16 @@ private fun DownloadSettings(settings: AppSettings, onSettingsChange: ((AppSetti
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SettingsButton("Choose folder") {
-                val parent = java.awt.Frame()
-                parent.isVisible = false
-                val dialog = java.awt.FileDialog(parent, "Choose the download folder", java.awt.FileDialog.LOAD)
-                dialog.isVisible = true
-                val selected = dialog.file?.let { java.io.File(dialog.directory, it) } ?: dialog.directory?.let { java.io.File(it) }
-                parent.dispose()
-                if (selected != null) {
-                    onSettingsChange {
-                        it.copy(downloadDirectory = selected.toPath().toAbsolutePath().normalize().toString())
+                val chooser = javax.swing.JFileChooser().apply {
+                    fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+                    dialogTitle = "Choose the download folder"
+                }
+                if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                    val selected = chooser.selectedFile
+                    if (selected != null) {
+                        onSettingsChange {
+                            it.copy(downloadDirectory = selected.toPath().toAbsolutePath().normalize().toString())
+                        }
                     }
                 }
             }
