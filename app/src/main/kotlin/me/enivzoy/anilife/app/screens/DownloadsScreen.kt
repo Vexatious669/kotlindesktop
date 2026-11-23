@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GridView
@@ -61,6 +62,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -131,6 +133,7 @@ fun DownloadsScreen(
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
     onPlay: (String, String) -> Unit,
     onOpen: (Long) -> Unit = {},
+    onBrowse: () -> Unit = {},
     queueManager: DownloadQueueManager,
 ) {
     val episodes by repository.localEpisodes.collectAsState()
@@ -312,17 +315,24 @@ fun DownloadsScreen(
                     }
                 },
             )
-        } else if (selectedDownloadAnime == null && episodes.isEmpty()) {
+        } else if (selectedDownloadAnime == null && episodes.isEmpty() && downloadJobs.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 EmptyPanel(
                     icon = Icons.Rounded.Download,
                     title = "No local episodes yet",
                     message = "Auto detect scans folders and matches their anime titles. Import a portable library JSON to restore the files listed by your other AniLife install.",
                     action = {
-                        OutlinedButton(onClick = { selectMediaFolder()?.let(::beginScan) }, enabled = !scanning && !importing) {
-                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(7.dp))
-                            Text("Auto detect")
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { selectMediaFolder()?.let(::beginScan) }, enabled = !scanning && !importing) {
+                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text("Auto detect")
+                            }
+                            OutlinedButton(onClick = onBrowse, enabled = !importing) {
+                                Icon(Icons.Rounded.Explore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text("Browse")
+                            }
                         }
                     },
                 )
@@ -330,6 +340,7 @@ fun DownloadsScreen(
         } else {
             EpisodeList(
                 episodes = episodes,
+                initialTab = if (episodes.isEmpty()) "queue" else "library",
                 onPlay = onPlay,
                 onRemove = repository::removeLocalEpisode,
                 onOpen = onOpen,
@@ -594,6 +605,7 @@ private fun MatchRow(folder: DetectedFolder, selectedIndex: Int, onSelect: (Int)
 @Composable
 private fun EpisodeList(
     episodes: List<LocalEpisode>,
+    initialTab: String = "library",
     onPlay: (String, String) -> Unit,
     onRemove: (LocalEpisode) -> Unit,
     onOpen: (Long) -> Unit,
@@ -624,8 +636,13 @@ private fun EpisodeList(
     }
     var searchQuery by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf("title") }
-    var tab by remember { mutableStateOf("library") }
+    var tab by remember { mutableStateOf(initialTab) }
     var actionsExpanded by remember { mutableStateOf(false) }
+    val activeJobIds = remember(downloadJobs) {
+        downloadJobs.filter { it.status == DownloadStatus.Queued || it.status == DownloadStatus.Running }
+            .map { it.id }.toSet()
+    }
+    LaunchedEffect(activeJobIds) { if (activeJobIds.isNotEmpty()) tab = "queue" }
 
     val filteredGroups = remember(groups, searchQuery, sortMode) {
         val q = searchQuery.trim().lowercase()
