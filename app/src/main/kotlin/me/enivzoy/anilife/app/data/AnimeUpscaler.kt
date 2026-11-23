@@ -17,7 +17,6 @@ import java.util.zip.ZipInputStream
 import kotlin.coroutines.coroutineContext
 
 private const val MODEL = "realesr-animevideov3"
-private const val WINDOWS_ARCHIVE = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
 private const val LINUX_ARCHIVE = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
 private const val MAC_ARCHIVE = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip"
 
@@ -87,7 +86,8 @@ class AnimeUpscaler {
     }
 
     private suspend fun findUpscaler(onProgress: (Float) -> Unit): String {
-        val directory = Path.of(System.getProperty("user.home"), ".anilife", "upscaler")
+        val configured = System.getProperty("AniLife.upscaler.dir")?.takeIf(String::isNotBlank)?.let { Path.of(it) }
+        val directory = configured ?: dependencyDirectory().resolve("upscaler").toPath()
         Files.createDirectories(directory)
         val executable = if (isWindows) "$UPSCALER.exe" else UPSCALER
         val installed = directory.resolve(executable)
@@ -109,7 +109,7 @@ class AnimeUpscaler {
         findTool(UPSCALER)?.let { return it }
 
         val archiveUrl = when {
-            isWindows -> WINDOWS_ARCHIVE
+            isWindows -> UPSCALER_ARCHIVE
             isMac -> MAC_ARCHIVE
             else -> LINUX_ARCHIVE
         }
@@ -133,6 +133,8 @@ class AnimeUpscaler {
         connection.instanceFollowRedirects = true
         connection.connectTimeout = 20_000
         connection.readTimeout = 30_000
+        connection.setRequestProperty("User-Agent", USER_AGENT)
+        connection.setRequestProperty("Accept", "application/octet-stream")
         try {
             connection.inputStream.use { input ->
                 Files.newOutputStream(target).use { output ->
