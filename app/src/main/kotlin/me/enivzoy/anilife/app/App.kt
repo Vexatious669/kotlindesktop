@@ -104,7 +104,7 @@ fun AniLifeApp(
     val updater = remember { Updater() }
     val availableUpdate by updater.update.collectAsState()
     val downloadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 3) }
+    val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 4) }
     val settings by settingsStore.settings.collectAsState()
     val discordState by discordPresence.state.collectAsState()
     val backStack = remember { mutableStateListOf<Screen>() }
