@@ -225,7 +225,9 @@ class AnimeUpscaler {
 
     private fun findTool(name: String): String? {
         val executable = if (isWindows) "$name.exe" else name
-        val directories = System.getenv("PATH")?.split(File.pathSeparator).orEmpty() +
+        val directories = listOfNotNull(
+            System.getProperty("AniLife.ffmpeg.dir"),
+        ) + System.getenv("PATH")?.split(File.pathSeparator).orEmpty() +
             listOf("/usr/bin", "/usr/local/bin", "C:\\ffmpeg\\bin", "C:\\tools\\ffmpeg\\bin")
         return directories.map { File(it, executable) }
             .firstOrNull { it.isFile && it.canExecute() }

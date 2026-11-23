@@ -4,7 +4,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -22,7 +24,11 @@ import com.sun.jna.Pointer
 import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.data.AppSettingsStore
+import me.enivzoy.anilife.app.data.DependencyManager
+import me.enivzoy.anilife.app.data.dependencyDirectory
+import me.enivzoy.anilife.app.screens.SetupScreen
 import java.awt.Color
+import java.io.File
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -30,7 +36,10 @@ import java.awt.Toolkit
 import java.awt.geom.AffineTransform
 
 fun main() {
+    if (relaunchWithSetupJre()) return
     application {
+    val setupScope = rememberCoroutineScope()
+    val dependencyManager = remember { DependencyManager(setupScope, dependencyDirectory()) }
     val settingsStore = remember { AppSettingsStore() }
     val appSettings by settingsStore.settings.collectAsState()
      
@@ -58,7 +67,16 @@ fun main() {
             applyDarkTitleBar(window)
         }
         AniLifeTheme(appSettings) {
-            AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
+            var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
+            if (!setupComplete) {
+                SetupScreen(
+                    manager = dependencyManager,
+                    onContinue = {
+                        dependencyManager.configurePaths()
+                        setupComplete = true
+                    },
+                )
+            } else AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
                     val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("windows")
                     if (isWindows) {
                         if (fullscreen && windowedStyle.value == null) {
@@ -143,6 +161,30 @@ fun main() {
         }
     }
     }
+}
+
+private fun relaunchWithSetupJre(): Boolean {
+    if (System.getProperty("AniLife.usingSetupJre") == "true") return false
+    val launcher = System.getProperty("jpackage.app-path") ?: return false
+    val directory = dependencyDirectory()
+    val java = File(directory, "jre/bin/java.exe")
+    if (!File(directory, "use-jre").isFile || !java.isFile) return false
+    val classpath = System.getProperty("java.class.path")?.takeIf(String::isNotBlank) ?: return false
+    val appDir = File(launcher).parentFile.resolve("app")
+    val forwarded = System.getProperties().stringPropertyNames()
+        .filter { it.startsWith("compose.") || it.startsWith("jpackage.") || it == "file.encoding" }
+        .flatMap { listOf("-D$it=${System.getProperty(it)}") }
+    val command = buildList {
+        add(java.absolutePath)
+        add("-DAniLife.usingSetupJre=true")
+        addAll(forwarded)
+        add("-Djava.library.path=${appDir.absolutePath}")
+        add("-cp")
+        add(classpath)
+        add("me.enivzoy.anilife.app.MainKt")
+    }
+    ProcessBuilder(command).inheritIO().start()
+    return true
 }
 
 private fun usableScreenBounds(configuration: java.awt.GraphicsConfiguration): Rectangle {

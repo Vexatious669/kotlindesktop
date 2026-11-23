@@ -62,6 +62,7 @@ import me.enivzoy.anilife.app.screens.PlayerScreen
 import me.enivzoy.anilife.app.screens.ProvidersScreen
 import me.enivzoy.anilife.app.screens.ScheduleScreen
 import me.enivzoy.anilife.app.screens.SettingsScreen
+import me.enivzoy.anilife.app.screens.formatSetupBytes
 import me.enivzoy.anilife.app.screens.MyAnimeListScreen
 import me.enivzoy.anilife.app.screens.NotificationsScreen
 import me.enivzoy.anilife.app.data.MyAnimeListSync
@@ -116,6 +117,7 @@ fun AniLifeApp(
     var updateCheckStatus by remember { mutableStateOf<String?>(null) }
     var checkingForUpdates by remember { mutableStateOf(false) }
     var updateActionStatus by remember { mutableStateOf<String?>(null) }
+    var updateProgress by remember { mutableStateOf<Pair<Long, Long?>?>(null) }
     var installingUpdate by remember { mutableStateOf(false) }
 
     suspend fun checkForUpdates(showUpToDate: Boolean) {
@@ -147,10 +149,15 @@ fun AniLifeApp(
         if (installingUpdate) return
         scope.launch {
             installingUpdate = true
+            updateProgress = null
             updateActionStatus = "Downloading and verifying AniLife ${update.version}…"
             try {
-                val destination = Updater.updatesDirectory().resolve("anilife-${update.version}.exe")
-                if (!updater.download(update, destination)) {
+                val extension = if (update.url.contains(".msi", ignoreCase = true)) "msi" else "exe"
+                val destination = Updater.updatesDirectory().resolve("anilife-${update.version}.$extension")
+                if (!updater.download(update, destination) { bytes, total ->
+                        updateProgress = bytes to total
+                    }
+                ) {
                     updateActionStatus = "Download or verification failed. Check your connection and retry."
                     return@launch
                 }
@@ -185,9 +192,11 @@ fun AniLifeApp(
         }
     }
     LaunchedEffect(Unit) {
-        val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
-        if (path == null) {
-            NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = "libmpv not found. Install mpv manually.")
+        if (System.getProperty("AniLife.mpv.library") == null) {
+            val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
+            if (path == null) {
+                NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = "libmpv not found. Install mpv manually.")
+            }
         }
     }
 
@@ -549,7 +558,10 @@ fun AniLifeApp(
                 Text(
                     text = (if (update.changelog.isBlank()) "AniLife ${update.version} is available."
                     else "AniLife ${update.version} is available.\n\n${update.changelog}") +
-                        updateActionStatus?.let { "\n\n$it" }.orEmpty(),
+                        updateActionStatus?.let { "\n\n$it" }.orEmpty() +
+                        updateProgress?.let { (bytes, total) ->
+                            "\n${formatUpdateProgress(bytes, total)}"
+                        }.orEmpty(),
                     fontSize = 14.sp,
                     lineHeight = 21.sp,
                 )
@@ -580,6 +592,13 @@ fun AniLifeApp(
         )
     }
 }
+
+private fun formatUpdateProgress(bytes: Long, total: Long?): String =
+    if (total != null && total > 0L) {
+        "${formatSetupBytes(bytes)} / ${formatSetupBytes(total)} (${bytes * 100 / total}%)"
+    } else {
+        formatSetupBytes(bytes)
+    }
 
 private fun formatPlayerEpisode(number: Double): String =
     if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()
