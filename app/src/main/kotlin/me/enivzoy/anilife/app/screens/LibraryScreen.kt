@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -140,19 +141,18 @@ private fun LocalLibrary(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 168.dp),
+                    columns = GridCells.Adaptive(minSize = 160.dp),
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(26.dp),
                 ) {
                     items(items = entries, key = { it.id }) { anime ->
                         AnimePosterCard(
                             anime = anime,
                             onClick = { onOpen(anime.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                            width = null,
+                            width = 160.dp,
                         )
                     }
                 }
@@ -176,6 +176,10 @@ private fun AniListLibrary(
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
     var busyEntry by remember { mutableStateOf<Long?>(null) }
+    var statusFilter by remember { mutableStateOf<AniListListStatus?>(null) }
+    val filteredEntries = remember(entries, statusFilter) {
+        if (statusFilter == null) entries else entries.filter { it.status == statusFilter }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -185,7 +189,7 @@ private fun AniListLibrary(
                 Column(Modifier.weight(1f)) {
                     Text("AniList Library", color = AniLifeColors.Foreground, fontSize = 30.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        "$userName · ${entries.size} titles · synced with AniList",
+                        "$userName · ${filteredEntries.size} of ${entries.size} titles · synced with AniList",
                         color = AniLifeColors.MutedForeground,
                         fontSize = 13.sp,
                     )
@@ -194,9 +198,29 @@ private fun AniListLibrary(
             }
             syncMessage?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
             error?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FilterChip(
+                    label = "All",
+                    selected = statusFilter == null,
+                    onClick = { statusFilter = null },
+                )
+                AniListListStatus.entries.forEach { status ->
+                    val count = entries.count { it.status == status }
+                    if (count > 0) {
+                        FilterChip(
+                            label = "${status.label} ($count)",
+                            selected = statusFilter == status,
+                            onClick = { statusFilter = status },
+                        )
+                    }
+                }
+            }
         }
 
-        if (entries.isEmpty()) {
+        if (filteredEntries.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 EmptyPanel(
                     icon = Icons.Rounded.VideoLibrary,
@@ -216,14 +240,14 @@ private fun AniListLibrary(
         } else {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 190.dp),
+                    columns = GridCells.Adaptive(minSize = 160.dp),
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 4.dp, bottom = 40.dp),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalArrangement = Arrangement.spacedBy(22.dp),
                 ) {
-                    items(entries, key = { it.entryId }) { entry ->
+                    items(filteredEntries, key = { it.entryId }) { entry ->
                         var showEditor by remember(entry.entryId) { mutableStateOf(false) }
                         Box(
                             Modifier.pointerInput(entry.entryId) {
@@ -242,8 +266,7 @@ private fun AniListLibrary(
                             AnimePosterCard(
                                 anime = entry.anime,
                                 onClick = { onOpen(entry.anime.id) },
-                                modifier = Modifier.fillMaxWidth(),
-                                width = null,
+                                width = 160.dp,
                             )
                         }
                         if (showEditor) {
@@ -451,6 +474,21 @@ internal fun AniListEntryControls(
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.Foreground,
         )
+    }
+}
+
+@Composable
+private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val bg = if (selected) AniLifeColors.Primary else AniLifeColors.Muted
+    val fg = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.MutedForeground
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(label, color = fg, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 

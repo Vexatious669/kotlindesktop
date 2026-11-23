@@ -45,8 +45,41 @@ data class AnimeVideoSource(
     val url: String,
     val headers: Map<String, String>,
     val subtitles: List<AnimeSubtitleSource> = emptyList(),
+    val language: String = "",
 ) {
     val label: String get() = listOfNotNull(provider, server, quality, format.uppercase()).joinToString(" · ")
+    val resolvedLanguage: String get() = language.ifBlank {
+        if (audio.equals("dub", true)) detectDubLanguage(provider, server, subtitles) else "Japanese (Sub)"
+    }
+}
+
+private fun detectDubLanguage(provider: String, server: String, subtitles: List<AnimeSubtitleSource>): String {
+    val text = "$provider $server".lowercase()
+    // Check provider/server name first
+    when {
+        text.contains("spanish") || text.contains("español") || text.contains("castellano") || text.contains("latino") -> return "Spanish"
+        text.contains("portuguese") || text.contains("português") || text.contains("brazilian") -> return "Portuguese"
+        text.contains("french") || text.contains("français") -> return "French"
+        text.contains("german") || text.contains("deutsch") -> return "German"
+        text.contains("italian") || text.contains("italiano") -> return "Italian"
+        text.contains("russian") || text.contains("русский") -> return "Russian"
+        text.contains("arabic") || text.contains("عربي") -> return "Arabic"
+        text.contains("hindi") -> return "Hindi"
+        text.contains("english") -> return "English"
+    }
+    // Fall back to subtitle languages
+    val subLangs = subtitles.map { it.language.lowercase() }
+    when {
+        subLangs.any { it.startsWith("es") } && !subLangs.any { it.startsWith("en") } -> return "Spanish"
+        subLangs.any { it.startsWith("pt") } && !subLangs.any { it.startsWith("en") } -> return "Portuguese"
+        subLangs.any { it.startsWith("fr") } && !subLangs.any { it.startsWith("en") } -> return "French"
+        subLangs.any { it.startsWith("de") } && !subLangs.any { it.startsWith("en") } -> return "German"
+        subLangs.any { it.startsWith("it") } && !subLangs.any { it.startsWith("en") } -> return "Italian"
+        subLangs.any { it.startsWith("ru") } && !subLangs.any { it.startsWith("en") } -> return "Russian"
+        subLangs.any { it.startsWith("ar") } && !subLangs.any { it.startsWith("en") } -> return "Arabic"
+        subLangs.any { it.startsWith("hi") } && !subLangs.any { it.startsWith("en") } -> return "Hindi"
+    }
+    return "English (Dub)"
 }
 
 /** Miruro's public catalog API, following the same AniList-id → episode → provider flow as AniLife. */
@@ -236,6 +269,7 @@ class AnimeVideoProviders(
                             url = url,
                             headers = headers,
                             subtitles = subtitles,
+                            language = server.string("language") ?: "",
                         )
                     }
                 }

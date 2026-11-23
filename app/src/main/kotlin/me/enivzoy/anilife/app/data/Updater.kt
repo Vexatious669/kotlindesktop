@@ -27,6 +27,9 @@ import java.time.Duration
 import java.time.Instant
 
 private const val DEFAULT_MANIFEST_URL =
+    "https://github.com/anilifecommunity/kotlindesktop/releases/latest/download/latest.json"
+
+private const val FALLBACK_MANIFEST_URL =
     "https://api.github.com/repos/anilifecommunity/kotlindesktop/releases/latest"
 
 /**
@@ -54,7 +57,7 @@ class Updater(
         mutableUpdate.value = null
     }
 
-    /** Downloads the release asset and verifies its SHA-256 against the manifest. */
+    /** Streams the release asset to disk, verifies it, then publishes it at [destination]. */
     suspend fun download(
         update: Update,
         destination: Path,
@@ -66,68 +69,83 @@ class Updater(
         }
         val request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(600))
+            .header("User-Agent", "AniLife-Updater")
             .header("Accept", "*/*")
             .GET()
-            .uri(uri)
             .build()
-        val response = http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+        val response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
         if (response.statusCode() >= 400) {
-            println("[Updater] asset download failed (HTTP ${response.statusCode()})")
-            return@withContext false
-        }
-        val bytes = response.body()
-        if (update.sizeBytes > 0L && bytes.size.toLong() != update.sizeBytes) {
-            System.err.println("[Updater] asset size mismatch for ${update.version}")
-            return@withContext false
-        }
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { "%02x".format(it) }
-        if (update.sha256.isNotBlank() && digest.lowercase() != update.sha256.lowercase()) {
-            System.err.println("[Updater] sha256 mismatch for ${update.version}")
+            response.body().close()
+            System.err.println("[Updater] asset download failed (HTTP ${response.statusCode()})")
             return@withContext false
         }
         val parent = destination.toAbsolutePath().parent
         Files.createDirectories(parent)
         val temporary = Files.createTempFile(parent, destination.fileName.toString(), ".part")
+        val digest = MessageDigest.getInstance("SHA-256")
+        var copied = 0L
         try {
-            Files.write(temporary, bytes)
+            response.body().use { input ->
+                Files.newOutputStream(temporary).use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        digest.update(buffer, 0, read)
+                        output.write(buffer, 0, read)
+                        copied += read
+                        onProgress(copied, update.sizeBytes.takeIf { it > 0L })
+                    }
+                }
+            }
+            if (update.sizeBytes > 0L && copied != update.sizeBytes) {
+                System.err.println("[Updater] asset size mismatch for ${update.version}")
+                return@withContext false
+            }
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (update.sha256.isNotBlank() && !actual.equals(update.sha256, ignoreCase = true)) {
+                System.err.println("[Updater] sha256 mismatch for ${update.version}")
+                return@withContext false
+            }
             try {
                 Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } catch (_: AtomicMoveNotSupportedException) {
                 Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING)
             }
-            onProgress(bytes.size.toLong(), bytes.size.toLong())
             true
         } finally {
             Files.deleteIfExists(temporary)
         }
     }
 
-    /** Starts the downloaded Windows installer; the caller should exit after this succeeds. */
+    /** Starts the downloaded Windows installer silently; the caller should exit afterwards. */
     fun installWindows(installer: Path) {
-        val name = installer.fileName.toString()
-        if (name.lowercase().endsWith(".msi")) {
+        val name = installer.fileName.toString().lowercase()
+        if (name.endsWith(".msi")) {
             ProcessBuilder("msiexec", "/i", installer.toString(), "/qn", "/norestart").start()
         } else {
-            ProcessBuilder(installer.toString()).start()
+            ProcessBuilder(installer.toString(), "/quiet", "/norestart").start()
         }
     }
 
     private suspend fun fetchUpdate(currentVersion: String): Update? {
-        val uri = URI.create(manifestUrl)
-        val request = HttpRequest.newBuilder(uri)
-            .timeout(Duration.ofSeconds(30))
-            .header("User-Agent", "AniLife-Updater")
-            .header("Accept", "application/vnd.github+json")
-            .GET()
-            .uri(uri)
-            .build()
-        val response = http.send(request, HttpResponse.BodyHandlers.ofString())
-        if (response.statusCode() >= 400) {
-            throw IOException("Update manifest fetch failed (HTTP ${response.statusCode()}).")
+        val failures = mutableListOf<String>()
+        for (url in listOf(manifestUrl, FALLBACK_MANIFEST_URL)) {
+            val uri = URI.create(url)
+            val request = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(30))
+                .header("User-Agent", "AniLife-Updater")
+                .header("Accept", "application/vnd.github+json")
+                .GET()
+                .build()
+            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() >= 400) {
+                failures += "$url (HTTP ${response.statusCode()})"
+                continue
+            }
+            return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
         }
-        return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
+        throw IOException("Update manifest fetch failed: ${failures.joinToString(", ")}")
     }
 
     companion object {
@@ -180,6 +198,10 @@ internal fun parseUpdateManifest(body: String, currentVersion: String, platform:
     val releaseAsset = if (root.string("tag_name") != null) {
         assets.firstOrNull {
             val name = it.string("name").orEmpty()
+            name.endsWith(".base.msi", ignoreCase = true) ||
+                name.endsWith("#base.msi", ignoreCase = true)
+        } ?: assets.firstOrNull {
+            val name = it.string("name").orEmpty()
             name.endsWith(".base.exe", ignoreCase = true) ||
                 name.endsWith("#base.exe", ignoreCase = true)
         }
@@ -201,7 +223,8 @@ internal fun parseUpdateManifest(body: String, currentVersion: String, platform:
         version = version,
         changelog = root.string("releaseNotes") ?: root.string("changelog") ?: root.string("body") ?: "",
         url = downloadUrl,
-        sizeBytes = root.long("sizeBytes") ?: root.long("size") ?: asset?.long("size") ?: 0L,
+        sizeBytes = root.long("sizeBytes") ?: root.long("size") ?: asset?.long("sizeBytes")
+            ?: asset?.long("size") ?: 0L,
         sha256 = root.string("sha256") ?: root.string("checksum")
             ?: asset?.string("sha256")
             ?: asset?.string("digest")?.removePrefix("sha256:")

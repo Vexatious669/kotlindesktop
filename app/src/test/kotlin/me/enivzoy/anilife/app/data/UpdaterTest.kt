@@ -57,6 +57,45 @@ class UpdaterTest {
     }
 
     @Test
+    fun parsesMsiAssetFromLatestManifest() {
+        val manifest = """
+            {
+              "version": "1.0.9",
+              "assets": [{
+                "platform": "windows",
+                "url": "https://github.com/anilifecommunity/kotlindesktop/releases/download/v1.0.9/anilife-1.0.9%23base.msi",
+                "sha256": "abc123",
+                "sizeBytes": 42
+              }]
+            }
+        """.trimIndent()
+
+        val update = parseUpdateManifest(manifest, currentVersion = "1.0.1", platform = "windows")
+
+        assertEquals("https://github.com/anilifecommunity/kotlindesktop/releases/download/v1.0.9/anilife-1.0.9%23base.msi", update?.url)
+        assertEquals("abc123", update?.sha256)
+        assertEquals(42L, update?.sizeBytes)
+    }
+
+    @Test
+    fun prefersMsiAssetFromGithubRelease() {
+        val release = """
+            {
+              "tag_name": "v1.0.6",
+              "assets": [
+                {"name": "anilife-1.0.6.base.exe", "browser_download_url": "https://example.com/anilife.exe"},
+                {"name": "anilife-1.0.6.base.msi", "browser_download_url": "https://example.com/anilife.msi", "size": 42, "digest": "sha256:abc123"}
+              ]
+            }
+        """.trimIndent()
+
+        val update = parseUpdateManifest(release, currentVersion = "1.0.1", platform = "windows")
+
+        assertEquals("https://example.com/anilife.msi", update?.url)
+        assertEquals("abc123", update?.sha256)
+    }
+
+    @Test
     fun doesNotOfferTheInstalledVersionAgain() {
         val manifest = """
             {

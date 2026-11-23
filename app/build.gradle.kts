@@ -67,6 +67,7 @@ sourceSets.main {
 
 tasks.processResources {
     dependsOn(generateVersionProperties)
+    exclude("upscaler/**", "ffmpeg/**", "mpv/**", "jre/**")
 }
 
 compose.desktop {
@@ -81,17 +82,31 @@ compose.desktop {
             packageName = "AniLife"
             packageVersion = appVersion
             appResourcesRootDir = file("src/main/appResources")
-            modules("java.instrument", "java.net.http", "jdk.httpserver", "jdk.unsupported")
+            includeAllModules = false
+            modules(
+                "java.base",
+                "java.desktop",
+                "java.instrument",
+                "java.logging",
+                "java.management",
+                "java.net.http",
+                "java.naming",
+                "java.security.jgss",
+                "java.sql",
+                "java.xml",
+                "jdk.httpserver",
+                "jdk.unsupported",
+            )
             linux {
                 packageName = "anilife"
                 shortcut = true
                 iconFile.set(file("src/main/resources/anilife-256.png"))
             }
             windows {
-                menu = !portableBuild
-                shortcut = !portableBuild
-                perUserInstall = portableBuild
-                dirChooser = portableBuild
+                menu = true
+                shortcut = true
+                perUserInstall = true
+                dirChooser = true
                 iconFile.set(file("src/main/resources/anilife.ico"))
                 upgradeUuid = if (portableBuild) {
                     "b2c3d4e5-f6a7-4890-8bcd-ef0123456789"
@@ -101,6 +116,14 @@ compose.desktop {
             }
         }
     }
+}
+
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask>().configureEach {
+    val level = Class.forName("org.jetbrains.compose.desktop.application.internal.RuntimeCompressionLevel")
+        .getField("ZIP").get(null)
+    @Suppress("UNCHECKED_CAST")
+    (javaClass.getMethod("getCompressionLevel\$compose").invoke(this)
+        as org.gradle.api.provider.Property<Any>).set(level)
 }
 
 tasks.test {

@@ -77,6 +77,7 @@ class MpvPlaybackEngine(
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
+    private val playbackBufferSize: String = "auto",
     /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
     private var presenceInfo: DiscordPlaybackInfo? = null,
     private val onPresence: (Presence?) -> Unit = {},
@@ -109,6 +110,9 @@ class MpvPlaybackEngine(
     @Volatile private var worker: Thread? = null
     @Volatile private var activeSubtitleAppearance = subtitleAppearance
     @Volatile private var lastPresenceReportAt = 0L
+    @Volatile private var lastMpvPosition = 0.0
+    @Volatile private var lastMpvPositionAt = 0L
+    @Volatile private var lastFrameAt = 0L
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -129,7 +133,22 @@ class MpvPlaybackEngine(
             mpv.loadfile(url)
 
             while (!closed.get()) {
+                // Smooth position tracking: advance positionSeconds between mpv's time-pos reports.
+                if (isPlaying && lastMpvPositionAt > 0L) {
+                    val elapsed = (System.currentTimeMillis() - lastMpvPositionAt) / 1000.0
+                    val interpolated = (lastMpvPosition + elapsed).coerceAtMost(durationSeconds.takeIf { it > 0.0 } ?: Double.MAX_VALUE)
+                    if (interpolated > positionSeconds) {
+                        positionSeconds = interpolated
+                    }
+                }
                 if (target.needsRender()) {
+                    // Limit frame rate to ~30fps to reduce memory pressure from ImageBitmap allocation.
+                    val now = System.currentTimeMillis()
+                    if (now - lastFrameAt < 33L) {
+                        Thread.sleep(33L - (now - lastFrameAt))
+                        continue
+                    }
+                    lastFrameAt = now
                     val bytes = target.render() ?: continue
                     videoFrame = SkiaImage.makeRaster(
                         ImageInfo(renderWidth, renderHeight, ColorType.BGRA_8888, ColorAlphaType.OPAQUE),
@@ -154,7 +173,9 @@ class MpvPlaybackEngine(
         when (event) {
             is Event.PropertyChange -> when (event.name) {
                 "time-pos" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
-                    positionSeconds = it.coerceAtLeast(0.0)
+                    lastMpvPosition = it.coerceAtLeast(0.0)
+                    lastMpvPositionAt = System.currentTimeMillis()
+                    positionSeconds = lastMpvPosition
                     // Position-only updates are throttled; transport changes report immediately.
                     reportPresence()
                 }
@@ -166,6 +187,15 @@ class MpvPlaybackEngine(
                 }
                 "pause" -> (event.value as? PropertyValue.Flag)?.value?.let {
                     isPlaying = !it
+                    if (it) {
+                        // Paused: sync position to last mpv report.
+                        lastMpvPosition = positionSeconds
+                        lastMpvPositionAt = System.currentTimeMillis()
+                    } else {
+                        // Resumed: reset tracking.
+                        lastMpvPosition = positionSeconds
+                        lastMpvPositionAt = System.currentTimeMillis()
+                    }
                     reportPresence(force = true)
                 }
             }

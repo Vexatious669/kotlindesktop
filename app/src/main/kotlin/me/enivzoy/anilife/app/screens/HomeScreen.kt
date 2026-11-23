@@ -59,6 +59,8 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.flow.distinctUntilChanged
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AppSettings
+import me.enivzoy.anilife.app.data.AniListListStatus
+import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.ContinueStoreInstance
 import me.enivzoy.anilife.app.data.HomeSection
 import me.enivzoy.anilife.app.ui.AniLifeColors
@@ -82,6 +84,7 @@ fun HomeScreen(
     settings: AppSettings,
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
     onOpen: (Long) -> Unit,
+    onContinue: (me.enivzoy.anilife.app.data.ContinueEntry) -> Unit = { entry -> onOpen(entry.anime.id) },
     onContentReady: () -> Unit = {},
 ) {
     var attempt by remember { mutableStateOf(0) }
@@ -108,7 +111,7 @@ fun HomeScreen(
         is LoadState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             ErrorPanel(message = current.message, onRetry = { attempt++ })
         }
-        is LoadState.Ready -> HomeContent(current.value, repository, settings, onSettingsChange, onOpen)
+        is LoadState.Ready -> HomeContent(current.value, repository, settings, onSettingsChange, onOpen, onContinue)
     }
 }
 
@@ -119,9 +122,16 @@ private fun HomeContent(
     settings: AppSettings,
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
     onOpen: (Long) -> Unit,
+    onContinue: (me.enivzoy.anilife.app.data.ContinueEntry) -> Unit,
 ) {
     val continueEntries by ContinueStoreInstance.entries.collectAsState()
     val libraryEntries by repository.library.entries.collectAsState()
+    val aniListEntries by AniListSync.entries.collectAsState()
+    LaunchedEffect(aniListEntries) {
+        aniListEntries.filter { it.status == AniListListStatus.CURRENT }.forEach { entry ->
+            ContinueStoreInstance.upsertFromAniList(entry.anime, entry.progress)
+        }
+    }
     val featured = remember(home) {
         home.trending.filter { !it.banner.isNullOrBlank() }
             .ifEmpty { home.trending }
@@ -200,7 +210,7 @@ private fun HomeContent(
                                 items(continueEntries, key = { it.anime.id }) { entry ->
                                     ContinueCard(
                                         entry = entry,
-                                        onResume = { e -> onOpen(e.anime.id) },
+                                        onResume = { e -> onContinue(e) },
                                         onDetails = onOpen,
                                         onRemove = { id -> ContinueStoreInstance.remove(id) },
                                     )

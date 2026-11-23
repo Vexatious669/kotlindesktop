@@ -124,23 +124,39 @@ private fun SourcesPanel(
         }
     }
     Spacer(Modifier.height(16.dp))
-    Text("SERVER", color = AniLifeColors.MutedForeground, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-    Spacer(Modifier.height(8.dp))
-    if (sources.isEmpty()) EmptyPanelMessage("No servers are available for this episode.")
-    else LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        items(sources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
-            val selected = source.url == selectedUrl
-            PanelChoice(
-                title = listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · "),
-                subtitle = buildString {
-                    if (selected) append("Playing now · ")
-                    val available = source.subtitles.map(AnimeSubtitleSource::label).distinct().ifEmpty { subtitles.map(PlayerSubtitleTrack::label).distinct() }
-                    append(if (available.isEmpty()) "Subtitle tracks load with the video" else "Subtitles you can switch · ${available.joinToString(", ")}")
-                    source.quality?.let { append(" · $it") }
-                },
-                selected = selected,
-                onClick = { onSelect(source) },
-            )
+    val filtered = sources.filter { it.audio.equals(audio, true) }
+    if (filtered.isEmpty()) EmptyPanelMessage("No servers are available for this audio.")
+    else {
+        val grouped = filtered.groupBy { it.resolvedLanguage }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            grouped.forEach { (language, langSources) ->
+                if (true) {
+                    item(key = "lang-$language") {
+                        Text(
+                            language.uppercase(),
+                            color = AniLifeColors.MutedForeground,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                    }
+                }
+                items(langSources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
+                    val selected = source.url == selectedUrl
+                    PanelChoice(
+                        title = listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · "),
+                        subtitle = buildString {
+                            if (selected) append("Playing now · ")
+                            val available = source.subtitles.map(AnimeSubtitleSource::label).distinct().ifEmpty { subtitles.map(PlayerSubtitleTrack::label).distinct() }
+                            append(if (available.isEmpty()) "Subtitle tracks load with the video" else "Subtitles you can switch · ${available.joinToString(", ")}")
+                            source.quality?.let { append(" · $it") }
+                        },
+                        selected = selected,
+                        onClick = { onSelect(source) },
+                    )
+                }
+            }
         }
     }
 }
