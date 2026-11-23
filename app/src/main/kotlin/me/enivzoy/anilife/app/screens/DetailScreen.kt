@@ -67,7 +67,10 @@ import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
+import me.enivzoy.anilife.app.data.AnimeVideoSource
+import me.enivzoy.anilife.app.data.MediaAutoDetector
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.AudioType
 import me.enivzoy.anilife.app.ui.AnimePosterCard
 import me.enivzoy.anilife.app.ui.AnimeRow
 import me.enivzoy.anilife.app.ui.Chip
@@ -76,6 +79,7 @@ import me.enivzoy.anilife.app.ui.LoadState
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.PosterSkeleton
 import me.enivzoy.anilife.app.ui.RemoteImage
+import me.enivzoy.anilife.app.ui.Resolution
 import me.enivzoy.anilife.app.ui.Shimmer
 import me.enivzoy.anilife.app.ui.cardMeta
 import me.enivzoy.anilife.app.ui.loadState
@@ -108,7 +112,9 @@ fun DetailScreen(
     var state by remember(id) { mutableStateOf<LoadState<AnimeDetail>>(LoadState.Loading) }
     var showDownloadDialog by remember(id) { mutableStateOf(false) }
     var loadedDetail by remember(id) { mutableStateOf<AnimeDetail?>(null) }
+    var downloadNotice by remember(id) { mutableStateOf<Pair<String, String>?>(null) }
     val library by repository.libraryEntries.collectAsState()
+    val localEpisodes by repository.localEpisodes.collectAsState()
     val aniListUser by AniListSync.user.collectAsState()
     val aniListEntries by AniListSync.entries.collectAsState()
     val scope = rememberCoroutineScope()
@@ -231,7 +237,10 @@ fun DetailScreen(
     }
     if (showDownloadDialog && queueManager != null && loadedDetail != null) {
         val d = loadedDetail!!
-        val downloaded = emptySet<Int>() // TODO: check local episodes
+        val downloaded = localEpisodes
+            .filter { it.anime.id == d.id || MediaAutoDetector.matchScore(d.title, it.anime) >= 0.55 }
+            .map { it.episode.toInt() }
+            .toSet()
         DownloadConfigDialog(
             detail = d,
             downloadedEpisodeNumbers = downloaded,
@@ -240,17 +249,50 @@ fun DetailScreen(
             onDismiss = { showDownloadDialog = false },
             onConfirm = { config ->
                 showDownloadDialog = false
-                // Enqueue downloads
-                config.episodeNumbers.forEach { ep ->
-                    queueManager.enqueue(
-                        title = d.title,
-                        episode = ep.toDouble(),
-                        url = "", // URL needs to be resolved
-                        audio = config.audio.name.lowercase(),
-                        downloadRoot = config.saveDirectory.let(java.nio.file.Path::of),
-                        anime = d.toCard(),
-                        episodeTitle = null,
-                    )
+                scope.launch {
+                    val titles = listOfNotNull(d.title, d.titleRomaji, d.titleNative) + d.synonyms
+                    val dub = config.audio == AudioType.Dub
+                    var queued = 0
+                    config.episodeNumbers.forEach { episode ->
+                        val sources = try {
+                            providers.sources(d.id, d.malId, titles, episode.toDouble(), dub)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            emptyList()
+                        }
+                        val source = pickDownloadSource(sources, config.resolution, config.firstChoiceServer)
+                            ?: return@forEach
+                        queueManager.enqueue(
+                            title = d.title,
+                            episode = episode.toDouble(),
+                            url = source.url,
+                            audio = config.audio.name.lowercase(),
+                            downloadRoot = java.nio.file.Path.of(config.saveDirectory),
+                            anime = d.toCard(),
+                            episodeTitle = null,
+                        )
+                        queued++
+                    }
+                    if (queued == 0) {
+                        downloadNotice = "Couldn't queue downloads" to
+                            "No direct video-file source was found. Provider streams are HLS-only for this title."
+                    }
+                }
+            },
+        )
+    }
+    downloadNotice?.let { message ->
+        AlertDialog(
+            onDismissRequest = { downloadNotice = null },
+            containerColor = AniLifeColors.Card,
+            titleContentColor = AniLifeColors.Foreground,
+            textContentColor = AniLifeColors.MutedForeground,
+            title = { Text(message.first, fontWeight = FontWeight.SemiBold) },
+            text = { Text(message.second, fontSize = 14.sp, lineHeight = 21.sp) },
+            confirmButton = {
+                TextButton(onClick = { downloadNotice = null }) {
+                    Text("Close", color = AniLifeColors.Primary, fontWeight = FontWeight.SemiBold)
                 }
             },
         )
@@ -771,5 +813,39 @@ private fun DetailSkeleton() {
             }
         }
     }
+}
+
+private fun pickDownloadSource(
+    sources: List<AnimeVideoSource>,
+    resolution: Resolution,
+    firstChoiceServer: String,
+): AnimeVideoSource? {
+    val direct = sources.filter { directVideoFile(it.url) }
+    if (direct.isEmpty()) return null
+    val preferred = if (firstChoiceServer == "Auto") {
+        direct
+    } else {
+        direct.filter {
+            it.server.contains(firstChoiceServer, ignoreCase = true) ||
+                it.provider.contains(firstChoiceServer, ignoreCase = true)
+        }
+    }
+    val pool = preferred.ifEmpty { direct }
+    val cap = when (resolution) {
+        Resolution.Auto, Resolution.P1080 -> 1080
+        Resolution.P720 -> 720
+        Resolution.P480 -> 480
+        Resolution.P360 -> 360
+    }
+    return pool.filter { sourceHeight(it.quality) <= cap }.maxByOrNull { sourceHeight(it.quality) }
+        ?: pool.minByOrNull { sourceHeight(it.quality) }
+}
+
+private fun sourceHeight(quality: String?): Int =
+    Regex("(\\d{3,4})").find(quality.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+
+private fun directVideoFile(url: String): Boolean {
+    val path = runCatching { java.net.URI(url).path }.getOrNull().orEmpty().lowercase()
+    return listOf(".mp4", ".mkv", ".m4v", ".webm", ".avi", ".mov", ".ts").any { path.endsWith(it) }
 }
 
