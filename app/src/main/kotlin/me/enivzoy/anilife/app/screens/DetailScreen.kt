@@ -271,12 +271,13 @@ fun DetailScreen(
                             downloadRoot = java.nio.file.Path.of(config.saveDirectory),
                             anime = d.toCard(),
                             episodeTitle = null,
+                            headers = source.headers,
                         )
                         queued++
                     }
                     if (queued == 0) {
                         downloadNotice = "Couldn't queue downloads" to
-                            "No direct video-file source was found. Provider streams are HLS-only for this title."
+                            "No downloadable video source was found for this title."
                     }
                 }
             },
@@ -819,16 +820,17 @@ private fun pickDownloadSource(
     firstChoiceServer: String,
 ): AnimeVideoSource? {
     val direct = sources.filter { directVideoFile(it.url) }
-    if (direct.isEmpty()) return null
+    val downloadable = direct.ifEmpty { sources.filter { streamSource(it) } }
+    if (downloadable.isEmpty()) return null
     val preferred = if (firstChoiceServer == "Auto") {
-        direct
+        downloadable
     } else {
-        direct.filter {
+        downloadable.filter {
             it.server.contains(firstChoiceServer, ignoreCase = true) ||
                 it.provider.contains(firstChoiceServer, ignoreCase = true)
         }
     }
-    val pool = preferred.ifEmpty { direct }
+    val pool = preferred.ifEmpty { downloadable }
     val cap = when (resolution) {
         Resolution.Auto, Resolution.P1080 -> 1080
         Resolution.P720 -> 720
@@ -846,4 +848,9 @@ private fun directVideoFile(url: String): Boolean {
     val path = runCatching { java.net.URI(url).path }.getOrNull().orEmpty().lowercase()
     return listOf(".mp4", ".mkv", ".m4v", ".webm", ".avi", ".mov", ".ts").any { path.endsWith(it) }
 }
+
+private fun streamSource(source: AnimeVideoSource): Boolean =
+    source.format.equals("hls", ignoreCase = true) ||
+        source.format.equals("dash", ignoreCase = true) ||
+        listOf(".m3u8", ".mpd").any { source.url.contains(it, ignoreCase = true) }
 

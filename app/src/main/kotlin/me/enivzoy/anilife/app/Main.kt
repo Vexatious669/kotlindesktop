@@ -67,6 +67,7 @@ fun main() {
             applyDarkTitleBar(window)
         }
         AniLifeTheme(appSettings) {
+            LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
             var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
             if (!setupComplete) {
                 SetupScreen(

@@ -25,6 +25,7 @@ data class DownloadJob(
     val downloadRoot: Path?,
     val anime: AnimeCard? = null,
     val episodeTitle: String? = null,
+    val headers: Map<String, String> = emptyMap(),
     val status: DownloadStatus = DownloadStatus.Queued,
     val downloaded: Long = 0L,
     val total: Long? = null,
@@ -51,6 +52,7 @@ class DownloadQueueManager(
         downloadRoot: Path?,
         anime: AnimeCard? = null,
         episodeTitle: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): String {
         val job = DownloadJob(
             title = title,
@@ -60,6 +62,7 @@ class DownloadQueueManager(
             downloadRoot = downloadRoot,
             anime = anime,
             episodeTitle = episodeTitle,
+            headers = headers,
         )
         _jobs.update { it + job }
         launchJob(job)
@@ -77,6 +80,7 @@ class DownloadQueueManager(
                         episode = job.episode,
                         audio = job.audio,
                         downloadRoot = job.downloadRoot,
+                        headers = job.headers,
                         onProgress = { downloaded, total ->
                             _jobs.update { list -> list.map { if (it.id == job.id) it.copy(downloaded = downloaded, total = total) else it } }
                         },
