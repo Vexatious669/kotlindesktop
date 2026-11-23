@@ -17,6 +17,7 @@ import java.util.zip.ZipInputStream
 import kotlin.coroutines.coroutineContext
 
 private const val MODEL = "realesr-animevideov3"
+private const val MODEL_SCALE = 4
 private const val LINUX_ARCHIVE = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
 private const val MAC_ARCHIVE = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip"
 
@@ -47,7 +48,7 @@ class AnimeUpscaler {
                 run(
                     listOf(
                         tools.upscaler, "-i", frames.toString(), "-o", upscaled.toString(),
-                        "-n", MODEL, "-s", "4", "-f", "png",
+                        "-n", MODEL, "-s", MODEL_SCALE.toString(), "-f", "png",
                     ),
                 ) {
                     val current = countFrames(upscaled)
@@ -99,7 +100,7 @@ class AnimeUpscaler {
         }
         if (Files.isRegularFile(installed)) {
             Files.createDirectories(directory.resolve("models"))
-            listOf("$MODEL.param", "$MODEL.bin").forEach { name ->
+            listOf("$MODEL-x$MODEL_SCALE.param", "$MODEL-x$MODEL_SCALE.bin").forEach { name ->
                 javaClass.getResourceAsStream("/upscaler/models/$name")?.use { source ->
                     Files.copy(source, directory.resolve("models").resolve(name), StandardCopyOption.REPLACE_EXISTING)
                 }
@@ -122,8 +123,8 @@ class AnimeUpscaler {
         }
         require(Files.isRegularFile(installed)) { "The upscaler download didn't contain $executable." }
         installed.toFile().setExecutable(true, false)
-        require(Files.isRegularFile(directory.resolve("models").resolve("$MODEL.param"))) {
-            "The upscaler download didn't contain the $MODEL model."
+        require(Files.isRegularFile(directory.resolve("models").resolve("$MODEL-x$MODEL_SCALE.param"))) {
+            "The upscaler download didn't contain the $MODEL-x$MODEL_SCALE model."
         }
         return installed.toString()
     }

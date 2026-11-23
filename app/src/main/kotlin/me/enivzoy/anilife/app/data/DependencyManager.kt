@@ -190,8 +190,8 @@ class DependencyManager(
             Dependency.FFMPEG -> listOf(ffmpegDir.resolve("ffmpeg.exe"), ffmpegDir.resolve("ffprobe.exe"))
             Dependency.UPSCALER -> listOf(
                 upscalerDir.resolve("realesrgan-ncnn-vulkan.exe"),
-                upscalerDir.resolve("models/realesr-animevideov3.param"),
-                upscalerDir.resolve("models/realesr-animevideov3.bin"),
+                upscalerDir.resolve("models/realesr-animevideov3-x4.param"),
+                upscalerDir.resolve("models/realesr-animevideov3-x4.bin"),
             )
         }
         return binaries.all(Files::isRegularFile)

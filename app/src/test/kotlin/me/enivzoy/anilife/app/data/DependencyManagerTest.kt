@@ -2,7 +2,10 @@ package me.enivzoy.anilife.app.data
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import java.net.InetSocketAddress
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -125,6 +128,36 @@ class DependencyManagerTest {
         assertEquals("https://example.com/ffmpeg.zip", source.url)
         assertEquals("def456", source.sha256)
         assertEquals("latest", source.version)
+    }
+
+    @Test
+    fun recognizesInstalledUpscalerScaleModels() {
+        if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) return
+        val directory = Files.createTempDirectory("anilife-dependencies-")
+        try {
+            val files = listOf(
+                "jre/bin/java.exe",
+                "mpv/libmpv-2.dll",
+                "ffmpeg/ffmpeg.exe",
+                "ffmpeg/ffprobe.exe",
+                "upscaler/realesrgan-ncnn-vulkan.exe",
+                "upscaler/models/realesr-animevideov3-x4.param",
+                "upscaler/models/realesr-animevideov3-x4.bin",
+            )
+            files.forEach { relative ->
+                val file = directory.resolve(relative)
+                Files.createDirectories(file.parent)
+                Files.writeString(file, "installed")
+            }
+            Dependency.entries.forEach { dependency ->
+                Files.writeString(directory.resolve("${dependency.name.lowercase()}.installed"), "version|sha256")
+            }
+            val manager = DependencyManager(CoroutineScope(Dispatchers.Unconfined), directory.toFile())
+
+            assertTrue(manager.isSetupComplete())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
     }
 
     @Test
