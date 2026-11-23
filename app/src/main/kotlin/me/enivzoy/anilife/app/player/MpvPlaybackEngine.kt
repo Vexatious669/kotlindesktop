@@ -112,6 +112,7 @@ class MpvPlaybackEngine(
     @Volatile private var lastPresenceReportAt = 0L
     @Volatile private var lastMpvPosition = 0.0
     @Volatile private var lastMpvPositionAt = 0L
+    @Volatile private var lastFrameAt = 0L
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -141,6 +142,13 @@ class MpvPlaybackEngine(
                     }
                 }
                 if (target.needsRender()) {
+                    // Limit frame rate to ~30fps to reduce memory pressure from ImageBitmap allocation.
+                    val now = System.currentTimeMillis()
+                    if (now - lastFrameAt < 33L) {
+                        Thread.sleep(33L - (now - lastFrameAt))
+                        continue
+                    }
+                    lastFrameAt = now
                     val bytes = target.render() ?: continue
                     videoFrame = SkiaImage.makeRaster(
                         ImageInfo(renderWidth, renderHeight, ColorType.BGRA_8888, ColorAlphaType.OPAQUE),
