@@ -394,6 +394,8 @@ fun AniLifeApp(
                         onBack = ::goBack,
                         onOpen = { navigateTo(Screen.Detail(it)) },
                         onWatch = { detail, episode -> navigateTo(Screen.Watch(detail, episode)) },
+                        queueManager = downloadQueue,
+                        settings = settings,
                     )
                     is Screen.Watch -> AnimeWatchScreen(
                         detail = target.detail,

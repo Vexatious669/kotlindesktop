@@ -30,10 +30,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.BookmarkAdd
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AniListRepository
+import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.ui.AniLifeColors
@@ -96,9 +99,13 @@ fun DetailScreen(
     onBack: () -> Unit,
     onOpen: (Long) -> Unit,
     onWatch: (AnimeDetail, Double?) -> Unit,
+    queueManager: me.enivzoy.anilife.app.data.DownloadQueueManager? = null,
+    settings: AppSettings? = null,
 ) {
     var attempt by remember(id) { mutableIntStateOf(0) }
     var state by remember(id) { mutableStateOf<LoadState<AnimeDetail>>(LoadState.Loading) }
+    var showDownloadDialog by remember(id) { mutableStateOf(false) }
+    var loadedDetail by remember(id) { mutableStateOf<AnimeDetail?>(null) }
     val library by repository.libraryEntries.collectAsState()
     val aniListUser by AniListSync.user.collectAsState()
     val aniListEntries by AniListSync.entries.collectAsState()
@@ -109,7 +116,9 @@ fun DetailScreen(
 
     LaunchedEffect(id, attempt) {
         state = LoadState.Loading
-        state = loadState { repository.detail(id) }
+        val result = loadState { repository.detail(id) }
+        state = result
+        if (result is LoadState.Ready) loadedDetail = result.value
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -136,6 +145,9 @@ fun DetailScreen(
                     onEditAniListEntry = if (remoteEntry != null && aniListUser != null) {
                         ({ showEntryEditor = true })
                     } else null,
+                    queueManager = queueManager,
+                    settings = settings,
+                    onDownloadClick = { showDownloadDialog = true },
                     onToggleLibrary = {
                     val remoteEntry = aniListEntries.firstOrNull { it.anime.id == current.value.id }
                     if (aniListUser != null) {
@@ -215,6 +227,46 @@ fun DetailScreen(
 
         BackButton(onBack, Modifier.align(Alignment.TopStart).padding(16.dp))
     }
+    if (showDownloadDialog && queueManager != null && loadedDetail != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDownloadDialog = false },
+            containerColor = AniLifeColors.Card,
+            titleContentColor = AniLifeColors.Foreground,
+            textContentColor = AniLifeColors.MutedForeground,
+            title = { Text("Download episode", fontWeight = FontWeight.SemiBold) },
+            text = {
+                Column(Modifier.widthIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter the direct video URL for an episode of ${loadedDetail?.title ?: ""}.", fontSize = 12.sp, lineHeight = 18.sp)
+                    var url by remember { mutableStateOf("") }
+                    var episode by remember { mutableStateOf("1") }
+                    val epNum = episode.toDoubleOrNull()
+                    OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Direct HTTP(S) video URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Button(
+                        onClick = {
+                            val d = loadedDetail ?: return@Button
+                            if (epNum != null && url.startsWith("http", ignoreCase = true)) {
+                                queueManager.enqueue(
+                                    title = d.title,
+                                    episode = epNum,
+                                    url = url.trim(),
+                                    audio = settings?.audio ?: "sub",
+                                    downloadRoot = settings?.downloadDirectory?.let(java.nio.file.Path::of),
+                                    anime = d.toCard(),
+                                    episodeTitle = null,
+                                )
+                                showDownloadDialog = false
+                            }
+                        },
+                        enabled = epNum != null && epNum > 0.0 && url.startsWith("http", ignoreCase = true),
+                        colors = ButtonDefaults.buttonColors(containerColor = AniLifeColors.Primary, contentColor = AniLifeColors.PrimaryForeground),
+                    ) { Text("Download", fontWeight = FontWeight.SemiBold) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showDownloadDialog = false }) { Text("Cancel", color = AniLifeColors.MutedForeground) } },
+        )
+    }
 }
 
 @Composable
@@ -251,6 +303,9 @@ private fun DetailContent(
     libraryActionPending: Boolean,
     onToggleLibrary: () -> String?,
     onEditAniListEntry: (() -> Unit)? = null,
+    queueManager: me.enivzoy.anilife.app.data.DownloadQueueManager? = null,
+    settings: AppSettings? = null,
+    onDownloadClick: () -> Unit = {},
 ) {
     var expanded by remember(detail.id) { mutableStateOf(false) }
     var notice by remember(detail.id) { mutableStateOf<Pair<String, String>?>(null) }
@@ -406,6 +461,22 @@ private fun DetailContent(
                                 )
                             }
                         }
+                        if (queueManager != null) {
+                            Button(
+                                onClick = { onDownloadClick() },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.height(44.dp),
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AniLifeColors.Secondary,
+                                    contentColor = AniLifeColors.Foreground,
+                                ),
+                            ) {
+                                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Download", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                         if (libraryActionPending) {
                             Text("Updating your list…", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
                         }
@@ -495,7 +566,6 @@ private fun DetailContent(
         }
         PageScrollbar(rememberScrollbarAdapter(scrollState), Modifier.align(Alignment.CenterEnd))
     }
-
     LaunchedEffect(libraryActionError) {
         if (libraryActionError != null) notice = "Couldn't update AniList" to libraryActionError
     }
