@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AniListRepository
+import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
@@ -228,43 +229,29 @@ fun DetailScreen(
         BackButton(onBack, Modifier.align(Alignment.TopStart).padding(16.dp))
     }
     if (showDownloadDialog && queueManager != null && loadedDetail != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showDownloadDialog = false },
-            containerColor = AniLifeColors.Card,
-            titleContentColor = AniLifeColors.Foreground,
-            textContentColor = AniLifeColors.MutedForeground,
-            title = { Text("Download episode", fontWeight = FontWeight.SemiBold) },
-            text = {
-                Column(Modifier.widthIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Enter the direct video URL for an episode of ${loadedDetail?.title ?: ""}.", fontSize = 12.sp, lineHeight = 18.sp)
-                    var url by remember { mutableStateOf("") }
-                    var episode by remember { mutableStateOf("1") }
-                    val epNum = episode.toDoubleOrNull()
-                    OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Direct HTTP(S) video URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Button(
-                        onClick = {
-                            val d = loadedDetail ?: return@Button
-                            if (epNum != null && url.startsWith("http", ignoreCase = true)) {
-                                queueManager.enqueue(
-                                    title = d.title,
-                                    episode = epNum,
-                                    url = url.trim(),
-                                    audio = settings?.audio ?: "sub",
-                                    downloadRoot = settings?.downloadDirectory?.let(java.nio.file.Path::of),
-                                    anime = d.toCard(),
-                                    episodeTitle = null,
-                                )
-                                showDownloadDialog = false
-                            }
-                        },
-                        enabled = epNum != null && epNum > 0.0 && url.startsWith("http", ignoreCase = true),
-                        colors = ButtonDefaults.buttonColors(containerColor = AniLifeColors.Primary, contentColor = AniLifeColors.PrimaryForeground),
-                    ) { Text("Download", fontWeight = FontWeight.SemiBold) }
+        val d = loadedDetail!!
+        val downloaded = emptySet<Int>() // TODO: check local episodes
+        DownloadConfigDialog(
+            detail = d,
+            downloadedEpisodeNumbers = downloaded,
+            defaultStartEpisode = 1,
+            defaultSaveDirectory = settings?.downloadDirectory ?: DirectMediaDownloader.defaultDownloadDirectory().toString(),
+            onDismiss = { showDownloadDialog = false },
+            onConfirm = { config ->
+                showDownloadDialog = false
+                // Enqueue downloads
+                config.episodeNumbers.forEach { ep ->
+                    queueManager.enqueue(
+                        title = d.title,
+                        episode = ep.toDouble(),
+                        url = "", // URL needs to be resolved
+                        audio = config.audio.name.lowercase(),
+                        downloadRoot = config.saveDirectory.let(java.nio.file.Path::of),
+                        anime = d.toCard(),
+                        episodeTitle = null,
+                    )
                 }
             },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showDownloadDialog = false }) { Text("Cancel", color = AniLifeColors.MutedForeground) } },
         )
     }
 }
