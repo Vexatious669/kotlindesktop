@@ -1,5 +1,6 @@
 ﻿package me.enivzoy.anilife.app.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,7 +36,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -400,22 +401,25 @@ private fun DetailContent(
                             }
                         }
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Button(
                                 onClick = { onWatch(null) },
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.height(44.dp),
                                 contentPadding = PaddingValues(horizontal = 20.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = AniLifeColors.Primary,
-                                    contentColor = AniLifeColors.PrimaryForeground,
+                                    containerColor = Color.White,
+                                    contentColor = Color(0xFF0B0B0C),
                                 ),
                             ) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Text("Watch now", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             }
-                            Button(
+                            OutlinedButton(
                                 onClick = {
                                     onToggleLibrary()?.let { message ->
                                         notice = "Couldn't update library" to message
@@ -424,10 +428,10 @@ private fun DetailContent(
                                 enabled = !libraryActionPending,
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.height(44.dp),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
                                 contentPadding = PaddingValues(horizontal = 20.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AniLifeColors.Secondary,
-                                    contentColor = AniLifeColors.Foreground,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color.White.copy(alpha = 0.9f),
                                 ),
                             ) {
                                 Icon(
@@ -447,21 +451,21 @@ private fun DetailContent(
                                     fontWeight = FontWeight.SemiBold,
                                 )
                             }
-                        }
-                        if (queueManager != null) {
-                            Button(
-                                onClick = { onDownloadClick() },
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.height(44.dp),
-                                contentPadding = PaddingValues(horizontal = 20.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AniLifeColors.Secondary,
-                                    contentColor = AniLifeColors.Foreground,
-                                ),
-                            ) {
-                                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Download", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            if (queueManager != null) {
+                                Button(
+                                    onClick = { onDownloadClick() },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.height(44.dp),
+                                    contentPadding = PaddingValues(horizontal = 20.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF26262A),
+                                        contentColor = Color.White,
+                                    ),
+                                ) {
+                                    Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Download", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                         if (libraryActionPending) {
