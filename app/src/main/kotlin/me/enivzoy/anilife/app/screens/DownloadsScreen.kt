@@ -461,14 +461,14 @@ private fun DirectDownloadDialog(
         containerColor = AniLifeColors.Card,
         titleContentColor = AniLifeColors.Foreground,
         textContentColor = AniLifeColors.MutedForeground,
-        title = { Text("Download a direct video URL", fontWeight = FontWeight.SemiBold) },
+        title = { Text("Download a video URL", fontWeight = FontWeight.SemiBold) },
         text = {
             Column(Modifier.widthIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Only downloads direct video files you provide. HLS/DASH playlists can be played from the player instead.", fontSize = 12.sp, lineHeight = 18.sp)
+                Text("Downloads direct video files and HLS/DASH playlists. Playlists are saved with FFmpeg.", fontSize = 12.sp, lineHeight = 18.sp)
                 if (error != null) Text(error, color = AniLifeColors.Destructive, fontSize = 12.sp, lineHeight = 18.sp)
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Direct HTTP(S) video URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
             }
         },

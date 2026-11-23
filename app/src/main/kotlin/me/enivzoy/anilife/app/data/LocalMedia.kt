@@ -17,7 +17,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -409,22 +412,27 @@ object DirectMediaDownloader {
         downloadRoot: Path = defaultDownloadDirectory(),
         anime: AnimeCard? = null,
         episodeTitle: String? = null,
+        headers: Map<String, String> = emptyMap(),
         onProgress: ((Long, Long?) -> Unit)? = null,
     ): LocalEpisode =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             require(animeTitle.isNotBlank()) { "Enter the anime title." }
             require(episode > 0.0 && episode.isFinite()) { "Enter a valid episode number." }
-            val uri = URI(url.trim())
+            val trimmedUrl = url.trim()
+            val uri = URI(trimmedUrl)
             require(uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
-                "Only a direct HTTP(S) video-file URL can be downloaded. Use Play for HLS/DASH streams."
+                "Only HTTP(S) video URLs can be downloaded."
             }
             require(!uri.host.isNullOrBlank()) { "The download URL must include a host name." }
             val remoteName = Path.of(uri.path.orEmpty()).fileName?.toString().orEmpty()
             val extension = remoteName.substringAfterLast('.', "")
                 .takeIf { remoteName.contains('.') }
                 ?.let { ".$it" }?.lowercase().orEmpty()
-            require(extension in videoExtensions) {
-                "The URL must point directly to a video file (.mp4, .mkv, .webm, .ts, and similar)."
+            if (extension !in videoExtensions) {
+                require(isStreamUrl(trimmedUrl)) {
+                    "The URL must point to a video file (.mp4, .mkv, .webm, .ts) or an HLS/DASH playlist."
+                }
+                return@withContext downloadStream(trimmedUrl, headers, animeTitle, episode, audio, downloadRoot, anime, episodeTitle, onProgress)
             }
 
             val directory = downloadRoot.resolve(safeName(animeTitle)).toFile()
@@ -436,12 +444,15 @@ object DirectMediaDownloader {
             val destination = File(directory, "${safeName(animeTitle)} - E$episodeLabel$safeEpisodeTitle.${extension.removePrefix(".")}")
             val temporary = File(directory, "${destination.name}.${java.util.UUID.randomUUID()}.part")
             try {
-                val request = HttpRequest.newBuilder(uri)
+                val requestBuilder = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofMinutes(30))
-                    .header("User-Agent", "AniLife/1.0")
                     .header("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
                     .GET()
-                    .build()
+                if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+                    requestBuilder.header("User-Agent", "AniLife/1.0")
+                }
+                headers.forEach { (name, value) -> requestBuilder.header(name, value) }
+                val request = requestBuilder.build()
                 val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
                 require(response.statusCode() in 200..299) { "The video server returned HTTP ${response.statusCode()}." }
                 val contentLength = response.headers().firstValue("Content-Length")
@@ -464,38 +475,164 @@ object DirectMediaDownloader {
                 } catch (_: AtomicMoveNotSupportedException) {
                     Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
                 }
-                val stableId = anime?.id ?: (java.util.UUID.nameUUIDFromBytes(animeTitle.trim().lowercase().toByteArray()).mostSignificantBits and Long.MAX_VALUE)
-                    .coerceAtLeast(1L)
-                // Save info.json in Resources folder
-                val infoJson = buildString {
-                    append("{\n")
-                    append("  \"animeId\": $stableId,\n")
-                    append("  \"title\": \"${animeTitle.trim().replace("\"", "\\\\\"")}\",\n")
-                    append("  \"episode\": $episode,\n")
-                    append("  \"episodeTitle\": \"${(episodeTitle ?: "").replace("\"", "\\\\\"")}\",\n")
-                    append("  \"audio\": \"${if (audio == "dub") "dub" else "sub"}\",\n")
-                    append("  \"fileName\": \"${destination.name}\",\n")
-                    append("  \"bytes\": ${Files.size(destination.toPath())},\n")
-                    append("  \"coverUrl\": \"${anime?.cover ?: ""}\",\n")
-                    append("  \"bannerUrl\": \"${anime?.banner ?: ""}\"\n")
-                    append("}\n")
-                }
-                File(resourcesDir, "info.json").writeText(infoJson)
-                // Update saved.lib in download root
-                updateSavedLib(downloadRoot, anime ?: AnimeCard(id = stableId, title = animeTitle.trim()), episode)
-                LocalEpisode(
-                    anime = anime ?: AnimeCard(id = stableId, title = animeTitle.trim()),
-                    episode = episode,
-                    audio = if (audio == "dub") "dub" else "sub",
-                    path = destination.toPath(),
-                    bytes = Files.size(destination.toPath()),
-                    episodeTitle = episodeTitle?.takeIf(String::isNotBlank),
-                )
+                finalizeDownload(destination, downloadRoot, animeTitle, episode, audio, anime, episodeTitle)
             } catch (error: Throwable) {
                 Files.deleteIfExists(temporary.toPath())
                 throw error
             }
         }
+
+    private suspend fun downloadStream(
+        url: String,
+        headers: Map<String, String>,
+        animeTitle: String,
+        episode: Double,
+        audio: String,
+        downloadRoot: Path,
+        anime: AnimeCard?,
+        episodeTitle: String?,
+        onProgress: ((Long, Long?) -> Unit)?,
+    ): LocalEpisode {
+        val ffmpeg = findFfmpeg() ?: error("FFmpeg wasn't found. Run setup or add ffmpeg to PATH.")
+        val directory = downloadRoot.resolve(safeName(animeTitle)).toFile()
+        Files.createDirectories(directory.toPath())
+        val episodeLabel = if (episode % 1.0 == 0.0) episode.toInt().toString() else episode.toString()
+        val safeEpisodeTitle = episodeTitle?.takeIf(String::isNotBlank)?.let { " - ${safeName(it)}" }.orEmpty()
+        val destination = File(directory, "${safeName(animeTitle)} - E$episodeLabel$safeEpisodeTitle.mkv")
+        val temporary = File(directory, "${destination.name}.${java.util.UUID.randomUUID()}.part")
+        val userAgent = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
+        val referer = headers.entries.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
+        val otherHeaders = headers.filterKeys { key ->
+            !key.equals("User-Agent", ignoreCase = true) && !key.equals("Referer", ignoreCase = true)
+        }
+        val command = buildList {
+            add(ffmpeg)
+            add("-nostdin")
+            add("-y")
+            add("-loglevel")
+            add("error")
+            add("-protocol_whitelist")
+            add("file,http,https,tcp,tls,crypto,data")
+            if (userAgent != null) {
+                add("-user_agent")
+                add(userAgent)
+            }
+            if (referer != null) {
+                add("-referer")
+                add(referer)
+            }
+            if (otherHeaders.isNotEmpty()) {
+                add("-headers")
+                add(otherHeaders.entries.joinToString("\r\n") { "${it.key}: ${it.value}" } + "\r\n")
+            }
+            add("-i")
+            add(url)
+            add("-map")
+            add("0:v:0")
+            add("-map")
+            add("0:a?")
+            add("-map")
+            add("0:s?")
+            add("-c")
+            add("copy")
+            add("-progress")
+            add("pipe:1")
+            add("-f")
+            add("matroska")
+            add(temporary.absolutePath)
+        }
+        val process = ProcessBuilder(command).redirectErrorStream(true).start()
+        try {
+            var lastSize = -1L
+            val diagnostics = mutableListOf<String>()
+            process.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                while (true) {
+                    if (!coroutineContext.isActive) throw CancellationException("Download cancelled.")
+                    val line = reader.readLine() ?: break
+                    if (line.startsWith("total_size=")) {
+                        val size = line.substringAfter('=').trim().toLongOrNull()
+                        if (size != null && size >= 0L && size != lastSize) {
+                            lastSize = size
+                            onProgress?.invoke(size, null)
+                        }
+                    } else if (!line.startsWith("progress=") && line.isNotBlank()) {
+                        diagnostics.add(line)
+                    }
+                }
+            }
+            val exit = process.waitFor()
+            if (!coroutineContext.isActive) throw CancellationException("Download cancelled.")
+            require(exit == 0) {
+                "FFmpeg exited with code $exit. ${diagnostics.takeLast(3).joinToString(" ").take(240)}"
+            }
+            require(Files.isRegularFile(temporary.toPath()) && Files.size(temporary.toPath()) > 0L) {
+                "The stream download produced an empty file."
+            }
+            try {
+                Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            return finalizeDownload(destination, downloadRoot, animeTitle, episode, audio, anime, episodeTitle)
+        } catch (error: Throwable) {
+            Files.deleteIfExists(temporary.toPath())
+            throw error
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
+    }
+
+    internal fun isStreamUrl(url: String): Boolean =
+        listOf(".m3u8", ".mpd").any { url.contains(it, ignoreCase = true) }
+
+    private fun findFfmpeg(): String? {
+        val executable = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "ffmpeg.exe" else "ffmpeg"
+        val directories = listOfNotNull(
+            System.getProperty("AniLife.ffmpeg.dir"),
+            dependencyDirectory().resolve("ffmpeg").toString(),
+        ) + System.getenv("PATH")?.split(File.pathSeparator).orEmpty()
+        return directories.map { File(it, executable) }
+            .firstOrNull { it.isFile && it.canExecute() }
+            ?.absolutePath
+    }
+
+    private fun finalizeDownload(
+        destination: File,
+        downloadRoot: Path,
+        animeTitle: String,
+        episode: Double,
+        audio: String,
+        anime: AnimeCard?,
+        episodeTitle: String?,
+    ): LocalEpisode {
+        val stableId = anime?.id ?: (java.util.UUID.nameUUIDFromBytes(animeTitle.trim().lowercase().toByteArray()).mostSignificantBits and Long.MAX_VALUE)
+            .coerceAtLeast(1L)
+        val resourcesDir = File(destination.parentFile, "Resources")
+        Files.createDirectories(resourcesDir.toPath())
+        val infoJson = buildString {
+            append("{\n")
+            append("  \"animeId\": $stableId,\n")
+            append("  \"title\": \"${animeTitle.trim().replace("\"", "\\\\\"")}\",\n")
+            append("  \"episode\": $episode,\n")
+            append("  \"episodeTitle\": \"${(episodeTitle ?: "").replace("\"", "\\\\\"")}\",\n")
+            append("  \"audio\": \"${if (audio == "dub") "dub" else "sub"}\",\n")
+            append("  \"fileName\": \"${destination.name}\",\n")
+            append("  \"bytes\": ${Files.size(destination.toPath())},\n")
+            append("  \"coverUrl\": \"${anime?.cover ?: ""}\",\n")
+            append("  \"bannerUrl\": \"${anime?.banner ?: ""}\"\n")
+            append("}\n")
+        }
+        File(resourcesDir, "info.json").writeText(infoJson)
+        updateSavedLib(downloadRoot, anime ?: AnimeCard(id = stableId, title = animeTitle.trim()), episode)
+        return LocalEpisode(
+            anime = anime ?: AnimeCard(id = stableId, title = animeTitle.trim()),
+            episode = episode,
+            audio = if (audio == "dub") "dub" else "sub",
+            path = destination.toPath(),
+            bytes = Files.size(destination.toPath()),
+            episodeTitle = episodeTitle?.takeIf(String::isNotBlank),
+        )
+    }
 
     private fun updateSavedLib(root: Path, anime: AnimeCard, episode: Double) {
         val libFile = root.resolve("saved.lib").toFile()
