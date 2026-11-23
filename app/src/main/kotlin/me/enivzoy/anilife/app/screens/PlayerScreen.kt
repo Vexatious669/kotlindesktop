@@ -71,6 +71,7 @@ import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.player.MpvPlaybackEngine
+import me.enivzoy.anilife.app.player.WakeLock
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.AnimeDetail
 import me.enivzoy.anilife.core.model.SkipTimes
@@ -211,6 +212,12 @@ fun PlayerScreen(
     val positionSeconds = engine?.positionSeconds ?: simulatedPosition
     val durationSeconds = engine?.durationSeconds?.takeIf { it > 0.0 } ?: fallbackDurationSeconds
     val isPlaying = engine?.isPlaying ?: simulatedPlaying
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) WakeLock.acquire() else WakeLock.release()
+    }
+    DisposableEffect(Unit) {
+        onDispose { WakeLock.release() }
+    }
 
     // The simulated timeline (no stream yet) still drives presence; a real engine reports itself.
     LaunchedEffect(engine, playbackInfo, simulatedPlaying, simulatedPosition, fallbackDurationSeconds) {
