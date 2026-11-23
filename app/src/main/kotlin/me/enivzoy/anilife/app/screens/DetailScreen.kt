@@ -453,8 +453,8 @@ private fun DetailContent(
                                 modifier = Modifier.height(44.dp),
                                 contentPadding = PaddingValues(horizontal = 20.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White,
-                                    contentColor = Color(0xFF0B0B0C),
+                                    containerColor = AniLifeColors.Primary,
+                                    contentColor = AniLifeColors.PrimaryForeground,
                                 ),
                             ) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -470,11 +470,9 @@ private fun DetailContent(
                                 enabled = !libraryActionPending,
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.height(44.dp),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                                border = BorderStroke(1.dp, AniLifeColors.Border),
                                 contentPadding = PaddingValues(horizontal = 20.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = Color.White.copy(alpha = 0.9f),
-                                ),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AniLifeColors.Foreground),
                             ) {
                                 Icon(
                                     Icons.Rounded.BookmarkAdd,
@@ -500,8 +498,8 @@ private fun DetailContent(
                                     modifier = Modifier.height(44.dp),
                                     contentPadding = PaddingValues(horizontal = 20.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF26262A),
-                                        contentColor = Color.White,
+                                        containerColor = AniLifeColors.Secondary,
+                                        contentColor = AniLifeColors.Foreground,
                                     ),
                                 ) {
                                     Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
