@@ -1,7 +1,11 @@
 package me.enivzoy.anilife.app.data
 
+import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpServer
+import java.net.InetSocketAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class DependencyManagerTest {
@@ -19,6 +23,43 @@ class DependencyManagerTest {
         )
         assertEquals("https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest", MPV_RELEASES)
         assertEquals("https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", FFMPEG_RELEASES)
+    }
+
+    @Test
+    fun fetchTextFollowsRedirects() {
+        val body = """{"tag_name":"latest","assets":[]}"""
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val port = server.address.port
+        server.createContext("/start") { exchange ->
+            exchange.responseHeaders.set("Location", "http://127.0.0.1:$port/target")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        server.createContext("/target") { exchange ->
+            respond(exchange, 200, body)
+        }
+        server.start()
+        try {
+            assertEquals(body, fetchText("http://127.0.0.1:$port/start"))
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun fetchTextRejectsNonSuccessStatus() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val port = server.address.port
+        server.createContext("/missing") { exchange ->
+            respond(exchange, 404, "not found")
+        }
+        server.start()
+        try {
+            val error = assertFailsWith<IllegalStateException> { fetchText("http://127.0.0.1:$port/missing") }
+            assertTrue(error.message.orEmpty().contains("404"))
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test
@@ -97,4 +138,11 @@ class DependencyManagerTest {
         assertEquals(UPSCALER_SHA256, source.sha256)
         assertEquals("v0.2.5.0", source.version)
     }
+}
+
+private fun respond(exchange: HttpExchange, status: Int, body: String) {
+    val bytes = body.toByteArray(Charsets.UTF_8)
+    exchange.responseHeaders.set("Content-Type", "application/json")
+    exchange.sendResponseHeaders(status, bytes.size.toLong())
+    exchange.responseBody.use { it.write(bytes) }
 }

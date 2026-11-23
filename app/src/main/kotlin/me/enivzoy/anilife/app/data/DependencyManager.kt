@@ -75,6 +75,39 @@ internal fun releaseAssetPattern(dependency: Dependency): Regex = when (dependen
 internal fun upscalerSource(): DependencySource =
     DependencySource(UPSCALER_ARCHIVE, UPSCALER_SHA256, UPSCALER_VERSION)
 
+internal fun fetchText(url: String): String {
+    val connection = openConnection(url, api = true, followRedirects = true, connectMs = 30_000, readMs = 30_000)
+    return try {
+        requireSuccess(connection)
+        connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    } finally {
+        connection.disconnect()
+    }
+}
+
+internal fun openConnection(
+    url: String,
+    api: Boolean,
+    followRedirects: Boolean,
+    connectMs: Int,
+    readMs: Int,
+): HttpURLConnection = (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+    instanceFollowRedirects = followRedirects
+    connectTimeout = connectMs
+    readTimeout = readMs
+    setRequestProperty("User-Agent", USER_AGENT)
+    setRequestProperty("Accept", if (api) "application/vnd.github+json" else "application/octet-stream")
+    if (api) setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+}
+
+internal fun requireSuccess(connection: HttpURLConnection) {
+    val code = connection.responseCode
+    if (code !in 200..299) {
+        val body = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        error("Request failed ($code): ${body.take(240).ifBlank { connection.url.host }}")
+    }
+}
+
 class DependencyManager(
     private val scope: CoroutineScope,
     private val localDir: File,
@@ -199,16 +232,6 @@ class DependencyManager(
         Dependency.UPSCALER -> upscalerSource()
     }
 
-    private fun fetchText(url: String): String {
-        val connection = openConnection(url, api = true, followRedirects = false, connectMs = 30_000, readMs = 30_000)
-        return try {
-            requireSuccess(connection)
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } finally {
-            connection.disconnect()
-        }
-    }
-
     private suspend fun download(
         source: DependencySource,
         target: Path,
@@ -295,29 +318,6 @@ class DependencyManager(
         val name = url.substringBefore('?').substringAfterLast('/')
         val extension = name.substringAfterLast('.', "").lowercase()
         return if (extension == "7z" || extension == "zip") ".$extension" else ".zip"
-    }
-
-    private fun openConnection(
-        url: String,
-        api: Boolean,
-        followRedirects: Boolean,
-        connectMs: Int,
-        readMs: Int,
-    ): HttpURLConnection = (URI(url).toURL().openConnection() as HttpURLConnection).apply {
-        instanceFollowRedirects = followRedirects
-        connectTimeout = connectMs
-        readTimeout = readMs
-        setRequestProperty("User-Agent", USER_AGENT)
-        setRequestProperty("Accept", if (api) "application/vnd.github+json" else "application/octet-stream")
-        if (api) setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-    }
-
-    private fun requireSuccess(connection: HttpURLConnection) {
-        val code = connection.responseCode
-        if (code in 400..599) {
-            val body = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            error("Request failed ($code): ${body.take(240).ifBlank { connection.url.host }}")
-        }
     }
 
     private fun findLibrary(root: Path, name: String): Path? = Files.walk(root).use { paths ->
