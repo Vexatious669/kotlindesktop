@@ -165,7 +165,11 @@ class DependencyManager(
         }
         return runCatching {
             Dependency.entries.forEach { dependency ->
-                if (!isInstalled(dependency)) install(dependency, onProgress)
+                if (isInstalled(dependency)) {
+                    state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f, error = null) }
+                } else {
+                    install(dependency, onProgress)
+                }
             }
             configurePaths()
         }

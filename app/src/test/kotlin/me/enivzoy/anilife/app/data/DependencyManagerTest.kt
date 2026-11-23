@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import kotlin.test.Test
@@ -155,6 +156,43 @@ class DependencyManagerTest {
             val manager = DependencyManager(CoroutineScope(Dispatchers.Unconfined), directory.toFile())
 
             assertTrue(manager.isSetupComplete())
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun marksAlreadyInstalledDependenciesReady() {
+        if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) return
+        val directory = Files.createTempDirectory("anilife-dependencies-")
+        try {
+            val files = listOf(
+                "jre/bin/java.exe",
+                "mpv/libmpv-2.dll",
+                "ffmpeg/ffmpeg.exe",
+                "ffmpeg/ffprobe.exe",
+                "upscaler/realesrgan-ncnn-vulkan.exe",
+                "upscaler/models/realesr-animevideov3-x4.param",
+                "upscaler/models/realesr-animevideov3-x4.bin",
+            )
+            files.forEach { relative ->
+                val file = directory.resolve(relative)
+                Files.createDirectories(file.parent)
+                Files.writeString(file, "installed")
+            }
+            Dependency.entries.forEach { dependency ->
+                Files.writeString(directory.resolve("${dependency.name.lowercase()}.installed"), "version|sha256")
+            }
+            val manager = DependencyManager(CoroutineScope(Dispatchers.Unconfined), directory.toFile())
+
+            val result = runBlocking { manager.downloadAndInstall { _, _ -> } }
+
+            assertTrue(result.isSuccess)
+            Dependency.entries.forEach { dependency ->
+                val state = requireNotNull(manager.states.value[dependency])
+                assertEquals(DependencyStatus.Installed, state.status)
+                assertEquals(1f, state.progress)
+            }
         } finally {
             directory.toFile().deleteRecursively()
         }
