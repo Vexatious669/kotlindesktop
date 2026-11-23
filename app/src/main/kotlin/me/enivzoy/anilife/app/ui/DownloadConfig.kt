@@ -1,7 +1,5 @@
 package me.enivzoy.anilife.app.ui
 
-import me.enivzoy.anilife.core.model.AnimeDetail
-
 enum class AudioType { Sub, Dub }
 
 enum class Resolution(val label: String, val factor: Float) {
@@ -18,4 +16,7 @@ data class DownloadConfig(
     val resolution: Resolution,
     val episodeNumbers: List<Int>,
     val saveDirectory: String,
+    val firstChoiceServer: String = "Auto",
+    val switchServers: Boolean = false,
+    val skipFiller: Boolean = false,
 )
