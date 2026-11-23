@@ -482,6 +482,51 @@ object DirectMediaDownloader {
             }
         }
 
+    internal fun streamArguments(
+        url: String,
+        headers: Map<String, String>,
+        outputPath: String,
+        container: String,
+    ): List<String> = buildList {
+        add("-nostdin")
+        add("-y")
+        add("-loglevel")
+        add("error")
+        // hls needs the network protocols whitelisted or ffmpeg exits with -22
+        add("-protocol_whitelist")
+        add("file,http,https,tcp,tls,crypto")
+        val userAgent = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
+        val referer = headers.entries.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
+        val otherHeaders = headers.filterKeys { key ->
+            !key.equals("User-Agent", ignoreCase = true) && !key.equals("Referer", ignoreCase = true)
+        }
+        if (userAgent != null) {
+            add("-user_agent")
+            add(userAgent)
+        }
+        if (referer != null) {
+            add("-referer")
+            add(referer)
+        }
+        if (otherHeaders.isNotEmpty()) {
+            add("-headers")
+            add(otherHeaders.entries.joinToString("\r\n") { "${it.key}: ${it.value}" } + "\r\n")
+        }
+        add("-i")
+        add(url)
+        add("-map")
+        add("0:v?")
+        add("-map")
+        add("0:a?")
+        add("-c")
+        add("copy")
+        add("-progress")
+        add("pipe:1")
+        add("-f")
+        add(container)
+        add(outputPath)
+    }
+
     private suspend fun downloadStream(
         url: String,
         headers: Map<String, String>,
@@ -500,46 +545,10 @@ object DirectMediaDownloader {
         val safeEpisodeTitle = episodeTitle?.takeIf(String::isNotBlank)?.let { " - ${safeName(it)}" }.orEmpty()
         val destination = File(directory, "${safeName(animeTitle)} - E$episodeLabel$safeEpisodeTitle.mkv")
         val temporary = File(directory, "${destination.name}.${java.util.UUID.randomUUID()}.part")
-        val userAgent = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
-        val referer = headers.entries.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
-        val otherHeaders = headers.filterKeys { key ->
-            !key.equals("User-Agent", ignoreCase = true) && !key.equals("Referer", ignoreCase = true)
-        }
+        val container = if (destination.extension.equals("mp4", ignoreCase = true)) "mp4" else "matroska"
         val command = buildList {
             add(ffmpeg)
-            add("-nostdin")
-            add("-y")
-            add("-loglevel")
-            add("error")
-            add("-protocol_whitelist")
-            add("file,http,https,tcp,tls,crypto,data")
-            if (userAgent != null) {
-                add("-user_agent")
-                add(userAgent)
-            }
-            if (referer != null) {
-                add("-referer")
-                add(referer)
-            }
-            if (otherHeaders.isNotEmpty()) {
-                add("-headers")
-                add(otherHeaders.entries.joinToString("\r\n") { "${it.key}: ${it.value}" } + "\r\n")
-            }
-            add("-i")
-            add(url)
-            add("-map")
-            add("0:v:0")
-            add("-map")
-            add("0:a?")
-            add("-map")
-            add("0:s?")
-            add("-c")
-            add("copy")
-            add("-progress")
-            add("pipe:1")
-            add("-f")
-            add("matroska")
-            add(temporary.absolutePath)
+            addAll(streamArguments(url, headers, temporary.absolutePath, container))
         }
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         try {

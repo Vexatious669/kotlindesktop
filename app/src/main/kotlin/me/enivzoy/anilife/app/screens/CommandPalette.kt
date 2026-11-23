@@ -54,6 +54,7 @@ import me.enivzoy.anilife.app.Screen
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.RemoteImage
+import me.enivzoy.anilife.app.ui.liquidGlass
 import me.enivzoy.anilife.app.ui.cardMeta
 import me.enivzoy.anilife.core.model.AnimeCard
 
@@ -106,7 +107,7 @@ fun CommandPalette(
             Column(
                 Modifier.fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(AniLifeColors.Card)
+                    .liquidGlass(shape = RoundedCornerShape(16.dp))
                     .border(1.dp, AniLifeColors.Border, RoundedCornerShape(16.dp)),
             ) {
                 Row(

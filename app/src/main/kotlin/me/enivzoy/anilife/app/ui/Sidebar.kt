@@ -61,7 +61,7 @@ fun AppSidebar(
         modifier = modifier
             .width(64.dp)
             .fillMaxHeight()
-            .background(AniLifeColors.Sidebar)
+            .liquidGlass(shape = RoundedCornerShape(0.dp))
             .drawBehind {
                 val x = size.width - 0.5f
                 drawLine(
@@ -137,7 +137,7 @@ private fun NavIcon(
             .clip(RoundedCornerShape(10.dp))
             .background(background)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .pointerHoverIcon(PointerIcon.Hand),
+            .hoverScale(),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

@@ -252,6 +252,7 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Discord Rich Presence", SettingsPage.Accounts, "discord activity status watching idle connect"),
     SettingSearchEntry("Discord Application ID", SettingsPage.Accounts, "discord developer application id"),
     SettingSearchEntry("Title display language", SettingsPage.Content, "anime name title romaji english native"),
+    SettingSearchEntry("High Refresh Rate UI", SettingsPage.Appearance, "120fps animation frame rate smooth refresh"),
     SettingSearchEntry("App font", SettingsPage.Appearance, "font typeface text sans serif mono"),
     SettingSearchEntry("Theme colors", SettingsPage.Appearance, "css theme colors palette editor custom look style"),
     SettingSearchEntry("Playback buffer", SettingsPage.Data, "stream buffering memory"),
@@ -1139,6 +1140,14 @@ private fun ContentSettings(settings: AppSettings, onSettingsChange: ((AppSettin
 
 @Composable
 private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
+    SettingsRow(
+        "High Refresh Rate UI",
+        "Animations use a 120 Hz frame clock for dissolve and hover effects.",
+    ) {
+        SettingsSwitch(settings.highRefreshRateUi) { enabled ->
+            onSettingsChange { it.copy(highRefreshRateUi = enabled) }
+        }
+    }
     SettingsRow(
         "App font",
         "Typeface used across the interface.",

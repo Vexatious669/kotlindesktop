@@ -57,6 +57,8 @@ object AniLifeColors {
     val Input get() = token("input", 0x26FFFFFF)
     val Primary get() = themed("primary", appearance.buttonColor, 0xFF87D66A)
     val PrimaryForeground get() = token("primary-foreground", 0xFF0A0F0A)
+    val SurfaceVariant get() = themed("surface-variant", appearance.animeCardColor, 0xFF1A261A)
+    val TextPrimary get() = Foreground
     val Secondary get() = token("secondary", 0xFF1A261A)
     val SecondaryForeground get() = token("secondary-foreground", 0xFFF8F8F8)
     val Accent get() = token("accent", 0xFF1A261A)

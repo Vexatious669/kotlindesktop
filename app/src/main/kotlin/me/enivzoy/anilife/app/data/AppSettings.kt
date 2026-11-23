@@ -96,6 +96,7 @@ data class AppSettings(
     val playIntro: Boolean = true,
     val titleLanguage: String = "english",
     val discordPresenceEnabled: Boolean = true,
+    val highRefreshRateUi: Boolean = false,
     val discordApplicationId: String = DEFAULT_DISCORD_APPLICATION_ID,
     val homeSectionOrder: List<HomeSection> = HomeSection.defaultOrder,
     val hiddenHomeSections: Set<HomeSection> = emptySet(),
@@ -179,6 +180,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             playIntro = properties.getProperty("playIntro", "true").toBooleanStrictOrNull() ?: true,
             titleLanguage = properties.getProperty("titleLanguage") ?: if (properties.getProperty("preferEnglishTitles", "true").toBooleanStrictOrNull() ?: true) "english" else "romaji",
             discordPresenceEnabled = properties.getProperty("discordPresenceEnabled", "true").toBooleanStrictOrNull() ?: true,
+            highRefreshRateUi = properties.getProperty("highRefreshRateUi", "false").toBooleanStrictOrNull() ?: false,
             discordApplicationId = properties.getProperty("discordApplicationId", DEFAULT_DISCORD_APPLICATION_ID),
             homeSectionOrder = HomeSection.parseOrder(properties.getProperty("homeSectionOrder")),
             hiddenHomeSections = HomeSection.parseHidden(properties.getProperty("hiddenHomeSections")),
@@ -234,6 +236,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("playIntro", settings.playIntro.toString())
             setProperty("titleLanguage", settings.titleLanguage)
             setProperty("discordPresenceEnabled", settings.discordPresenceEnabled.toString())
+            setProperty("highRefreshRateUi", settings.highRefreshRateUi.toString())
             setProperty("discordApplicationId", settings.discordApplicationId)
             setProperty("homeSectionOrder", settings.homeSectionOrder.joinToString(",") { it.name })
             setProperty("hiddenHomeSections", settings.hiddenHomeSections.joinToString(",") { it.name })

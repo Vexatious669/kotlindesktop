@@ -23,6 +23,8 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
+import me.enivzoy.anilife.app.ui.GlassHost
+import me.enivzoy.anilife.app.ui.ProvideHighRefresh
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DependencyManager
 import me.enivzoy.anilife.app.data.dependencyDirectory
@@ -67,17 +69,19 @@ fun main() {
             applyDarkTitleBar(window)
         }
         AniLifeTheme(appSettings) {
-            LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
-            var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
-            if (!setupComplete) {
-                SetupScreen(
-                    manager = dependencyManager,
-                    onContinue = {
-                        dependencyManager.configurePaths()
-                        setupComplete = true
-                    },
-                )
-            } else AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
+            GlassHost {
+                ProvideHighRefresh(appSettings.highRefreshRateUi) {
+                    LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
+                    var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
+                    if (!setupComplete) {
+                        SetupScreen(
+                            manager = dependencyManager,
+                            onContinue = {
+                                dependencyManager.configurePaths()
+                                setupComplete = true
+                            },
+                        )
+                    } else AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
                     val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("windows")
                     if (isWindows) {
                         if (fullscreen && windowedStyle.value == null) {
@@ -159,8 +163,10 @@ fun main() {
                             ?: WindowPlacement.Floating
                     }
             }, onExitApplication = ::exitApplication)
+                    }
+                }
+            }
         }
-    }
     }
 }
 

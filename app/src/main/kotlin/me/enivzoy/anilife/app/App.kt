@@ -1,6 +1,9 @@
 package me.enivzoy.anilife.app
 
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -63,7 +66,7 @@ import me.enivzoy.anilife.app.screens.ProvidersScreen
 import me.enivzoy.anilife.app.screens.ScheduleScreen
 import me.enivzoy.anilife.app.screens.SettingsScreen
 import me.enivzoy.anilife.app.screens.formatSetupBytes
-import me.enivzoy.anilife.app.screens.MyAnimeListScreen
+import me.enivzoy.anilife.app.screens.ProfileScreen
 import me.enivzoy.anilife.app.screens.NotificationsScreen
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.data.AniListSync
@@ -74,6 +77,7 @@ import me.enivzoy.anilife.app.data.ReleaseNotifier
 import me.enivzoy.anilife.core.model.Update
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AppSidebar
+import me.enivzoy.anilife.app.ui.liquidGlass
 import me.enivzoy.anilife.mpv.Mpv
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -339,9 +343,9 @@ fun AniLifeApp(
                 },
         ) {
             key(settings.titleLanguage) {
-            Crossfade(
+            AnimatedContent(
                 targetState = screen,
-                animationSpec = tween(180),
+                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
                 label = "screen",
             ) { target ->
                 when (target) {
@@ -387,7 +391,7 @@ fun AniLifeApp(
                         notifier = releaseNotifier,
                         onOpenAnime = { navigateTo(Screen.Detail(it)) },
                     )
-                    Screen.Profile -> MyAnimeListScreen(repository)
+                    Screen.Profile -> ProfileScreen(onOpenAnime = { navigateTo(Screen.Detail(it)) })
                     Screen.Downloads -> DownloadsScreen(
                         repository = repository,
                         settings = settings,
@@ -530,6 +534,7 @@ fun AniLifeApp(
     pickError?.let { message ->
         AlertDialog(
             onDismissRequest = { pickError = null },
+            modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -551,6 +556,7 @@ fun AniLifeApp(
                     updateActionStatus = null
                 }
             },
+            modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
