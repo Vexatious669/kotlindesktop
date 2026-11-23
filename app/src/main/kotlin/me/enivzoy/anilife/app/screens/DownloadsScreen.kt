@@ -333,7 +333,7 @@ fun DownloadsScreen(
                         val progress = entry.progress
                         val lastWatched = if (progress.position >= progress.duration * 0.9) progress.episode else progress.episode - 1.0
                         var episode = 1.0
-                        // Continue rows point at the next unwatched episode, so earlier ones are watched.
+                        // continue rows point at the next unwatched episode, so earlier ones are watched.
                         while (episode <= lastWatched) {
                             add(downloadWatchedKey(entry.anime.title, entry.anime.id, episode))
                             episode += 1.0
