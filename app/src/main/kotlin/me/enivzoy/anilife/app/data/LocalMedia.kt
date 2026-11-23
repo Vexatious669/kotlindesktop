@@ -499,16 +499,26 @@ object DirectMediaDownloader {
 
     private fun updateSavedLib(root: Path, anime: AnimeCard, episode: Double) {
         val libFile = root.resolve("saved.lib").toFile()
-        val existing = if (libFile.exists()) libFile.readText() else "[]"
-        // Simple: append anime entry if not already present
-        // This is a simplified implementation
         try {
-            // Write a simple JSON array of anime entries
-            val entry = """{"id":${anime.id},"title":"${anime.title.replace("\"", "\\\\\"")}","cover":"${anime.cover ?: ""}","banner":"${anime.banner ?: ""}"}"""
-            // For now, just write the entry (a full implementation would merge with existing)
-            if (!libFile.exists()) {
-                libFile.writeText("[$entry]")
+            // Read existing entries
+            val existingEntries = if (libFile.exists()) {
+                val text = libFile.readText().trim()
+                if (text.startsWith("[") && text.endsWith("]")) {
+                    text.removePrefix("[").removeSuffix("]").split("},{")
+                        .map { it.trim().removePrefix("{").removeSuffix("}") }
+                        .filter { it.isNotBlank() }
+                        .map { "{\n  $it\n}" }
+                } else {
+                    emptyList()
+                }
+            } else {
+                emptyList()
             }
+            // Build entry for this anime
+            val entry = """{"id":${anime.id},"title":"${anime.title.replace("\"", "\\\\\"")}","cover":"${anime.cover ?: ""}","banner":"${anime.banner ?: ""}","episodes":$episode}"""
+            // Merge: update existing entry or add new
+            val merged = existingEntries.filterNot { it.contains("\"id\":${anime.id}") } + entry
+            libFile.writeText("[\n  ${merged.joinToString(",\n  ")}\n]")
         } catch (_: Throwable) {
             // Best effort
         }
