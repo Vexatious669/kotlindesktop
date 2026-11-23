@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,11 +55,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +96,7 @@ import me.enivzoy.anilife.app.data.DownloadJob
 import me.enivzoy.anilife.app.data.DownloadQueueManager
 import me.enivzoy.anilife.app.data.DownloadStatus
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
+import me.enivzoy.anilife.app.data.UpscaleQueueManager
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.EmptyPanel
 import me.enivzoy.anilife.app.ui.ErrorPanel
@@ -143,6 +149,10 @@ fun DownloadsScreen(
     var downloadError by remember { mutableStateOf<String?>(null) }
     val candidateIndex = remember { mutableStateMapOf<String, Int>() }
     val downloadJobs by queueManager.jobs.collectAsState()
+    var topTab by remember { mutableIntStateOf(0) }
+    var showUpscaleDialog by remember { mutableStateOf(false) }
+    val upscaleQueue = remember(repository) { UpscaleQueueManager(repository, scope) }
+    val upscaleJobs by upscaleQueue.jobs.collectAsState()
 
     fun selectMediaFolder(): Path? {
         val parent = java.awt.Frame()
@@ -229,6 +239,22 @@ fun DownloadsScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+        TabRow(
+            selectedTabIndex = topTab,
+            containerColor = AniLifeColors.Background,
+            contentColor = AniLifeColors.Foreground,
+            indicator = { tabPositions ->
+                val position = tabPositions[topTab]
+                TabRowDefaults.SecondaryIndicator(
+                    Modifier.offset(x = position.left).width(position.width),
+                    color = AniLifeColors.Primary,
+                )
+            },
+        ) {
+            Tab(selected = topTab == 0, onClick = { topTab = 0 }, text = { Text("Downloads") })
+            Tab(selected = topTab == 1, onClick = { topTab = 1 }, text = { Text("Upscale") })
+        }
+        if (topTab == 0) {
         error?.let { problem ->
             Box(Modifier.fillMaxWidth().padding(horizontal = 32.dp), contentAlignment = Alignment.Center) {
                 ErrorPanel(problem, onRetry = { error = null })
@@ -321,6 +347,16 @@ fun DownloadsScreen(
                 onRetryDownload = queueManager::retry,
                 onRemoveDownload = queueManager::remove,
                 onClearFinishedDownloads = queueManager::clearFinished,
+                onUpscale = { showUpscaleDialog = true },
+                upscaleEnabled = episodes.isNotEmpty(),
+            )
+        }
+        } else {
+            UpscaleProgressTab(
+                jobs = upscaleJobs,
+                onCancel = upscaleQueue::cancel,
+                onRetry = upscaleQueue::retry,
+                onClearFinished = upscaleQueue::clearFinished,
             )
         }
     }
@@ -392,6 +428,18 @@ fun DownloadsScreen(
                     downloadRoot = settings.downloadDirectory?.let(Path::of),
                 )
                 showDownloadDialog = false
+            },
+        )
+    }
+
+    if (showUpscaleDialog) {
+        UpscaleSelectionDialog(
+            episodes = episodes,
+            onDismiss = { showUpscaleDialog = false },
+            onConfirm = { selected ->
+                showUpscaleDialog = false
+                upscaleQueue.enqueue(selected)
+                topTab = 1
             },
         )
     }
@@ -555,6 +603,8 @@ private fun EpisodeList(
     onAutoDetect: () -> Unit,
     onImportPortable: () -> Unit,
     onDirectDownload: () -> Unit,
+    onUpscale: () -> Unit,
+    upscaleEnabled: Boolean,
     actionsEnabled: Boolean,
     audioTrack: String,
     onAudioChange: (String) -> Unit,
@@ -790,6 +840,11 @@ private fun EpisodeList(
                     }
                 }
             }
+            OutlinedButton(
+                onClick = onUpscale,
+                enabled = upscaleEnabled && actionsEnabled,
+                shape = RoundedCornerShape(8.dp),
+            ) { Text("Upscale", fontSize = 12.sp) }
             Box {
                 TextButton(onClick = { actionsExpanded = true }, enabled = actionsEnabled) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = "Download actions", tint = AniLifeColors.MutedForeground)
@@ -809,6 +864,11 @@ private fun EpisodeList(
                         text = { Text("Download direct URL") },
                         onClick = { actionsExpanded = false; onDirectDownload() },
                         enabled = actionsEnabled,
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Upscale downloaded episodes") },
+                        onClick = { actionsExpanded = false; onUpscale() },
+                        enabled = upscaleEnabled && actionsEnabled,
                     )
                     DropdownMenuItem(
                         text = { Text(if (audioTrack == "sub") "Audio: Sub ✓" else "Audio: Sub") },
