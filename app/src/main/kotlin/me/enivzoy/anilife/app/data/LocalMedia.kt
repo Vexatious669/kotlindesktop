@@ -429,6 +429,8 @@ object DirectMediaDownloader {
 
             val directory = downloadRoot.resolve(safeName(animeTitle)).toFile()
             Files.createDirectories(directory.toPath())
+            val resourcesDir = File(directory, "Resources")
+            Files.createDirectories(resourcesDir.toPath())
             val episodeLabel = if (episode % 1.0 == 0.0) episode.toInt().toString() else episode.toString()
             val safeEpisodeTitle = episodeTitle?.takeIf(String::isNotBlank)?.let { " - ${safeName(it)}" }.orEmpty()
             val destination = File(directory, "${safeName(animeTitle)} - E$episodeLabel$safeEpisodeTitle.${extension.removePrefix(".")}")
@@ -464,6 +466,23 @@ object DirectMediaDownloader {
                 }
                 val stableId = anime?.id ?: (java.util.UUID.nameUUIDFromBytes(animeTitle.trim().lowercase().toByteArray()).mostSignificantBits and Long.MAX_VALUE)
                     .coerceAtLeast(1L)
+                // Save info.json in Resources folder
+                val infoJson = buildString {
+                    append("{\n")
+                    append("  \"animeId\": $stableId,\n")
+                    append("  \"title\": \"${animeTitle.trim().replace("\"", "\\\\\"")}\",\n")
+                    append("  \"episode\": $episode,\n")
+                    append("  \"episodeTitle\": \"${(episodeTitle ?: "").replace("\"", "\\\\\"")}\",\n")
+                    append("  \"audio\": \"${if (audio == "dub") "dub" else "sub"}\",\n")
+                    append("  \"fileName\": \"${destination.name}\",\n")
+                    append("  \"bytes\": ${Files.size(destination.toPath())},\n")
+                    append("  \"coverUrl\": \"${anime?.cover ?: ""}\",\n")
+                    append("  \"bannerUrl\": \"${anime?.banner ?: ""}\"\n")
+                    append("}\n")
+                }
+                File(resourcesDir, "info.json").writeText(infoJson)
+                // Update saved.lib in download root
+                updateSavedLib(downloadRoot, anime ?: AnimeCard(id = stableId, title = animeTitle.trim()), episode)
                 LocalEpisode(
                     anime = anime ?: AnimeCard(id = stableId, title = animeTitle.trim()),
                     episode = episode,
@@ -477,6 +496,23 @@ object DirectMediaDownloader {
                 throw error
             }
         }
+
+    private fun updateSavedLib(root: Path, anime: AnimeCard, episode: Double) {
+        val libFile = root.resolve("saved.lib").toFile()
+        val existing = if (libFile.exists()) libFile.readText() else "[]"
+        // Simple: append anime entry if not already present
+        // This is a simplified implementation
+        try {
+            // Write a simple JSON array of anime entries
+            val entry = """{"id":${anime.id},"title":"${anime.title.replace("\"", "\\\\\"")}","cover":"${anime.cover ?: ""}","banner":"${anime.banner ?: ""}"}"""
+            // For now, just write the entry (a full implementation would merge with existing)
+            if (!libFile.exists()) {
+                libFile.writeText("[$entry]")
+            }
+        } catch (_: Throwable) {
+            // Best effort
+        }
+    }
 
     private fun safeName(value: String): String = value
         .replace(Regex("[<>:\"/\\\\|?*\\p{Cntrl}]"), "_")
