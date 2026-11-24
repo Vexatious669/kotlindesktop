@@ -65,6 +65,9 @@ import me.enivzoy.anilife.app.data.ContinueStoreInstance
 import me.enivzoy.anilife.app.data.HomeSection
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AnimePosterCard
+import me.enivzoy.anilife.app.ui.adaptiveGlass
+import me.enivzoy.anilife.app.ui.appEnter
+import me.enivzoy.anilife.app.ui.appTween
 import me.enivzoy.anilife.app.ui.AnimeRow
 import me.enivzoy.anilife.app.ui.ContinueCard
 import me.enivzoy.anilife.app.ui.ErrorPanel
@@ -207,7 +210,7 @@ private fun HomeContent(
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 modifier = Modifier.padding(top = 12.dp),
                             ) {
-                                items(continueEntries, key = { it.anime.id }) { entry ->
+                                items(continueEntries, key = { "${it.anime.id}-${it.updatedAt}" }) { entry ->
                                     ContinueCard(
                                         entry = entry,
                                         onResume = { e -> onContinue(e) },
@@ -355,6 +358,8 @@ private fun HomeArrangementDialog(
                     .fillMaxWidth()
                     .clip(shape)
                     .background(AniLifeColors.Card)
+                    .adaptiveGlass(shape = shape)
+                    .appEnter()
                     .border(1.dp, AniLifeColors.Border, shape)
                     .padding(18.dp),
             ) {
@@ -382,10 +387,11 @@ private fun HomeArrangementDialog(
                     modifier = Modifier.padding(bottom = 10.dp),
                 )
 
+                val sectionScrollState = rememberScrollState()
+                Box(Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
                 Column(
-                    Modifier.fillMaxWidth()
-                        .heightIn(max = 460.dp)
-                        .verticalScroll(rememberScrollState()),
+                    Modifier.fillMaxSize()
+                        .verticalScroll(sectionScrollState),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     draftOrder.forEachIndexed { index, section ->
@@ -438,6 +444,8 @@ private fun HomeArrangementDialog(
                         }
                     }
                 }
+                PageScrollbar(sectionScrollState, Modifier.align(Alignment.CenterEnd))
+                }
 
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(1.dp).background(AniLifeColors.Border))
@@ -466,7 +474,7 @@ private fun HomeArrangementDialog(
 
 @Composable
 private fun HomeSectionSwitch(checked: Boolean, onCheckedChange: () -> Unit) {
-    val knobOffset by animateDpAsState(if (checked) 16.dp else 2.dp, label = "home-section-switch")
+    val knobOffset by animateDpAsState(if (checked) 16.dp else 2.dp, appTween(220), label = "home-section-switch")
     Box(
         Modifier.size(width = 34.dp, height = 20.dp)
             .clip(CircleShape)

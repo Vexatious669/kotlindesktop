@@ -78,6 +78,7 @@ import me.enivzoy.anilife.app.ui.ErrorPanel
 import me.enivzoy.anilife.app.ui.LoadState
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.PosterSkeleton
+import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.app.ui.Resolution
 import me.enivzoy.anilife.app.ui.Shimmer
@@ -286,6 +287,7 @@ fun DetailScreen(
     downloadNotice?.let { message ->
         AlertDialog(
             onDismissRequest = { downloadNotice = null },
+            modifier = Modifier.appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -605,6 +607,7 @@ private fun DetailContent(
     if (notice != null) {
         AlertDialog(
             onDismissRequest = { notice = null },
+            modifier = Modifier.appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -667,7 +670,7 @@ private fun DetailSections(
             "Characters" -> LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 itemsIndexed(
                     items = detail.characters,
-                    key = { index, character -> "${character.name}-$index" },
+                    key = { _, character -> "${character.name}|${character.role}|${character.voiceActor}" },
                 ) { _, character ->
                     CharacterCard(character)
                 }

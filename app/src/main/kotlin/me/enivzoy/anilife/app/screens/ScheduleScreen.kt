@@ -458,8 +458,10 @@ private fun ScheduleSidebar(
         .sortedBy { it.airingAt }
         .take(4)
 
+    val scrollState = rememberScrollState()
+    Box(Modifier.width(300.dp).fillMaxHeight()) {
     Column(
-        Modifier.width(300.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
+        Modifier.fillMaxSize().verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(13.dp),
     ) {
         upcoming?.let { UpcomingCard(it, now, onOpen) }
@@ -476,6 +478,8 @@ private fun ScheduleSidebar(
             },
         )
         FormatFilters(formatFilters, onToggleFormat)
+    }
+    PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

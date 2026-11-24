@@ -52,6 +52,57 @@ class AppSettingsTest {
     }
 
     @Test
+    fun appearanceSettingsPersistAndInvalidValuesAreNormalized() {
+        val root = Files.createTempDirectory("AniLife-settings-appearance")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val store = AppSettingsStore(file)
+            store.update {
+                it.copy(
+                    themeMode = "LIQUID_GLASS",
+                    smoothScrolling = false,
+                    scrollbarVisibility = "ALWAYS",
+                    scrollAnimationDuration = "LONG",
+                    reducedMotion = true,
+                    glassBlurIntensity = 1.4f,
+                    glassTransparency = 0.65f,
+                    glassHighlightIntensity = 0.8f,
+                )
+            }
+
+            val persisted = AppSettingsStore(file).settings.value
+            assertEquals("LIQUID_GLASS", persisted.themeMode)
+            assertEquals(false, persisted.smoothScrolling)
+            assertEquals("ALWAYS", persisted.scrollbarVisibility)
+            assertEquals("LONG", persisted.scrollAnimationDuration)
+            assertEquals(true, persisted.reducedMotion)
+            assertEquals(1.4f, persisted.glassBlurIntensity)
+            assertEquals(0.65f, persisted.glassTransparency)
+            assertEquals(0.8f, persisted.glassHighlightIntensity)
+
+            store.update {
+                it.copy(
+                    themeMode = "UNKNOWN",
+                    scrollbarVisibility = "SOMETIMES",
+                    scrollAnimationDuration = "INSTANT",
+                    glassBlurIntensity = 9f,
+                    glassTransparency = -1f,
+                    glassHighlightIntensity = Float.NaN,
+                )
+            }
+            val normalized = AppSettingsStore(file).settings.value
+            assertEquals("DEFAULT", normalized.themeMode)
+            assertEquals("AUTOMATIC", normalized.scrollbarVisibility)
+            assertEquals("NORMAL", normalized.scrollAnimationDuration)
+            assertEquals(2f, normalized.glassBlurIntensity)
+            assertEquals(0.25f, normalized.glassTransparency)
+            assertEquals(1f, normalized.glassHighlightIntensity)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun settingsPersistAndInvalidValuesAreNormalized() {
         val root = Files.createTempDirectory("AniLife-settings")
         try {

@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AppSettings
+import me.enivzoy.anilife.app.ui.theme.ProvideAppearance
 import java.io.File
 
  
@@ -188,8 +189,11 @@ fun AniLifeTheme(settings: AppSettings, content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = scheme,
         typography = typography,
-        content = content,
-    )
+    ) {
+        ProvideAppearance(settings) {
+            content()
+        }
+    }
 }
 
 private fun Typography.withFont(font: FontFamily) = copy(

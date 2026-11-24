@@ -98,6 +98,14 @@ data class AppSettings(
     val titleLanguage: String = "english",
     val discordPresenceEnabled: Boolean = true,
     val highRefreshRateUi: Boolean = false,
+    val themeMode: String = "DEFAULT",
+    val smoothScrolling: Boolean = true,
+    val scrollbarVisibility: String = "AUTOMATIC",
+    val scrollAnimationDuration: String = "NORMAL",
+    val reducedMotion: Boolean = false,
+    val glassBlurIntensity: Float = 1f,
+    val glassTransparency: Float = 0.5f,
+    val glassHighlightIntensity: Float = 1f,
     val discordApplicationId: String = DEFAULT_DISCORD_APPLICATION_ID,
     val homeSectionOrder: List<HomeSection> = HomeSection.defaultOrder,
     val hiddenHomeSections: Set<HomeSection> = emptySet(),
@@ -183,6 +191,14 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             titleLanguage = properties.getProperty("titleLanguage") ?: if (properties.getProperty("preferEnglishTitles", "true").toBooleanStrictOrNull() ?: true) "english" else "romaji",
             discordPresenceEnabled = properties.getProperty("discordPresenceEnabled", "true").toBooleanStrictOrNull() ?: true,
             highRefreshRateUi = properties.getProperty("highRefreshRateUi", "false").toBooleanStrictOrNull() ?: false,
+            themeMode = properties.getProperty("themeMode", "DEFAULT"),
+            smoothScrolling = properties.getProperty("smoothScrolling", "true").toBooleanStrictOrNull() ?: true,
+            scrollbarVisibility = properties.getProperty("scrollbarVisibility", "AUTOMATIC"),
+            scrollAnimationDuration = properties.getProperty("scrollAnimationDuration", "NORMAL"),
+            reducedMotion = properties.getProperty("reducedMotion", "false").toBooleanStrictOrNull() ?: false,
+            glassBlurIntensity = properties.getProperty("glassBlurIntensity", "1.0").toFloatOrNull() ?: 1f,
+            glassTransparency = properties.getProperty("glassTransparency", "0.5").toFloatOrNull() ?: 0.5f,
+            glassHighlightIntensity = properties.getProperty("glassHighlightIntensity", "1.0").toFloatOrNull() ?: 1f,
             discordApplicationId = properties.getProperty("discordApplicationId", DEFAULT_DISCORD_APPLICATION_ID),
             homeSectionOrder = HomeSection.parseOrder(properties.getProperty("homeSectionOrder")),
             hiddenHomeSections = HomeSection.parseHidden(properties.getProperty("hiddenHomeSections")),
@@ -240,6 +256,14 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("titleLanguage", settings.titleLanguage)
             setProperty("discordPresenceEnabled", settings.discordPresenceEnabled.toString())
             setProperty("highRefreshRateUi", settings.highRefreshRateUi.toString())
+            setProperty("themeMode", settings.themeMode)
+            setProperty("smoothScrolling", settings.smoothScrolling.toString())
+            setProperty("scrollbarVisibility", settings.scrollbarVisibility)
+            setProperty("scrollAnimationDuration", settings.scrollAnimationDuration)
+            setProperty("reducedMotion", settings.reducedMotion.toString())
+            setProperty("glassBlurIntensity", settings.glassBlurIntensity.toString())
+            setProperty("glassTransparency", settings.glassTransparency.toString())
+            setProperty("glassHighlightIntensity", settings.glassHighlightIntensity.toString())
             setProperty("discordApplicationId", settings.discordApplicationId)
             setProperty("homeSectionOrder", settings.homeSectionOrder.joinToString(",") { it.name })
             setProperty("hiddenHomeSections", settings.hiddenHomeSections.joinToString(",") { it.name })
@@ -277,6 +301,12 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         themeCss = themeCss.take(20_000),
         sidebarIconShape = sidebarIconShape.takeIf { it in sidebarShapes } ?: "rounded",
         appFont = appFont.takeIf { it in fontFamilies } ?: "SansSerif",
+        themeMode = themeMode.takeIf { it in themeModes } ?: "DEFAULT",
+        scrollbarVisibility = scrollbarVisibility.takeIf { it in scrollbarVisibilities } ?: "AUTOMATIC",
+        scrollAnimationDuration = scrollAnimationDuration.takeIf { it in scrollAnimationDurations } ?: "NORMAL",
+        glassBlurIntensity = glassBlurIntensity.takeIf(Float::isFinite)?.coerceIn(0.5f, 2f) ?: 1f,
+        glassTransparency = glassTransparency.takeIf(Float::isFinite)?.coerceIn(0.25f, 0.85f) ?: 0.5f,
+        glassHighlightIntensity = glassHighlightIntensity.takeIf(Float::isFinite)?.coerceIn(0f, 1.5f) ?: 1f,
         captionFontFile = captionFontFile.take(2048),
         appFontFile = appFontFile.take(2048),
         downloadDirectory = downloadDirectory?.let { runCatching { Path.of(it).toAbsolutePath().normalize().toString() }.getOrNull() },
@@ -300,6 +330,9 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         val contentScales = listOf("fit", "crop", "fill")
         val supportedSubtitleLanguages = listOf("en", "ja", "es", "pt", "fr", "de", "it", "ru", "ar", "zh", "none")
         val fontFamilies = listOf("SansSerif", "Serif", "Monospaced", "Cursive")
+        val themeModes = setOf("DEFAULT", "FROSTED_GLASS", "LIQUID_GLASS")
+        val scrollbarVisibilities = setOf("AUTOMATIC", "ALWAYS", "HIDDEN")
+        val scrollAnimationDurations = setOf("SHORT", "NORMAL", "LONG")
         val captionEdgeStyles = setOf("none", "outline", "shadow")
         val captionVerticalPositions = setOf("top", "bottom")
         val captionAlignments = setOf("left", "center", "right")

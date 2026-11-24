@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -53,7 +55,9 @@ import kotlinx.coroutines.delay
 import me.enivzoy.anilife.app.Screen
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
+import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.liquidGlass
 import me.enivzoy.anilife.app.ui.cardMeta
 import me.enivzoy.anilife.core.model.AnimeCard
@@ -108,6 +112,7 @@ fun CommandPalette(
                 Modifier.fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .liquidGlass(shape = RoundedCornerShape(16.dp))
+                    .appEnter()
                     .border(1.dp, AniLifeColors.Border, RoundedCornerShape(16.dp)),
             ) {
                 Row(
@@ -213,37 +218,46 @@ private fun PaletteBody(
                 fontSize = 13.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             )
-            else -> LazyColumn(Modifier.fillMaxWidth()) {
-                items(results, key = { it.id }) { anime ->
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .clickable { onOpenAnime(anime.id) }
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RemoteImage(
-                            url = anime.cover,
-                            contentDescription = null,
-                            modifier = Modifier.size(width = 30.dp, height = 42.dp)
-                                .clip(RoundedCornerShape(5.dp)),
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                anime.title,
-                                color = AniLifeColors.Foreground,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                            )
-                            Text(
-                                cardMeta(anime),
-                                color = AniLifeColors.MutedForeground,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                            )
+            else -> {
+                val listState = rememberLazyListState()
+                Box(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
+                        items(results, key = { it.id }) { anime ->
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clickable { onOpenAnime(anime.id) }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RemoteImage(
+                                    url = anime.cover,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(width = 30.dp, height = 42.dp)
+                                        .clip(RoundedCornerShape(5.dp)),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        anime.title,
+                                        color = AniLifeColors.Foreground,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        cardMeta(anime),
+                                        color = AniLifeColors.MutedForeground,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
                         }
                     }
+                    PageScrollbar(
+                        rememberScrollbarAdapter(listState),
+                        Modifier.align(Alignment.CenterEnd),
+                    )
                 }
             }
         }

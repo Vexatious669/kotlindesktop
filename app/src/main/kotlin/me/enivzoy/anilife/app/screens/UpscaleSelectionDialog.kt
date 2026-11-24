@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +45,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import me.enivzoy.anilife.app.data.LocalEpisode
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
+import me.enivzoy.anilife.app.ui.adaptiveGlass
+import me.enivzoy.anilife.app.ui.appEnter
 
 private val UpscaleDialogShape = RoundedCornerShape(16.dp)
 
@@ -69,6 +73,8 @@ fun UpscaleSelectionDialog(
                     .heightIn(max = 900.dp)
                     .clip(UpscaleDialogShape)
                     .background(AniLifeColors.Card)
+                    .adaptiveGlass(shape = UpscaleDialogShape)
+                    .appEnter()
                     .border(1.dp, AniLifeColors.Border, UpscaleDialogShape),
             ) {
                 Row(
@@ -93,9 +99,11 @@ fun UpscaleSelectionDialog(
                 }
                 HorizontalDivider(color = AniLifeColors.Border)
 
+                val scrollState = rememberScrollState()
+                Box(Modifier.weight(1f)) {
                 Column(
-                    Modifier.weight(1f)
-                        .verticalScroll(rememberScrollState())
+                    Modifier.fillMaxSize()
+                        .verticalScroll(scrollState)
                         .padding(horizontal = 24.dp, vertical = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
@@ -107,46 +115,51 @@ fun UpscaleSelectionDialog(
                     if (episodes.isEmpty()) {
                         Text("No downloaded episodes found.", color = AniLifeColors.MutedForeground, fontSize = 13.sp)
                     } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 56.dp),
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            items(episodes, key = ::upscaleKey) { entry ->
-                                val isSelected = upscaleKey(entry) in selectedKeys
-                                Box(
-                                    Modifier.aspectRatio(1.6f)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isSelected) AniLifeColors.Primary else AniLifeColors.Secondary)
-                                        .clickable {
-                                            val key = upscaleKey(entry)
-                                            if (key in selectedKeys) selectedKeys.remove(key) else selectedKeys.add(key)
-                                        }
-                                        .padding(horizontal = 4.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(1.dp),
+                        val episodeGridState = rememberLazyGridState()
+                        Box(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 56.dp),
+                                modifier = Modifier.fillMaxSize(),
+                                state = episodeGridState,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                items(episodes, key = ::upscaleKey) { entry ->
+                                    val isSelected = upscaleKey(entry) in selectedKeys
+                                    Box(
+                                        Modifier.aspectRatio(1.6f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSelected) AniLifeColors.Primary else AniLifeColors.Secondary)
+                                            .clickable {
+                                                val key = upscaleKey(entry)
+                                                if (key in selectedKeys) selectedKeys.remove(key) else selectedKeys.add(key)
+                                            }
+                                            .padding(horizontal = 4.dp),
+                                        contentAlignment = Alignment.Center,
                                     ) {
-                                        Text(
-                                            formatEpisode(entry.episode),
-                                            color = if (isSelected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            maxLines = 1,
-                                        )
-                                        Text(
-                                            entry.anime.title,
-                                            color = if (isSelected) AniLifeColors.PrimaryForeground else AniLifeColors.MutedForeground,
-                                            fontSize = 8.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(1.dp),
+                                        ) {
+                                            Text(
+                                                formatEpisode(entry.episode),
+                                                color = if (isSelected) AniLifeColors.PrimaryForeground else AniLifeColors.Foreground,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 1,
+                                            )
+                                            Text(
+                                                entry.anime.title,
+                                                color = if (isSelected) AniLifeColors.PrimaryForeground else AniLifeColors.MutedForeground,
+                                                fontSize = 8.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
                                     }
                                 }
                             }
+                            PageScrollbar(episodeGridState, Modifier.align(Alignment.CenterEnd))
                         }
                     }
 
@@ -163,6 +176,8 @@ fun UpscaleSelectionDialog(
                             fontSize = 13.sp,
                         )
                     }
+                }
+                PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
                 }
 
                 HorizontalDivider(color = AniLifeColors.Border)

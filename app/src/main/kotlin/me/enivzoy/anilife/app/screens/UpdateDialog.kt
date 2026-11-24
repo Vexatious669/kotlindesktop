@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.UpdateState
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.liquidGlass
 import me.enivzoy.anilife.core.model.Update
 
@@ -33,7 +34,7 @@ fun UpdateDialog(
 ) {
     AlertDialog(
         onDismissRequest = { if (!state.busy) onLater() },
-        modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)),
+        modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)).appEnter(),
         containerColor = AniLifeColors.Card,
         titleContentColor = AniLifeColors.Foreground,
         textContentColor = AniLifeColors.MutedForeground,

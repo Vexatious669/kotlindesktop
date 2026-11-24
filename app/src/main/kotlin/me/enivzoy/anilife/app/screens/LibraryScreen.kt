@@ -65,6 +65,7 @@ import me.enivzoy.anilife.app.data.AniListScoreFormat
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AnimePosterCard
+import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.EmptyPanel
 import me.enivzoy.anilife.app.ui.PageScrollbar
 
@@ -329,6 +330,7 @@ internal fun AniListEntryEditorDialog(
 ) {
     AlertDialog(
         onDismissRequest = onClose,
+        modifier = Modifier.appEnter(),
         title = { Text(entry.anime.title, color = AniLifeColors.Foreground, fontWeight = FontWeight.SemiBold) },
         text = {
             AniListEntryControls(
@@ -369,7 +371,7 @@ internal fun AniListEntryControls(
                 OutlinedButton(onClick = { statusExpanded = true }, enabled = !busy) {
                     Text(entry.status.label, fontSize = 11.sp)
                 }
-                DropdownMenu(expanded = statusExpanded, onDismissRequest = { statusExpanded = false }) {
+                DropdownMenu(expanded = statusExpanded, onDismissRequest = { statusExpanded = false }, modifier = Modifier.appEnter()) {
                     AniListListStatus.entries.forEach { status ->
                         DropdownMenuItem(
                             text = { Text(status.label) },
@@ -425,6 +427,7 @@ internal fun AniListEntryControls(
         var value by remember(entry.entryId) { mutableStateOf(formatScore(entry.score, scoreFormat)) }
         AlertDialog(
             onDismissRequest = { showScoreDialog = false },
+            modifier = Modifier.appEnter(),
             title = { Text("Edit AniList score") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -461,6 +464,7 @@ internal fun AniListEntryControls(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
+            modifier = Modifier.appEnter(),
             title = { Text("Remove from AniList?") },
             text = { Text("This removes ${entry.anime.title} from your AniList account list.") },
             confirmButton = {

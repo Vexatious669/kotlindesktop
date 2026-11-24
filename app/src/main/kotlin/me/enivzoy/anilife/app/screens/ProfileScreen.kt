@@ -64,6 +64,7 @@ import me.enivzoy.anilife.app.data.MyAnimeListEntry
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.data.MyAnimeListUser
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.app.ui.hoverScale
 import me.enivzoy.anilife.app.ui.liquidGlass
@@ -302,7 +303,9 @@ private fun LoadedProfile(
     onOpenProfile: (String) -> Unit,
     onLogout: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().background(AniLifeColors.Background).verticalScroll(rememberScrollState())) {
+    val scrollState = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().background(AniLifeColors.Background).verticalScroll(scrollState)) {
         Box(Modifier.fillMaxWidth().height(220.dp).background(AniLifeColors.SurfaceVariant)) {
             RemoteImage(
                 url = data.banner,
@@ -366,6 +369,8 @@ private fun LoadedProfile(
             }
             Spacer(Modifier.height(32.dp))
         }
+    }
+        PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

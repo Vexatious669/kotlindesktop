@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -48,6 +49,7 @@ import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.data.AnimeVideoSource
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.AnimeDetail
@@ -187,20 +189,26 @@ fun AnimeWatchScreen(
                 when {
                     loading -> LoadingState("Finding episodes")
                     episodes.isEmpty() -> EmptyState(error ?: "No episodes are available.")
-                    else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        items(episodes, key = { it.number }) { episode ->
-                            EpisodeRow(
-                                episode = episode,
-                                selected = selectedEpisode == episode.number,
-                                loading = resolving == episode.number,
-                                onClick = {
-                                    selectedEpisode = episode.number
-                                    sources = emptyList()
-                                    error = null
-                                    resolving = episode.number
-                                    resolveAttempt++
-                                },
-                            )
+                    else -> {
+                        val episodeListState = rememberLazyListState()
+                        Box(Modifier.weight(1f)) {
+                            LazyColumn(Modifier.fillMaxSize(), state = episodeListState, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                items(episodes, key = { it.number }) { episode ->
+                                    EpisodeRow(
+                                        episode = episode,
+                                        selected = selectedEpisode == episode.number,
+                                        loading = resolving == episode.number,
+                                        onClick = {
+                                            selectedEpisode = episode.number
+                                            sources = emptyList()
+                                            error = null
+                                            resolving = episode.number
+                                            resolveAttempt++
+                                        },
+                                    )
+                                }
+                            }
+                            PageScrollbar(episodeListState, Modifier.align(Alignment.CenterEnd))
                         }
                     }
                 }
@@ -251,40 +259,44 @@ fun AnimeWatchScreen(
                     sources.isEmpty() -> EmptyState(error ?: "No servers are available for this episode.")
                     else -> {
                         val grouped = sources.groupBy { it.resolvedLanguage }
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            grouped.forEach { (language, langSources) ->
-                                if (true) {
-                                    item(key = "lang-$language") {
-                                        Text(
-                                            language.uppercase(),
-                                            color = AniLifeColors.MutedForeground,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            letterSpacing = 1.5.sp,
-                                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                                        )
+                        val serverListState = rememberLazyListState()
+                        Box(Modifier.weight(1f)) {
+                            LazyColumn(Modifier.fillMaxSize(), state = serverListState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                grouped.forEach { (language, langSources) ->
+                                    if (true) {
+                                        item(key = "lang-$language") {
+                                            Text(
+                                                language.uppercase(),
+                                                color = AniLifeColors.MutedForeground,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                letterSpacing = 1.5.sp,
+                                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                                            )
+                                        }
                                     }
-                                }
-                                items(langSources, key = { "${it.provider}:${it.audio}:${it.server}:${it.url}" }) { source ->
-                                    ServerRow(source = source) {
-                                        val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
-                                        ActionBreadcrumbs.record("Clicked server: $serverName")
-                                        logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality}" }
-                                        val ep = episodeNumber(activeEpisode)
-                                        onPlay(
-                                            "$title · Episode $ep · ${source.provider} ${source.quality ?: source.format.uppercase()}",
-                                            source.url,
-                                            source.headers,
-                                            sources,
-                                            activeEpisode,
-                                            episodes.firstOrNull { it.number == activeEpisode }?.title?.takeIf(String::isNotBlank),
-                                            episodes.map(AnimeEpisode::number),
-                                            episodes.mapNotNull { ep -> ep.title?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
-                                            episodes.mapNotNull { ep -> ep.thumbnail?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
-                                        )
+                                    items(langSources, key = { "${it.provider}:${it.audio}:${it.server}:${it.url}" }) { source ->
+                                        ServerRow(source = source) {
+                                            val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
+                                            ActionBreadcrumbs.record("Clicked server: $serverName")
+                                            logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality}" }
+                                            val ep = episodeNumber(activeEpisode)
+                                            onPlay(
+                                                "$title · Episode $ep · ${source.provider} ${source.quality ?: source.format.uppercase()}",
+                                                source.url,
+                                                source.headers,
+                                                sources,
+                                                activeEpisode,
+                                                episodes.firstOrNull { it.number == activeEpisode }?.title?.takeIf(String::isNotBlank),
+                                                episodes.map(AnimeEpisode::number),
+                                                episodes.mapNotNull { ep -> ep.title?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
+                                                episodes.mapNotNull { ep -> ep.thumbnail?.takeIf(String::isNotBlank)?.let { ep.number to it } }.toMap(),
+                                            )
+                                        }
                                     }
                                 }
                             }
+                            PageScrollbar(serverListState, Modifier.align(Alignment.CenterEnd))
                         }
                     }
                 }

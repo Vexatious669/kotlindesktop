@@ -1,10 +1,6 @@
 package me.enivzoy.anilife.app
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -91,7 +87,9 @@ import me.enivzoy.anilife.core.diagnostics.MemoryProfiler
 import io.github.oshai.kotlinlogging.KotlinLogging
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AppSidebar
+import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.liquidGlass
+import me.enivzoy.anilife.app.ui.rememberAppScreenTransition
 import me.enivzoy.anilife.mpv.Mpv
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -414,11 +412,13 @@ fun AniLifeApp(
                 },
         ) {
             key(settings.titleLanguage) {
+            val screenTransition = rememberAppScreenTransition()
             AnimatedContent(
                 targetState = screen,
-                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
+                transitionSpec = { screenTransition },
                 label = "screen",
             ) { target ->
+                Box(Modifier.fillMaxSize().appEnter()) {
                 when (target) {
                     Screen.Home -> HomeScreen(
                         repository = repository,
@@ -568,6 +568,7 @@ fun AniLifeApp(
                     )
                 }
                 }
+                }
             }
         }
     }
@@ -611,7 +612,7 @@ fun AniLifeApp(
     pickError?.let { message ->
         AlertDialog(
             onDismissRequest = { pickError = null },
-            modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)),
+            modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)).appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,

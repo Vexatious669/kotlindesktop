@@ -1,7 +1,6 @@
 ﻿package me.enivzoy.anilife.app
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +17,7 @@ import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import com.sun.jna.Native
+import me.enivzoy.anilife.app.ui.appTween
 import me.enivzoy.anilife.mpv.EndReason
 import me.enivzoy.anilife.mpv.Event
 import me.enivzoy.anilife.mpv.Mpv
@@ -44,7 +44,7 @@ fun IntroOverlay(homeReady: Boolean, onFinished: () -> Unit) {
     var blackCover by remember { mutableStateOf(true) }
     val coverAlpha by animateFloatAsState(
         targetValue = if (blackCover) 1f else 0f,
-        animationSpec = tween(500),
+        animationSpec = appTween(500),
         label = "intro-black-fade",
     )
 

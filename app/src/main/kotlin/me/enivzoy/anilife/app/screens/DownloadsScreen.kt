@@ -4,8 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.animation.AnimatedVisibility
@@ -110,6 +108,9 @@ import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.UpscaleQueueManager
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.EmptyPanel
+import me.enivzoy.anilife.app.ui.appEnter
+import me.enivzoy.anilife.app.ui.appTween
+import me.enivzoy.anilife.app.ui.rememberAppFloat
 import me.enivzoy.anilife.app.ui.ErrorPanel
 import me.enivzoy.anilife.app.ui.hoverScale
 import me.enivzoy.anilife.app.ui.liquidGlass
@@ -442,6 +443,7 @@ fun DownloadsScreen(
     message?.let { text ->
         AlertDialog(
             onDismissRequest = { message = null },
+            modifier = Modifier.appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -643,8 +645,8 @@ private fun DownloadsHome(
                 key(isSearching) {
                     AnimatedVisibility(
                         visible = isSearching || visibleItems.isNotEmpty(),
-                        enter = fadeIn(tween(400)) + scaleIn(initialScale = 0.95f),
-                        exit = fadeOut(tween(200)) + scaleOut(targetScale = 0.95f),
+                        enter = fadeIn(appTween(400)) + scaleIn(initialScale = 0.95f),
+                        exit = fadeOut(appTween(200)) + scaleOut(targetScale = 0.95f),
                     ) {
                     if (visibleItems.isEmpty()) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -695,7 +697,7 @@ private fun DownloadsHomeCard(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val scale by animateFloatAsState(if (hovered) 1.015f else 1f, tween(180), label = "downloads-home-card")
+    val scale by rememberAppFloat(if (hovered) 1.015f else 1f, durationMillis = 180)
     Row(
         Modifier
             .fillMaxWidth()
@@ -910,18 +912,23 @@ private fun DirectDownloadDialog(
     val number = episode.toDoubleOrNull()
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.appEnter(),
         containerColor = AniLifeColors.Card,
         titleContentColor = AniLifeColors.Foreground,
         textContentColor = AniLifeColors.MutedForeground,
         title = { Text("Download a video URL", fontWeight = FontWeight.SemiBold) },
         text = {
-            Column(Modifier.widthIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Downloads direct video files and HLS/DASH playlists. Playlists are saved with FFmpeg.", fontSize = 12.sp, lineHeight = 18.sp)
-                if (error != null) Text(error, color = AniLifeColors.Destructive, fontSize = 12.sp, lineHeight = 18.sp)
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
+            val dialogScrollState = rememberScrollState()
+            Box(Modifier.widthIn(max = 520.dp)) {
+                Column(Modifier.fillMaxWidth().verticalScroll(dialogScrollState), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Downloads direct video files and HLS/DASH playlists. Playlists are saved with FFmpeg.", fontSize = 12.sp, lineHeight = 18.sp)
+                    if (error != null) Text(error, color = AniLifeColors.Destructive, fontSize = 12.sp, lineHeight = 18.sp)
+                    OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
+                }
+                PageScrollbar(dialogScrollState, Modifier.align(Alignment.CenterEnd))
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = AniLifeColors.MutedForeground) } },
@@ -982,7 +989,7 @@ private fun ScanReview(
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(result.folders, key = { it.name }) { folder ->
+                items(result.folders, key = { "${it.name}-${it.episodes.firstOrNull()?.path}" }) { folder ->
                     MatchRow(folder, candidateIndex[folder.name] ?: 0) { onCandidate(folder.name, it) }
                 }
             }
@@ -1031,7 +1038,7 @@ private fun MatchRow(folder: DetectedFolder, selectedIndex: Int, onSelect: (Int)
         }
         Box {
             TextButton(onClick = { expanded = true }) { Text("Change", color = AniLifeColors.Primary, fontSize = 12.sp) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.appEnter()) {
                 folder.matches.forEachIndexed { index, anime ->
                     DropdownMenuItem(
                         text = { Text(anime.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -1204,6 +1211,8 @@ private fun EpisodeList(
                     }
                 }
             }
+            val episodeGridState = rememberLazyGridState()
+            val episodeListState = androidx.compose.foundation.lazy.rememberLazyListState()
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1235,14 +1244,16 @@ private fun EpisodeList(
                 }
             }
             if (gridLayout) {
+                Box(Modifier.weight(1f)) {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 280.dp),
-                    modifier = Modifier.weight(1f),
+                    state = episodeGridState,
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(selectedEpisodes) { entry ->
+                    items(selectedEpisodes, key = { it.path.toString() }) { entry ->
                         DownloadEpisodeGridCard(
                             entry = entry,
                             selected = downloadEpisodeKey(entry) in selectedKeys,
@@ -1253,13 +1264,17 @@ private fun EpisodeList(
                         )
                     }
                 }
+                PageScrollbar(episodeGridState, Modifier.align(Alignment.CenterEnd))
+                }
             } else {
+                Box(Modifier.weight(1f)) {
                 LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxSize(),
+                    state = episodeListState,
                     contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
-                    items(selectedEpisodes) { entry ->
+                    items(selectedEpisodes, key = { it.path.toString() }) { entry ->
                         DownloadEpisodeRow(
                             entry = entry,
                             selected = downloadEpisodeKey(entry) in selectedKeys,
@@ -1269,6 +1284,8 @@ private fun EpisodeList(
                             onRemove = onRemove,
                         )
                     }
+                }
+                PageScrollbar(episodeListState, Modifier.align(Alignment.CenterEnd))
                 }
             }
         }
@@ -1307,7 +1324,7 @@ private fun EpisodeList(
                 TextButton(onClick = { actionsExpanded = true }, enabled = actionsEnabled) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = "Download actions", tint = AniLifeColors.MutedForeground)
                 }
-                DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }, modifier = Modifier.appEnter()) {
                     DropdownMenuItem(
                         text = { Text("Auto detect local episodes") },
                         onClick = { actionsExpanded = false; onAutoDetect() },
@@ -1358,12 +1375,14 @@ private fun EpisodeList(
         }
 
         if (tab == "queue") {
+            val queueListState = androidx.compose.foundation.lazy.rememberLazyListState()
             if (downloadJobs.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text("No downloads queued.", color = AniLifeColors.MutedForeground, fontSize = 13.sp, lineHeight = 18.sp)
                 }
             } else {
-                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(Modifier.fillMaxSize(), state = queueListState, contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(downloadJobs, key = { it.id }) { job ->
                         DownloadJobRow(
                             job = job,
@@ -1377,6 +1396,8 @@ private fun EpisodeList(
                             TextButton(onClick = onClearFinishedDownloads) { Text("Clear finished", color = AniLifeColors.MutedForeground, fontSize = 12.sp) }
                         }
                     }
+                }
+                PageScrollbar(queueListState, Modifier.align(Alignment.CenterEnd))
                 }
             }
         } else if (filteredGroups.isEmpty()) {
@@ -1423,7 +1444,7 @@ private fun DownloadAnimeCard(
     val downloadFraction = totalEpisodes?.let { (downloadedCount.toFloat() / it).coerceIn(0f, 1f) } ?: 0f
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val scale by androidx.compose.animation.core.animateFloatAsState(if (hovered) 1.06f else 1f, androidx.compose.animation.core.tween(200), label = "card-scale")
+    val scale by rememberAppFloat(if (hovered) 1.06f else 1f, durationMillis = 200)
     Column(
         Modifier.fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }

@@ -3,7 +3,6 @@ package me.enivzoy.anilife.app.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
@@ -44,6 +43,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.appTween
 
 private val PipDragHandleHeight = 32.dp
 
@@ -98,8 +98,8 @@ internal fun PipPlayerWindow(
                 AnimatedVisibility(
                     visible = showControls,
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
-                    enter = fadeIn(tween(150)),
-                    exit = fadeOut(tween(200)),
+                    enter = fadeIn(appTween(150)),
+                    exit = fadeOut(appTween(200)),
                 ) {
                     Row(
                         Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))

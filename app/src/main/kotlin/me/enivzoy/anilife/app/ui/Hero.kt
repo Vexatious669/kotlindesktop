@@ -2,7 +2,6 @@
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -89,7 +88,7 @@ fun Hero(
             .clipToBounds()
             .background(tint),
     ) {
-        Crossfade(targetState = current, animationSpec = tween(900), label = "hero-artwork") { anime ->
+        Crossfade(targetState = current, animationSpec = appTween(900), label = "hero-artwork") { anime ->
             RemoteImage(
                 url = anime.banner ?: anime.cover,
                 contentDescription = anime.title,
@@ -205,7 +204,7 @@ fun Hero(
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items.forEachIndexed { i, item ->
-                    val width by animateDpAsState(if (i == index) 32.dp else 16.dp, tween(220), label = "hero-dot")
+                    val width by animateDpAsState(if (i == index) 32.dp else 16.dp, appTween(220), label = "hero-dot")
                     Box(
                         modifier = Modifier
                             .height(4.dp)

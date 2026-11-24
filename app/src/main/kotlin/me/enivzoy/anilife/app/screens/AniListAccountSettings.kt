@@ -2,9 +2,11 @@ package me.enivzoy.anilife.app.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -46,6 +48,8 @@ import me.enivzoy.anilife.app.data.AniListConnection
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
+import me.enivzoy.anilife.app.ui.appEnter
 
 @Composable
 fun AniListAccountSettings(repository: AniListRepository) {
@@ -236,10 +240,13 @@ fun AniListAccountSettings(repository: AniListRepository) {
     if (showImportReview) {
         AlertDialog(
             onDismissRequest = { showImportReview = false },
+            modifier = Modifier.appEnter(),
             title = { Text("Review local saves") },
             text = {
+                val scrollState = rememberScrollState()
+                Box(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
+                    Modifier.fillMaxSize().verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
@@ -288,6 +295,8 @@ fun AniListAccountSettings(repository: AniListRepository) {
                         }
                     }
                     actionError?.let { Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp) }
+                }
+                PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
                 }
             },
             confirmButton = { TextButton(onClick = { showImportReview = false }) { Text("Done") } },

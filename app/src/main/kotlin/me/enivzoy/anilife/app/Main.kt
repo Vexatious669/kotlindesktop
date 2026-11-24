@@ -82,7 +82,10 @@ fun main() {
         }
         AniLifeTheme(appSettings) {
             GlassHost {
-                ProvideHighRefresh(appSettings.highRefreshRateUi) {
+                ProvideHighRefresh(
+                    enabled = appSettings.highRefreshRateUi,
+                    reducedMotion = appSettings.reducedMotion,
+                ) {
                     LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
                     var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
                     if (!setupComplete) {

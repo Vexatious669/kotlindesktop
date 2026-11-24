@@ -39,6 +39,7 @@ import me.enivzoy.anilife.app.data.DependencyManager
 import me.enivzoy.anilife.app.data.DependencyState
 import me.enivzoy.anilife.app.data.DependencyStatus
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 
 internal fun formatSetupBytes(value: Long): String {
     if (value <= 0L) return "0 B"
@@ -61,6 +62,7 @@ fun SetupScreen(manager: DependencyManager, onContinue: () -> Unit) {
 
     LaunchedEffect(manager) { manager.start() }
 
+    val scrollState = rememberScrollState()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -71,7 +73,7 @@ fun SetupScreen(manager: DependencyManager, onContinue: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(32.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
@@ -119,6 +121,7 @@ fun SetupScreen(manager: DependencyManager, onContinue: () -> Unit) {
                 }
             }
         }
+        PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

@@ -7,7 +7,6 @@ import androidx.compose.foundation.focusable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,6 +73,7 @@ import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.player.MpvPlaybackEngine
 import me.enivzoy.anilife.app.player.WakeLock
+import me.enivzoy.anilife.app.ui.appTween
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.AnimeDetail
 import me.enivzoy.anilife.core.model.SkipTimes
@@ -607,8 +607,8 @@ fun PlayerScreen(
         AnimatedVisibility(
             visible = controlsVisible,
             modifier = Modifier.fillMaxSize(),
-            enter = fadeIn(tween(180)),
-            exit = fadeOut(tween(260)),
+            enter = fadeIn(appTween(180)),
+            exit = fadeOut(appTween(260)),
         ) {
         PlayerControlsScaffold(
             title = showTitle,

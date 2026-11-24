@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.UpscaleJob
 import me.enivzoy.anilife.app.data.UpscaleStatus
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 
 @Composable
 fun UpscaleProgressTab(
@@ -49,14 +51,19 @@ fun UpscaleProgressTab(
         return
     }
     Column(Modifier.fillMaxSize()) {
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 32.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(jobs, key = { it.id }) { job ->
-                UpscaleJobCard(job, onCancel, onRetry)
+        val listState = rememberLazyListState()
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 32.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(jobs, key = { it.id }) { job ->
+                    UpscaleJobCard(job, onCancel, onRetry)
+                }
             }
+            PageScrollbar(listState, Modifier.align(Alignment.CenterEnd))
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = onClearFinished) {

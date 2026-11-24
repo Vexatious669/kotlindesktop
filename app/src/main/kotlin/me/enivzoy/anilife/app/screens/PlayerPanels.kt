@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -45,7 +46,9 @@ import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.AnimeVideoSource
 import me.enivzoy.anilife.app.player.PlayerSubtitleTrack
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
+import me.enivzoy.anilife.app.ui.scroll.rememberScrollController
 
 @Composable
 internal fun PlayerPanelLayer(
@@ -102,7 +105,7 @@ internal fun PlayerPanelLayer(
 }
 
 @Composable
-private fun SourcesPanel(
+private fun ColumnScope.SourcesPanel(
     sources: List<AnimeVideoSource>,
     audio: String,
     selectedUrl: String?,
@@ -128,118 +131,130 @@ private fun SourcesPanel(
     if (filtered.isEmpty()) EmptyPanelMessage("No servers are available for this audio.")
     else {
         val grouped = filtered.groupBy { it.resolvedLanguage }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            grouped.forEach { (language, langSources) ->
-                if (true) {
-                    item(key = "lang-$language") {
-                        Text(
-                            language.uppercase(),
-                            color = AniLifeColors.MutedForeground,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.5.sp,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+        val sourceListState = rememberLazyListState()
+        Box(Modifier.weight(1f)) {
+            LazyColumn(Modifier.fillMaxSize(), state = sourceListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                grouped.forEach { (language, langSources) ->
+                    if (true) {
+                        item(key = "lang-$language") {
+                            Text(
+                                language.uppercase(),
+                                color = AniLifeColors.MutedForeground,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp,
+                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                            )
+                        }
+                    }
+                    items(langSources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
+                        val selected = source.url == selectedUrl
+                        PanelChoice(
+                            title = listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · "),
+                            subtitle = buildString {
+                                if (selected) append("Playing now · ")
+                                val available = source.subtitles.map(AnimeSubtitleSource::label).distinct().ifEmpty { subtitles.map(PlayerSubtitleTrack::label).distinct() }
+                                append(if (available.isEmpty()) "Subtitle tracks load with the video" else "Subtitles you can switch · ${available.joinToString(", ")}")
+                                source.quality?.let { append(" · $it") }
+                            },
+                            selected = selected,
+                            onClick = { onSelect(source) },
                         )
                     }
                 }
-                items(langSources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
-                    val selected = source.url == selectedUrl
-                    PanelChoice(
-                        title = listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · "),
-                        subtitle = buildString {
-                            if (selected) append("Playing now · ")
-                            val available = source.subtitles.map(AnimeSubtitleSource::label).distinct().ifEmpty { subtitles.map(PlayerSubtitleTrack::label).distinct() }
-                            append(if (available.isEmpty()) "Subtitle tracks load with the video" else "Subtitles you can switch · ${available.joinToString(", ")}")
-                            source.quality?.let { append(" · $it") }
-                        },
-                        selected = selected,
-                        onClick = { onSelect(source) },
-                    )
-                }
             }
+            PageScrollbar(sourceListState, Modifier.align(Alignment.CenterEnd))
         }
     }
 }
 
 @Composable
-private fun EpisodesPanel(
+private fun ColumnScope.EpisodesPanel(
     episodes: List<AnimeEpisode>,
     current: Double?,
     posterUrl: String?,
     onSelect: (Double) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    val controller = rememberScrollController()
     LaunchedEffect(episodes, current) {
         val index = episodes.indexOfFirst { it.number == current }
-        if (index >= 0) listState.scrollToItem(index)
+        if (index >= 0) controller.scrollToItem(listState, index)
     }
     if (episodes.isEmpty()) EmptyPanelMessage("No episode list is available.")
-    else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        items(episodes, key = { it.number }) { episode ->
-            val selected = episode.number == current
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .background(if (selected) Color(0xFF303034) else Color(0xFF1A1A1A))
-                    .border(if (selected) 1.dp else 0.dp, if (selected) Color.White.copy(alpha = 0.55f) else Color.Transparent, RoundedCornerShape(12.dp))
-                    .clickable { onSelect(episode.number) }
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(formatEpisodeNumber(episode.number), Modifier.width(28.dp), color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Box(Modifier.size(width = 80.dp, height = 46.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2B2B2B))) {
-                    RemoteImage(episode.thumbnail ?: posterUrl.orEmpty(), null, Modifier.fillMaxSize(), placeholderColor = Color(0xFF2B2B2B))
-                    if (selected) Icon(Icons.Rounded.Check, null, Modifier.align(Alignment.Center), tint = Color.White)
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(episode.title?.takeIf(String::isNotBlank) ?: "Episode ${formatEpisodeNumber(episode.number)}", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (selected) Text("Now playing", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+    else Box(Modifier.weight(1f)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            items(episodes, key = { it.number }) { episode ->
+                val selected = episode.number == current
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(if (selected) Color(0xFF303034) else Color(0xFF1A1A1A))
+                        .border(if (selected) 1.dp else 0.dp, if (selected) Color.White.copy(alpha = 0.55f) else Color.Transparent, RoundedCornerShape(12.dp))
+                        .clickable { onSelect(episode.number) }
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(formatEpisodeNumber(episode.number), Modifier.width(28.dp), color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Box(Modifier.size(width = 80.dp, height = 46.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2B2B2B))) {
+                        RemoteImage(episode.thumbnail ?: posterUrl.orEmpty(), null, Modifier.fillMaxSize(), placeholderColor = Color(0xFF2B2B2B))
+                        if (selected) Icon(Icons.Rounded.Check, null, Modifier.align(Alignment.Center), tint = Color.White)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(episode.title?.takeIf(String::isNotBlank) ?: "Episode ${formatEpisodeNumber(episode.number)}", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (selected) Text("Now playing", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+                    }
                 }
             }
         }
+        PageScrollbar(listState, Modifier.align(Alignment.CenterEnd))
     }
 }
 
 @Composable
-private fun SubtitlesPanel(
+private fun ColumnScope.SubtitlesPanel(
     tracks: List<PlayerSubtitleTrack>,
     serverSubtitles: List<AnimeSubtitleSource>,
     onSelect: (Int?, AnimeSubtitleSource?) -> Unit,
 ) {
     Text("SUBTITLES", color = AniLifeColors.MutedForeground, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
     Spacer(Modifier.height(8.dp))
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        item(key = "subtitles-off") {
-            PanelChoice("Off", "Turn subtitles off", selected = tracks.none(PlayerSubtitleTrack::selected), onClick = { onSelect(null, null) })
+    val subtitleListState = rememberLazyListState()
+    Box(Modifier.weight(1f)) {
+        LazyColumn(Modifier.fillMaxSize(), state = subtitleListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            item(key = "subtitles-off") {
+                PanelChoice("Off", "Turn subtitles off", selected = tracks.none(PlayerSubtitleTrack::selected), onClick = { onSelect(null, null) })
+            }
+            items(tracks, key = PlayerSubtitleTrack::id) { track ->
+                val fromServer = serverSubtitles.any { it.label.equals(track.label, ignoreCase = true) }
+                PanelChoice(
+                    title = track.label,
+                    subtitle = buildString {
+                        append(when {
+                            fromServer -> "Downloaded from the current server"
+                            track.external -> "From this video or its subtitle file"
+                            else -> "Embedded in the video"
+                        })
+                        track.language?.let { append(" · $it") }
+                    },
+                    selected = track.selected,
+                    onClick = { onSelect(track.id, null) },
+                )
+            }
+            val unlisted = serverSubtitles.filterNot { source -> tracks.any { it.label.equals(source.label, ignoreCase = true) } }
+            items(unlisted, key = { "provider:${it.url}" }) { source ->
+                PanelChoice(
+                    title = source.label,
+                    subtitle = "Available from this server · ${source.language}",
+                    selected = false,
+                    onClick = { onSelect(null, source) },
+                )
+            }
+            if (tracks.isEmpty()) item {
+                EmptyPanelMessage("This video has not exposed any subtitle tracks yet. Tracks embedded in the stream or loaded from its subtitle files will appear here.")
+            }
         }
-        items(tracks, key = PlayerSubtitleTrack::id) { track ->
-            val fromServer = serverSubtitles.any { it.label.equals(track.label, ignoreCase = true) }
-            PanelChoice(
-                title = track.label,
-                subtitle = buildString {
-                    append(when {
-                        fromServer -> "Downloaded from the current server"
-                        track.external -> "From this video or its subtitle file"
-                        else -> "Embedded in the video"
-                    })
-                    track.language?.let { append(" · $it") }
-                },
-                selected = track.selected,
-                onClick = { onSelect(track.id, null) },
-            )
-        }
-        val unlisted = serverSubtitles.filterNot { source -> tracks.any { it.label.equals(source.label, ignoreCase = true) } }
-        items(unlisted, key = { "provider:${it.url}" }) { source ->
-            PanelChoice(
-                title = source.label,
-                subtitle = "Available from this server · ${source.language}",
-                selected = false,
-                onClick = { onSelect(null, source) },
-            )
-        }
-        if (tracks.isEmpty()) item {
-            EmptyPanelMessage("This video has not exposed any subtitle tracks yet. Tracks embedded in the stream or loaded from its subtitle files will appear here.")
-        }
+        PageScrollbar(subtitleListState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

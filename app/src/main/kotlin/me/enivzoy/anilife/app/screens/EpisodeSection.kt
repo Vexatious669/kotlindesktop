@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,7 @@ import kotlinx.coroutines.CancellationException
 import me.enivzoy.anilife.app.data.AnimeEpisode
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.core.model.AnimeDetail
 
@@ -160,7 +162,7 @@ private fun EpisodePicker(
 
     if (ranges.size > 1) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(ranges) { index, range ->
+            itemsIndexed(ranges, key = { _, range -> episodeRangeLabel(range) }) { index, range ->
                 EpisodeControl(
                     text = episodeRangeLabel(range),
                     selected = rangeIndex == index,
@@ -186,19 +188,24 @@ private fun EpisodePicker(
         }
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = if (compact) 58.dp else 228.dp),
-        modifier = Modifier.fillMaxWidth().heightIn(max = if (compact) 360.dp else 680.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 14.dp),
-        verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 18.dp),
-    ) {
-        items(visible, key = AnimeEpisode::number) { episode ->
-            if (compact) {
-                CompactEpisodeButton(episode, onWatchEpisode)
-            } else {
-                EpisodeCard(episode, fallbackArt, onWatchEpisode)
+    val gridState = rememberLazyGridState()
+    Box(Modifier.fillMaxWidth().heightIn(max = if (compact) 360.dp else 680.dp)) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = if (compact) 58.dp else 228.dp),
+            modifier = Modifier.fillMaxSize(),
+            state = gridState,
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 18.dp),
+        ) {
+            items(visible, key = AnimeEpisode::number) { episode ->
+                if (compact) {
+                    CompactEpisodeButton(episode, onWatchEpisode)
+                } else {
+                    EpisodeCard(episode, fallbackArt, onWatchEpisode)
+                }
             }
         }
+        PageScrollbar(gridState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

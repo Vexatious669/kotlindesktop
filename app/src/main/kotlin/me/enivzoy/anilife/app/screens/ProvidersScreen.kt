@@ -53,6 +53,7 @@ import me.enivzoy.anilife.app.data.ImportedWasmProvider
 import me.enivzoy.anilife.app.data.ProviderCatalog
 import me.enivzoy.anilife.app.data.ProviderInfo
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import java.awt.datatransfer.DataFlavor
 import java.io.File
 import javax.swing.JFileChooser
@@ -125,11 +126,13 @@ fun ProvidersScreen(
 
     LaunchedEffect(Unit) { refresh() }
 
+    val scrollState = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
             .dragAndDropTarget(shouldStartDragAndDrop = { true }, target = dropTarget)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 32.dp, vertical = 30.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
@@ -230,6 +233,8 @@ fun ProvidersScreen(
                 lineHeight = 17.sp,
             )
         }
+    }
+    PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

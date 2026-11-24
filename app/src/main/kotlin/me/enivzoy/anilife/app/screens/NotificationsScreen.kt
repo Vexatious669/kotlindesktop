@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +47,7 @@ import me.enivzoy.anilife.app.data.ReleaseNotifier
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.Chip
 import me.enivzoy.anilife.app.ui.EmptyPanel
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -157,8 +159,11 @@ fun NotificationsScreen(
                 )
             }
         } else {
+            val listState = rememberLazyListState()
+            Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     start = 32.dp,
                     end = 32.dp,
@@ -180,6 +185,8 @@ fun NotificationsScreen(
                         NoticeCard(notice, onOpenAnime)
                     }
                 }
+            }
+            PageScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
         }
     }
