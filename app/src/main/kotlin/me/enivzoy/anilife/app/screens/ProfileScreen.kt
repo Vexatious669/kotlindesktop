@@ -35,6 +35,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -350,16 +351,21 @@ private fun LoadedProfile(
                 containerColor = AniLifeColors.Background,
                 contentColor = AniLifeColors.Foreground,
                 indicator = { positions ->
-                    val position = positions[tab]
                     TabRowDefaults.SecondaryIndicator(
-                        Modifier.offset(x = position.left).width(position.width),
+                        Modifier.tabIndicatorOffset(positions[tab]),
                         color = AniLifeColors.Primary,
                     )
                 },
                 divider = {},
             ) {
                 listOf("Overview", "Stats", "Activity").forEachIndexed { index, label ->
-                    Tab(selected = tab == index, onClick = { onTab(index) }, text = { Text(label, fontSize = 13.sp) })
+                    Tab(
+                        selected = tab == index,
+                        onClick = { onTab(index) },
+                        selectedContentColor = AniLifeColors.Foreground,
+                        unselectedContentColor = AniLifeColors.MutedForeground,
+                        text = { Text(label, fontSize = 13.sp) },
+                    )
                 }
             }
             when (tab) {

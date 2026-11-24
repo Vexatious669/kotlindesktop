@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -64,6 +63,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -259,15 +259,26 @@ fun DownloadsScreen(
             containerColor = AniLifeColors.Background,
             contentColor = AniLifeColors.Foreground,
             indicator = { tabPositions ->
-                val position = tabPositions[topTab]
                 TabRowDefaults.SecondaryIndicator(
-                    Modifier.offset(x = position.left).width(position.width),
+                    Modifier.tabIndicatorOffset(tabPositions[topTab]),
                     color = AniLifeColors.Primary,
                 )
             },
         ) {
-            Tab(selected = topTab == 0, onClick = { topTab = 0 }, text = { Text("Downloads") })
-            Tab(selected = topTab == 1, onClick = { topTab = 1 }, text = { Text("Upscale") })
+            Tab(
+                selected = topTab == 0,
+                onClick = { topTab = 0 },
+                selectedContentColor = AniLifeColors.Foreground,
+                unselectedContentColor = AniLifeColors.MutedForeground,
+                text = { Text("Downloads") },
+            )
+            Tab(
+                selected = topTab == 1,
+                onClick = { topTab = 1 },
+                selectedContentColor = AniLifeColors.Foreground,
+                unselectedContentColor = AniLifeColors.MutedForeground,
+                text = { Text("Upscale") },
+            )
         }
         if (topTab == 0) {
         error?.let { problem ->
