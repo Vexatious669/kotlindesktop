@@ -19,17 +19,22 @@ object MemoryProfiler {
     private const val SPIKE_BYTES = 200L * 1024L * 1024L
     private val running = AtomicBoolean(false)
     @Volatile private var job: Job? = null
+    @Volatile private var debugJob: Job? = null
     @Volatile private var lastUsedBytes = 0L
-    @Volatile private var lastDebugAt = 0L
 
     fun start(scope: CoroutineScope) {
         if (!running.compareAndSet(false, true)) return
         lastUsedBytes = usedBytes()
-        lastDebugAt = System.currentTimeMillis()
         job = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 delay(SAMPLE_INTERVAL_MS)
                 sample()
+            }
+        }
+        debugJob = scope.launch(Dispatchers.Default) {
+            while (isActive) {
+                delay(DEBUG_INTERVAL_MS)
+                logHeap()
             }
         }
     }
@@ -37,7 +42,9 @@ object MemoryProfiler {
     fun stop() {
         if (!running.compareAndSet(true, false)) return
         job?.cancel()
+        debugJob?.cancel()
         job = null
+        debugJob = null
     }
 
     private fun sample() {
@@ -54,11 +61,12 @@ object MemoryProfiler {
         if (delta > SPIKE_BYTES) {
             logger.warn { "heap spike ${delta / 1024 / 1024}MB in ${SAMPLE_INTERVAL_MS / 1000}s; ${threadDump()}" }
         }
-        val now = System.currentTimeMillis()
-        if (now - lastDebugAt >= DEBUG_INTERVAL_MS) {
-            lastDebugAt = now
-            logger.debug { "heap usage ${usedMb}MB / ${maxMb}MB" }
-        }
+    }
+
+    private fun logHeap() {
+        val runtime = Runtime.getRuntime()
+        val used = runtime.totalMemory() - runtime.freeMemory()
+        logger.debug { "heap usage ${used / 1024 / 1024}MB / ${runtime.maxMemory() / 1024 / 1024}MB" }
     }
 
     private fun usedBytes(): Long = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }
