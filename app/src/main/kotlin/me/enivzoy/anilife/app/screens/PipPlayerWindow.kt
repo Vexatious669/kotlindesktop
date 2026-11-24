@@ -6,12 +6,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -30,8 +32,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -45,6 +45,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import me.enivzoy.anilife.app.ui.AniLifeColors
 
+private val PipDragHandleHeight = 24.dp
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun PipPlayerWindow(
@@ -56,7 +58,6 @@ internal fun PipPlayerWindow(
     onPreviewKeyEvent: (KeyEvent) -> Boolean,
 ) {
     var showControls by remember { mutableStateOf(false) }
-    val density = LocalDensity.current
     val focusRequester = remember { FocusRequester() }
     val state = rememberWindowState(
         size = DpSize(400.dp, 225.dp),
@@ -82,22 +83,19 @@ internal fun PipPlayerWindow(
                 .focusRequester(focusRequester)
                 .focusable()
                 .onPointerEvent(PointerEventType.Enter) { showControls = true }
-                .onPointerEvent(PointerEventType.Exit) { showControls = false }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        // the frame has no title bar, so pointer drags have to move the window
-                        with(density) {
-                            state.position = WindowPosition.Absolute(
-                                (window.x + dragAmount.x).toDp(),
-                                (window.y + dragAmount.y).toDp(),
-                            )
-                        }
-                    }
-                },
+                .onPointerEvent(PointerEventType.Exit) { showControls = false },
         ) {
             Box(Modifier.fillMaxSize()) {
                 videoSurface(Modifier.fillMaxSize())
+                // drag handle must be separate from video surface or mpv intercepts the drag events
+                WindowDraggableArea(
+                    modifier = Modifier.align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(PipDragHandleHeight)
+                        .background(Color.Black.copy(alpha = 0.5f)),
+                ) {
+                    Box(Modifier.fillMaxSize())
+                }
                 AnimatedVisibility(
                     visible = showControls,
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
