@@ -45,7 +45,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import me.enivzoy.anilife.app.ui.AniLifeColors
 
-private val PipDragHandleHeight = 24.dp
+private val PipDragHandleHeight = 32.dp
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -87,12 +87,11 @@ internal fun PipPlayerWindow(
         ) {
             Box(Modifier.fillMaxSize()) {
                 videoSurface(Modifier.fillMaxSize())
-                // drag handle must be separate from video surface or mpv intercepts the drag events
+                // invisible drag handle keeps the video unobstructed and mpv out of the move gesture
                 WindowDraggableArea(
                     modifier = Modifier.align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .height(PipDragHandleHeight)
-                        .background(Color.Black.copy(alpha = 0.5f)),
+                        .height(PipDragHandleHeight),
                 ) {
                     Box(Modifier.fillMaxSize())
                 }
