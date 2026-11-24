@@ -169,7 +169,7 @@ fun main() {
                         state.placement = previousPlacement.value.takeUnless { it == WindowPlacement.Fullscreen }
                             ?: WindowPlacement.Floating
                     }
-            }, onExitApplication = ::exitApplication)
+            }, onPlayerPip = { pip -> state.isMinimized = pip }, onExitApplication = ::exitApplication)
                     }
                 }
             }

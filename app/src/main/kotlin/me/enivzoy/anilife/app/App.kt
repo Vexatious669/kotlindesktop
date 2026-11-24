@@ -95,6 +95,7 @@ private val logger = KotlinLogging.logger {}
 fun AniLifeApp(
     settingsStore: AppSettingsStore,
     onPlayerFullscreen: (Boolean) -> Unit = {},
+    onPlayerPip: (Boolean) -> Unit = {},
     onExitApplication: () -> Unit = {},
 ) {
     val animeVideoProviders = remember { AnimeVideoProviders() }
@@ -117,6 +118,7 @@ fun AniLifeApp(
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var homeLoaded by remember { mutableStateOf(false) }
     var playerFullscreen by remember { mutableStateOf(false) }
+    var isPipMode by remember { mutableStateOf(false) }
     val consumedWatchAutoPlays = remember { mutableStateListOf<Long>() }
     val scope = rememberCoroutineScope()
     var updateCheckStatus by remember { mutableStateOf<String?>(null) }
@@ -244,8 +246,10 @@ fun AniLifeApp(
 
     LaunchedEffect(screen) {
         playerFullscreen = screen is Screen.Player
+        if (screen !is Screen.Player) isPipMode = false
     }
     LaunchedEffect(playerFullscreen) { onPlayerFullscreen(playerFullscreen) }
+    LaunchedEffect(isPipMode) { onPlayerPip(isPipMode) }
 
     fun navigateTo(next: Screen) {
         if (next == screen) return
@@ -471,6 +475,9 @@ fun AniLifeApp(
                         settings = settings,
                         onSettingsChange = { updated -> updateSettings { updated } },
                         isFullscreen = playerFullscreen,
+                        isPipMode = isPipMode,
+                        onTogglePip = { isPipMode = !isPipMode },
+                        onClosePip = { isPipMode = false },
                         onToggleFullscreen = { playerFullscreen = !playerFullscreen },
                         onSourceSelect = { source ->
                             val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider

@@ -112,6 +112,9 @@ fun PlayerScreen(
     settings: AppSettings = AppSettings(),
     onSettingsChange: (AppSettings) -> Unit = {},
     isFullscreen: Boolean = true,
+    isPipMode: Boolean = false,
+    onTogglePip: () -> Unit = {},
+    onClosePip: () -> Unit = {},
     onToggleFullscreen: () -> Unit = {},
     onSourceSelect: (AnimeVideoSource) -> Unit = {},
     onAudioChange: (String) -> Unit = {},
@@ -467,6 +470,7 @@ fun PlayerScreen(
                 if (engine != null) engine.runPlayerAction(PlayerAction.MUTE)
             },
             onToggleFullscreen = onToggleFullscreen,
+            onTogglePip = onTogglePip,
             onSpeedChange = { delta ->
                 val action = if (delta > 0) PlayerAction.SPEED_UP else PlayerAction.SPEED_DOWN
                 val next = (playbackSpeed + delta).coerceIn(0.25f, 3f)
@@ -482,6 +486,30 @@ fun PlayerScreen(
             },
         )
     )
+
+    val videoSurface: @Composable (Modifier) -> Unit = { surfaceModifier ->
+        engine?.videoFrame?.let { frame ->
+            Image(
+                bitmap = frame,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = surfaceModifier,
+            )
+        }
+    }
+
+    if (isPipMode) {
+        PipPlayerWindow(
+            videoSurface = videoSurface,
+            isPlaying = isPlaying,
+            onTogglePause = { shortcutState.value.onTogglePause() },
+            onSeek = { shortcutState.value.onSeekRelative(it) },
+            onClose = onClosePip,
+            onPreviewKeyEvent = { event ->
+                handlePlayerShortcut(event, shortcutState.value, bindingsState.value)
+            },
+        )
+    }
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
@@ -519,14 +547,7 @@ fun PlayerScreen(
             }
         },
     ) {
-        engine?.videoFrame?.let { frame ->
-            Image(
-                bitmap = frame,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        if (!isPipMode) videoSurface(Modifier.fillMaxSize())
         val notice = engine?.error
             ?: engine?.takeIf { it.isLoading && it.videoFrame == null }?.let { "Buffering…" }
         if (notice != null) {

@@ -16,6 +16,7 @@ enum class PlayerAction(val label: String) {
     SUBTITLE_DELAY_EARLIER("Subtitle delay earlier"),
     SPEED_UP("Speed up"),
     SPEED_DOWN("Speed down"),
+    TOGGLE_PIP("Picture in picture"),
     ;
 }
 
@@ -33,6 +34,7 @@ val DefaultPlayerKeyBindings: Map<PlayerAction, Key> = linkedMapOf(
     PlayerAction.SUBTITLE_DELAY_EARLIER to Key.Z,
     PlayerAction.SPEED_UP to Key.RightBracket,
     PlayerAction.SPEED_DOWN to Key.LeftBracket,
+    PlayerAction.TOGGLE_PIP to Key.I,
 )
 
 private val DefaultPlayerKeyAliases: Map<Key, PlayerAction> = mapOf(

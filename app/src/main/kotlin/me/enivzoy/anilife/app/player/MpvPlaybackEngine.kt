@@ -313,6 +313,7 @@ class MpvPlaybackEngine(
             PlayerAction.VOLUME_DOWN -> mpv.command("add", "volume", "-5")
             PlayerAction.MUTE -> mpv.command("cycle", "mute")
             PlayerAction.FULLSCREEN -> Unit
+            PlayerAction.TOGGLE_PIP -> Unit
             PlayerAction.SUBTITLE_DELAY_LATER -> {
                 mpv.command("add", "sub-delay", "0.1")
                 subtitleDelaySeconds += 0.1

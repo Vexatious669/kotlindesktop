@@ -17,6 +17,7 @@ internal data class PlayerShortcuts(
     val onVolumeChange: (Int) -> Unit,
     val onToggleMute: () -> Unit,
     val onToggleFullscreen: () -> Unit,
+    val onTogglePip: () -> Unit,
     val onSpeedChange: (Float) -> Unit,
     val onSubtitleDelay: (Double) -> Unit,
 )
@@ -32,6 +33,7 @@ internal fun applyPlayerAction(action: PlayerAction, shortcuts: PlayerShortcuts)
         PlayerAction.VOLUME_DOWN -> shortcuts.onVolumeChange(-5)
         PlayerAction.MUTE -> shortcuts.onToggleMute()
         PlayerAction.FULLSCREEN -> shortcuts.onToggleFullscreen()
+        PlayerAction.TOGGLE_PIP -> shortcuts.onTogglePip()
         PlayerAction.SUBTITLE_DELAY_LATER -> shortcuts.onSubtitleDelay(0.1)
         PlayerAction.SUBTITLE_DELAY_EARLIER -> shortcuts.onSubtitleDelay(-0.1)
         PlayerAction.SPEED_UP -> shortcuts.onSpeedChange(0.1f)

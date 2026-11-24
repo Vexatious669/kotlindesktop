@@ -16,6 +16,7 @@ class PlayerShortcutsTest {
         val volumes = mutableListOf<Int>()
         var mutes = 0
         var fullscreens = 0
+        var pips = 0
         val speeds = mutableListOf<Float>()
         val delays = mutableListOf<Double>()
     }
@@ -26,6 +27,7 @@ class PlayerShortcutsTest {
         onVolumeChange = { recorded.volumes += it },
         onToggleMute = { recorded.mutes += 1 },
         onToggleFullscreen = { recorded.fullscreens += 1 },
+        onTogglePip = { recorded.pips += 1 },
         onSpeedChange = { recorded.speeds += it },
         onSubtitleDelay = { recorded.delays += it },
     )
@@ -69,9 +71,11 @@ class PlayerShortcutsTest {
         press(recorded, Key.X)
         press(recorded, Key.LeftBracket)
         press(recorded, Key.RightBracket)
+        press(recorded, Key.I)
 
         assertEquals(1, recorded.mutes)
         assertEquals(1, recorded.fullscreens)
+        assertEquals(1, recorded.pips)
         assertEquals(listOf(-0.1, 0.1), recorded.delays)
         assertEquals(listOf(-0.1f, 0.1f), recorded.speeds)
     }

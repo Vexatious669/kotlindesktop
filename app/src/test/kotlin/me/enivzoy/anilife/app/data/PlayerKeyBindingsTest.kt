@@ -9,6 +9,7 @@ class PlayerKeyBindingsTest {
     fun defaultsCoverEveryActionAndThePlayPauseAlias() {
         assertEquals(PlayerAction.entries.size, DefaultPlayerKeyBindings.size)
         assertEquals(Key.Spacebar, DefaultPlayerKeyBindings[PlayerAction.PLAY_PAUSE])
+        assertEquals(Key.I, DefaultPlayerKeyBindings[PlayerAction.TOGGLE_PIP])
         assertEquals(PlayerAction.PLAY_PAUSE, DefaultPlayerKeyBindings.playerActionFor(Key.K))
     }
 
@@ -26,6 +27,7 @@ class PlayerKeyBindingsTest {
         assertEquals(Key.Spacebar, parsed[PlayerAction.PLAY_PAUSE])
         assertEquals(Key.M, parsed[PlayerAction.MUTE])
         assertEquals(Key.RightBracket, parsed[PlayerAction.SPEED_UP])
+        assertEquals(Key.I, parsed[PlayerAction.TOGGLE_PIP])
         assertEquals(PlayerAction.PLAY_PAUSE, parsed.playerActionFor(Key.K))
     }
 
