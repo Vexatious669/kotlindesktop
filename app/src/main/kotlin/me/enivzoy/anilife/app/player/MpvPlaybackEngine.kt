@@ -13,6 +13,7 @@ import me.enivzoy.anilife.mpv.PropertyValue
 import me.enivzoy.anilife.mpv.defaultPlayerOptions
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
+import me.enivzoy.anilife.app.data.PlayerAction
 import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.SubtitleAppearance
 import kotlinx.serialization.json.Json
@@ -140,6 +141,7 @@ class MpvPlaybackEngine(
             mpv.observeDouble("time-pos")
             mpv.observeDouble("duration")
             mpv.observeFlag("pause")
+            mpv.observeFlag("mute")
             mpv.startEvents(::onEvent)
             val target = mpv.createSoftwareVideoSurface(renderWidth, renderHeight, renderFormat)
             surface = target
@@ -215,6 +217,7 @@ class MpvPlaybackEngine(
                     }
                     reportPresence(force = true)
                 }
+                "mute" -> (event.value as? PropertyValue.Flag)?.value?.let { isMuted = it }
             }
             Event.FileLoaded -> {
                 isLoading = false
@@ -296,6 +299,31 @@ class MpvPlaybackEngine(
         isPlaying = playing
         player?.setPaused(!playing)
         reportPresence(force = true)
+    }
+
+    fun runPlayerAction(action: PlayerAction) {
+        val mpv = player ?: return
+        when (action) {
+            PlayerAction.PLAY_PAUSE -> mpv.command("cycle", "pause")
+            PlayerAction.SEEK_FORWARD_5 -> mpv.command("seek", "5")
+            PlayerAction.SEEK_BACKWARD_5 -> mpv.command("seek", "-5")
+            PlayerAction.SEEK_FORWARD_10 -> mpv.command("seek", "10")
+            PlayerAction.SEEK_BACKWARD_10 -> mpv.command("seek", "-10")
+            PlayerAction.VOLUME_UP -> mpv.command("add", "volume", "5")
+            PlayerAction.VOLUME_DOWN -> mpv.command("add", "volume", "-5")
+            PlayerAction.MUTE -> mpv.command("cycle", "mute")
+            PlayerAction.FULLSCREEN -> Unit
+            PlayerAction.SUBTITLE_DELAY_LATER -> {
+                mpv.command("add", "sub-delay", "0.1")
+                subtitleDelaySeconds += 0.1
+            }
+            PlayerAction.SUBTITLE_DELAY_EARLIER -> {
+                mpv.command("add", "sub-delay", "-0.1")
+                subtitleDelaySeconds -= 0.1
+            }
+            PlayerAction.SPEED_UP -> mpv.command("add", "speed", "0.1")
+            PlayerAction.SPEED_DOWN -> mpv.command("add", "speed", "-0.1")
+        }
     }
 
     fun seekTo(seconds: Double) {

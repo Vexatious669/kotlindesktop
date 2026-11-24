@@ -1,5 +1,6 @@
 ﻿package me.enivzoy.anilife.app.data
 
+import androidx.compose.ui.input.key.Key
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -150,6 +151,25 @@ class AppSettingsTest {
                 persisted.homeSectionOrder,
             )
             assertEquals(setOf(HomeSection.CONTINUE_WATCHING), persisted.hiddenHomeSections)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun playerKeyBindingsPersistAndCanBeReset() {
+        val root = Files.createTempDirectory("AniLife-settings-keys")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val store = AppSettingsStore(file)
+            val rebound = rebindPlayerKey(DefaultPlayerKeyBindings, PlayerAction.MUTE, Key.Q).bindings
+            store.update { it.copy(keyBindings = rebound) }
+
+            val persisted = AppSettingsStore(file).settings.value
+            assertEquals(Key.Q, persisted.keyBindings[PlayerAction.MUTE])
+
+            store.update { it.copy(keyBindings = DefaultPlayerKeyBindings) }
+            assertEquals(DefaultPlayerKeyBindings, AppSettingsStore(file).settings.value.keyBindings)
         } finally {
             root.toFile().deleteRecursively()
         }

@@ -137,7 +137,7 @@ class Mpv(
 
     override fun loadfile(url: String, flags: String) {
         val escapedUrl = url.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "")
-        command(buildString {
+        runCommand(buildString {
             append("loadfile \"").append(escapedUrl).append('\"')
             if (flags.isNotBlank()) append(' ').append(flags)
         })
@@ -152,15 +152,15 @@ class Mpv(
     }
 
     fun seek(seconds: Int) {
-        command("seek $seconds relative")
+        runCommand("seek $seconds relative")
     }
 
     fun seekTo(seconds: Double) {
-        command("seek ${seconds.coerceAtLeast(0.0)} absolute+exact")
+        runCommand("seek ${seconds.coerceAtLeast(0.0)} absolute+exact")
     }
 
     fun seekRelative(seconds: Double) {
-        command("seek $seconds relative+exact")
+        runCommand("seek $seconds relative+exact")
     }
 
     fun setPaused(paused: Boolean) {
@@ -215,11 +215,11 @@ class Mpv(
     }
 
     fun stop() {
-        command("stop")
+        runCommand("stop")
     }
 
     fun cycleSubtitleTrack() {
-        command("cycle sid")
+        runCommand("cycle sid")
     }
 
     fun setSubtitlesEnabled(enabled: Boolean) {
@@ -231,7 +231,7 @@ class Mpv(
         val flags = if (select) "select" else "auto"
         val escapedTitle = title.orEmpty().replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "")
         val escapedLanguage = language.orEmpty().replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "")
-        command(buildString {
+        runCommand(buildString {
             append("sub-add \"").append(escapedUrl).append("\" ").append(flags)
             if (escapedTitle.isNotBlank() || escapedLanguage.isNotBlank()) append(" \"").append(escapedTitle).append('\"')
             if (escapedLanguage.isNotBlank()) append(" \"").append(escapedLanguage).append('\"')
@@ -429,7 +429,12 @@ class Mpv(
         check(code == MPV_ERROR_NONE) { "mpv property ${name}=${value} failed with code $code: ${errorString(code)}" }
     }
 
-    private fun command(value: String) {
+    fun command(vararg arguments: String) {
+        require(arguments.isNotEmpty())
+        runCommand(arguments.joinToString(" "))
+    }
+
+    private fun runCommand(value: String) {
         val code = callInt(mpvCommandString, arrayOf<Any?>(handle, cstr(value)))
         if (code != MPV_ERROR_NONE) logger.error { "mpv command failed code=$code ${errorString(code)}" }
         check(code == MPV_ERROR_NONE) { "mpv command failed: ${errorString(code)}" }

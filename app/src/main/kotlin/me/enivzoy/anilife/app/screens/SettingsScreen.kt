@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,6 +80,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -103,6 +109,10 @@ import me.enivzoy.anilife.app.data.DiscordOAuthState
 import me.enivzoy.anilife.app.data.DiscordOAuthStatus
 import me.enivzoy.anilife.app.data.DiscordPresenceState
 import me.enivzoy.anilife.app.data.DiscordPresenceStatus
+import me.enivzoy.anilife.app.data.DefaultPlayerKeyBindings
+import me.enivzoy.anilife.app.data.PlayerAction
+import me.enivzoy.anilife.app.data.playerKeyLabel
+import me.enivzoy.anilife.app.data.rebindPlayerKey
 import me.enivzoy.anilife.app.data.ANILIFE_ICON_URL
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.DiscordProfilePreview
@@ -132,6 +142,8 @@ fun SettingsScreen(
 ) {
     var page by remember { mutableStateOf(SettingsPage.Player) }
     var query by remember { mutableStateOf("") }
+    var listeningForAction by remember { mutableStateOf<PlayerAction?>(null) }
+    var shortcutMessage by remember { mutableStateOf<String?>(null) }
 
     val results = remember(query) {
         val needle = query.trim()
@@ -141,19 +153,38 @@ fun SettingsScreen(
         }
     }
 
-    Row(modifier.fillMaxSize().background(AniLifeColors.SettingsBackground)) {
-        SettingsSidebar(
-            page = page,
-            query = query,
-            onQueryChange = { query = it },
-            onSelect = {
-                page = it
-                query = ""
-            },
-        )
-        Box(Modifier.width(1.dp).fillMaxHeight().background(AniLifeColors.SettingsDivider))
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            SettingsHeader(
+    Box(
+        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            val target = listeningForAction ?: return@onPreviewKeyEvent false
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
+            if (event.key == Key.Escape) {
+                listeningForAction = null
+                shortcutMessage = null
+                return@onPreviewKeyEvent true
+            }
+            val rebind = rebindPlayerKey(settings.keyBindings, target, event.key)
+            onSettingsChange { current -> current.copy(keyBindings = rebind.bindings) }
+            shortcutMessage = buildString {
+                append("Saved ${playerKeyLabel(event.key)} for ${target.label}")
+                rebind.conflictWith?.let { append("; swapped with ${it.label}") }
+            }
+            listeningForAction = null
+            true
+        }
+    ) {
+        Row(modifier.fillMaxSize().background(AniLifeColors.SettingsBackground)) {
+            SettingsSidebar(
+                page = page,
+                query = query,
+                onQueryChange = { query = it },
+                onSelect = {
+                    page = it
+                    query = ""
+                },
+            )
+            Box(Modifier.width(1.dp).fillMaxHeight().background(AniLifeColors.SettingsDivider))
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                SettingsHeader(
                 title = if (query.isBlank()) page.title else "Search results",
                 subtitle = if (query.isBlank()) {
                     page.subtitle
@@ -178,7 +209,13 @@ fun SettingsScreen(
                     }
                 } else {
                     when (page) {
-                        SettingsPage.Player -> PlayerSettings(settings, onSettingsChange)
+                        SettingsPage.Player -> PlayerSettings(
+                            settings = settings,
+                            onSettingsChange = onSettingsChange,
+                            listeningForAction = listeningForAction,
+                            onListen = { listeningForAction = it },
+                            shortcutMessage = shortcutMessage,
+                        )
                         SettingsPage.Subtitles -> SubtitleSettings(settings, onSettingsChange)
                         SettingsPage.Downloads -> DownloadSettings(settings, onSettingsChange)
                         SettingsPage.Servers -> ServerSettings()
@@ -200,10 +237,27 @@ fun SettingsScreen(
                             checkingForUpdates = checkingForUpdates,
                             onCheckForUpdates = onCheckForUpdates,
                         )
-                        SettingsPage.About -> AboutSettings(currentVersion)
+                        SettingsPage.About -> AboutSettings(currentVersion, settings)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+            }
+        }
+        }
+        listeningForAction?.let { target ->
+            Box(
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(24.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AniLifeColors.Card)
+                    .border(1.dp, AniLifeColors.Border, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    "Press any key to bind to '${target.label}'... (Press ESC to cancel)",
+                    color = AniLifeColors.Foreground,
+                    fontSize = 13.sp,
+                )
             }
         }
     }
@@ -244,6 +298,7 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Skip outro automatically", SettingsPage.Player, "intro outro recap ending skip auto"),
     SettingSearchEntry("Screen size", SettingsPage.Player, "fit crop fill scaling display"),
     SettingSearchEntry("Player volume", SettingsPage.Player, "audio sound volume"),
+    SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebind shortcuts pause seek volume fullscreen"),
     SettingSearchEntry("Show captions by default", SettingsPage.Subtitles, "captions subtitles text default"),
     SettingSearchEntry("Preferred caption language", SettingsPage.Subtitles, "captions subtitles language"),
     SettingSearchEntry("Caption size", SettingsPage.Subtitles, "captions subtitles text scale size"),
@@ -405,7 +460,13 @@ private fun SearchResults(results: List<SettingSearchEntry>, onOpen: (SettingsPa
 }
 
 @Composable
-private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
+private fun PlayerSettings(
+    settings: AppSettings,
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
+    listeningForAction: PlayerAction?,
+    onListen: (PlayerAction?) -> Unit,
+    shortcutMessage: String?,
+) {
     SettingsRow(
         "Playback",
         "Which version to start with. You can switch per episode.",
@@ -503,6 +564,99 @@ private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSetting
             )
         }
     }
+    KeyboardShortcutsSection(
+        bindings = settings.keyBindings,
+        listeningForAction = listeningForAction,
+        onListen = onListen,
+        message = shortcutMessage,
+        onBindingsChange = { bindings -> onSettingsChange { it.copy(keyBindings = bindings) } },
+    )
+}
+
+@Composable
+private fun KeyboardShortcutsSection(
+    bindings: Map<PlayerAction, Key>,
+    listeningForAction: PlayerAction?,
+    onListen: (PlayerAction?) -> Unit,
+    message: String?,
+    onBindingsChange: (Map<PlayerAction, Key>) -> Unit,
+) {
+    SettingsSection("Keyboard Shortcuts") {
+        SettingsNote("Pick an action and press a key. A key already in use swaps its binding.")
+        val shape = RoundedCornerShape(12.dp)
+        Box(
+            Modifier.fillMaxWidth()
+                .height(324.dp)
+                .clip(shape)
+                .background(AniLifeColors.SettingsControl)
+                .border(1.dp, AniLifeColors.SettingsControlBorder, shape)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            LazyColumn(Modifier.fillMaxSize()) {
+                PlayerAction.entries.forEach { action ->
+                    item(key = action.name) {
+                        ShortcutBindingRow(
+                            action = action,
+                            key = bindings[action] ?: DefaultPlayerKeyBindings.getValue(action),
+                            listening = listeningForAction == action,
+                            onListen = onListen,
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SettingsButton("Restore Default Shortcuts") { onBindingsChange(DefaultPlayerKeyBindings) }
+            if (!message.isNullOrBlank()) {
+                Text(message, color = AniLifeColors.MutedForeground, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShortcutBindingRow(
+    action: PlayerAction,
+    key: Key,
+    listening: Boolean,
+    onListen: (PlayerAction?) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            action.label,
+            Modifier.weight(1f).padding(end = 12.dp),
+            color = AniLifeColors.Foreground,
+            fontSize = 13.sp,
+        )
+        ShortcutBadge(if (listening) "..." else playerKeyLabel(key))
+        Spacer(Modifier.width(10.dp))
+        SettingsButton(if (listening) "Listening..." else "Change") {
+            onListen(if (listening) null else action)
+        }
+    }
+}
+
+@Composable
+private fun ShortcutBadge(label: String) {
+    val shape = RoundedCornerShape(7.dp)
+    Text(
+        label,
+        Modifier.clip(shape)
+            .background(AniLifeColors.Background)
+            .border(1.dp, AniLifeColors.Border, shape)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+        color = AniLifeColors.Foreground,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+    )
 }
 
 @Composable
@@ -1452,7 +1606,7 @@ private fun AppSettingsPage(
 }
 
 @Composable
-private fun AboutSettings(currentVersion: String) {
+private fun AboutSettings(currentVersion: String, settings: AppSettings) {
     val uriHandler = LocalUriHandler.current
     var linkError by remember { mutableStateOf(false) }
 
@@ -1546,30 +1700,21 @@ private fun AboutSettings(currentVersion: String) {
         AboutCard {
             Text("Keyboard shortcuts", color = AniLifeColors.Foreground, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Player shortcuts work while a video is open.",
+                "Player shortcuts work while a video is open. Change them under Player settings.",
                 color = AniLifeColors.MutedForeground,
                 fontSize = 12.sp,
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "Space / K", "Play or pause")
-                    AboutShortcut(Modifier.weight(1f), "← / →", "Seek 5 seconds")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "J / L", "Seek 10 seconds")
-                    AboutShortcut(Modifier.weight(1f), "↑ / ↓", "Change volume")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "M", "Mute")
-                    AboutShortcut(Modifier.weight(1f), "F", "Fullscreen")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "Z / X", "Subtitle delay")
-                    AboutShortcut(Modifier.weight(1f), "[ / ]", "Playback speed")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "Enter", "Skip intro / outro")
-                    AboutShortcut(Modifier.weight(1f), "N / P", "Next / previous episode")
+                PlayerAction.entries.chunked(2).forEach { actions ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        actions.forEach { action ->
+                            AboutShortcut(
+                                Modifier.weight(1f),
+                                playerKeyLabel(settings.keyBindings[action] ?: DefaultPlayerKeyBindings.getValue(action)),
+                                action.label,
+                            )
+                        }
+                    }
                 }
             }
         }

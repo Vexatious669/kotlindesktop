@@ -1,5 +1,6 @@
 ﻿package me.enivzoy.anilife.app.data
 
+import androidx.compose.ui.input.key.Key
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
@@ -109,6 +110,7 @@ data class AppSettings(
     val captionVerticalOffset: Float = 3f,
     val captionAlignment: String = "center",
     val captionPreset: String = "classic",
+    val keyBindings: Map<PlayerAction, Key> = DefaultPlayerKeyBindings,
 ) {
     val subtitleAppearance: SubtitleAppearance
         get() = SubtitleAppearance(
@@ -193,6 +195,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             captionVerticalOffset = properties.getProperty("captionVerticalOffset", "3.0").toFloatOrNull() ?: 3f,
             captionAlignment = properties.getProperty("captionAlignment", "center"),
             captionPreset = properties.getProperty("captionPreset", "classic"),
+            keyBindings = parsePlayerKeyBindings(properties.getProperty("playerKeyBindings")),
         ).validated()
     }
 
@@ -249,6 +252,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("captionVerticalOffset", settings.captionVerticalOffset.toString())
             setProperty("captionAlignment", settings.captionAlignment)
             setProperty("captionPreset", settings.captionPreset)
+            setProperty("playerKeyBindings", serializePlayerKeyBindings(settings.keyBindings))
         }
         file.outputStream().use { properties.store(it, null) }
     }
@@ -288,6 +292,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         captionVerticalOffset = captionVerticalOffset.takeIf(Float::isFinite)?.coerceIn(0f, 30f) ?: 3f,
         captionAlignment = captionAlignment.takeIf { it in captionAlignments } ?: "center",
         captionPreset = captionPreset.takeIf { it in captionPresets } ?: "custom",
+        keyBindings = keyBindings.withPlayerDefaults(),
     )
 
     companion object {
