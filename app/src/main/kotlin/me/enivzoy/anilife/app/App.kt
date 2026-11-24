@@ -394,6 +394,7 @@ fun AniLifeApp(
                         onSettingsChange = ::updateSettings,
                         onPlay = { title, url -> navigateTo(Screen.Player(title, url)) },
                         onOpen = { id -> navigateTo(Screen.Detail(id)) },
+                        onBrowse = { navigateTo(Screen.Browse) },
                         queueManager = downloadQueue,
                     )
                     is Screen.Detail -> DetailScreen(
