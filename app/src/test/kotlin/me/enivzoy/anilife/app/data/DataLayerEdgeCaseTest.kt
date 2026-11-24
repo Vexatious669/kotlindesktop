@@ -129,15 +129,21 @@ class DataLayerEdgeCaseTest {
             val validUrl = "http://127.0.0.1:${server.address.port}/installer.exe"
             val dest = root.resolve("anilife.exe")
 
-            assertFalse(updater.download(Update("1.1.0", "", "ftp://example.com/a.exe", 0, ""), dest))
-            assertFalse(
+            assertFailsWith<UpdateException> {
+                updater.download(Update("1.1.0", "", "ftp://example.com/a.exe", 0, ""), dest)
+            }
+            assertFailsWith<UpdateHttpException> {
                 updater.download(
                     Update("1.1.0", "", "http://127.0.0.1:${server.address.port}/missing.exe", 0, ""),
                     dest,
-                ),
-            )
-            assertFalse(updater.download(Update("1.1.0", "", validUrl, payload.size + 5L, sha256), dest))
-            assertFalse(updater.download(Update("1.1.0", "", validUrl, payload.size.toLong(), "0000"), dest))
+                )
+            }
+            assertFailsWith<SizeMismatchException> {
+                updater.download(Update("1.1.0", "", validUrl, payload.size + 5L, sha256), dest)
+            }
+            assertFailsWith<ChecksumException> {
+                updater.download(Update("1.1.0", "", validUrl, payload.size.toLong(), "0000"), dest)
+            }
 
             assertTrue(updater.download(Update("1.1.0", "", validUrl, payload.size.toLong(), sha256), dest))
             assertEquals(payload.toList(), Files.readAllBytes(dest).toList())
