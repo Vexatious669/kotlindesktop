@@ -9,21 +9,16 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.util.zip.ZipInputStream
+import java.nio.file.Files
 
-/** Downloads libmpv on first launch when it isn't already available. */
 object MpvBootstrap {
-    private const val RELEASE_API = "https://api.github.com/repos/mpv-player/mpv/releases/latest"
-    private const val USER_AGENT = "AniLife/1.0"
-
-    /** Returns the path to a usable libmpv, downloading one if necessary. */
     suspend fun ensure(onStatus: (String) -> Unit = {}): String? {
         Mpv.defaultLibraryPath()?.let { return it }
         if (!System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
             onStatus("libmpv not found")
             return null
         }
-        val targetDir = File(System.getProperty("user.home"), ".anilife").apply { mkdirs() }
+        val targetDir = dependencyDirectory().resolve("mpv").apply { mkdirs() }
         val target = File(targetDir, "libmpv-2.dll")
         if (target.exists() && target.length() > 0) {
             System.setProperty("AniLife.mpv.library", target.absolutePath)
@@ -62,11 +57,21 @@ object MpvBootstrap {
                     System.setProperty("AniLife.mpv.library", target.absolutePath)
                     onStatus("mpv ready")
                     target.absolutePath
-                } else null
+                } else {
+                    null
+                }
             }
-        } catch (e: Throwable) {
-            onStatus("mpv download failed: ${e.message}")
+        } catch (error: Throwable) {
+            onStatus("mpv download failed: ${error.message}")
             null
         }
     }
+
+    private fun request(url: String, accept: String): HttpRequest =
+        HttpRequest.newBuilder(URI.create(url))
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", accept)
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .GET()
+            .build()
 }

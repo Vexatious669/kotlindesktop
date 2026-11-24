@@ -326,17 +326,24 @@ fun DownloadsScreen(
                     }
                 },
             )
-        } else if (selectedDownloadAnime == null) {
-            val watchedKeys = remember(continueEntries) {
-                buildSet<String> {
-                    continueEntries.forEach { entry ->
-                        val progress = entry.progress
-                        val lastWatched = if (progress.position >= progress.duration * 0.9) progress.episode else progress.episode - 1.0
-                        var episode = 1.0
-                        // continue rows point at the next unwatched episode, so earlier ones are watched.
-                        while (episode <= lastWatched) {
-                            add(downloadWatchedKey(entry.anime.title, entry.anime.id, episode))
-                            episode += 1.0
+        } else if (selectedDownloadAnime == null && episodes.isEmpty() && downloadJobs.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                EmptyPanel(
+                    icon = Icons.Rounded.Download,
+                    title = "No local episodes yet",
+                    message = "Auto detect scans folders and matches their anime titles. Import a portable library JSON to restore the files listed by your other AniLife install.",
+                    action = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { selectMediaFolder()?.let(::beginScan) }, enabled = !scanning && !importing) {
+                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text("Auto detect")
+                            }
+                            OutlinedButton(onClick = onBrowse, enabled = !importing) {
+                                Icon(Icons.Rounded.Explore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text("Browse")
+                            }
                         }
                     }
                 }
