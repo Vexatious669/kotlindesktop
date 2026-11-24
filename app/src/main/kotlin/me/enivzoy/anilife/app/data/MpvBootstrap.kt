@@ -29,29 +29,28 @@ object MpvBootstrap {
         return try {
             withContext(Dispatchers.IO) {
                 val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()
-                val releaseRequest = HttpRequest.newBuilder(URI.create(RELEASE_API))
-                    .header("User-Agent", USER_AGENT).GET().build()
+                val releaseRequest = request(MPV_RELEASES, "application/vnd.github+json")
                 val releaseJson = ResourceTracker.networkOpened(releaseRequest.uri().host).use {
                     client.send(releaseRequest, HttpResponse.BodyHandlers.ofString())
                 }.body()
-                val assetUrl = Regex("\"browser_download_url\"\\s*:\\s*\"([^\"]*libmpv-[^\"]*x86_64-w64-mingw32-lgpl\\.zip)\"")
-                    .find(releaseJson)?.groupValues?.get(1)
-                    ?: return@withContext null
+                val source = parseReleaseSource(releaseJson, releaseAssetPattern(Dependency.MPV))
                 onStatus("fetching libmpv…")
-                val assetRequest = HttpRequest.newBuilder(URI.create(assetUrl)).header("User-Agent", USER_AGENT).GET().build()
-                val zipBytes = ResourceTracker.networkOpened(assetRequest.uri().host).use {
-                    client.send(assetRequest, HttpResponse.BodyHandlers.ofByteArray())
-                }.body()
-                onStatus("extracting…")
-                ZipInputStream(zipBytes.inputStream()).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        if (entry.name.endsWith("libmpv-2.dll")) {
-                            target.outputStream().use { out -> zis.copyTo(out) }
-                            break
-                        }
-                        entry = zis.nextEntry
-                    }
+                val archive = Files.createTempFile("anilife-mpv-", ".7z")
+                try {
+                    val assetRequest = request(source.url, "application/octet-stream")
+                    val bytes = ResourceTracker.networkOpened(assetRequest.uri().host).use {
+                        client.send(assetRequest, HttpResponse.BodyHandlers.ofByteArray())
+                    }.body()
+                    Files.write(archive, bytes)
+                    onStatus("extracting…")
+                    extractArchive(
+                        archive,
+                        targetDir.toPath(),
+                        name = { it.substringAfterLast('/') },
+                        keep = { it.equals("libmpv-2.dll", ignoreCase = true) },
+                    )
+                } finally {
+                    Files.deleteIfExists(archive)
                 }
                 if (target.exists() && target.length() > 0) {
                     System.setProperty("AniLife.mpv.library", target.absolutePath)
