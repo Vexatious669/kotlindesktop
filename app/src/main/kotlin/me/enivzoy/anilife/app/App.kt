@@ -75,6 +75,9 @@ import me.enivzoy.anilife.app.data.MpvBootstrap
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.ReleaseNotifier
 import me.enivzoy.anilife.core.model.Update
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+import me.enivzoy.anilife.core.diagnostics.MemoryProfiler
+import io.github.oshai.kotlinlogging.KotlinLogging
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AppSidebar
 import me.enivzoy.anilife.app.ui.liquidGlass
@@ -86,9 +89,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
- 
-
-
+private val logger = KotlinLogging.logger {}
 
 @Composable
 fun AniLifeApp(
@@ -182,10 +183,14 @@ fun AniLifeApp(
     }
 
     LaunchedEffect(Unit) {
+        MemoryProfiler.start(this)
         AniListSync.restore()
         MyAnimeListSync.configure()
         MyAnimeListSync.restore()
         DiscordOAuth.restore()
+    }
+    DisposableEffect(Unit) {
+        onDispose { MemoryProfiler.stop() }
     }
     LaunchedEffect(settings.checkUpdatesOnLaunch) {
         if (settings.checkUpdatesOnLaunch) {
@@ -275,6 +280,7 @@ fun AniLifeApp(
 
     suspend fun resolvePlayerEpisode(target: Screen.Player, episode: Double, audio: String) {
         val anime = target.detail ?: return
+        val startedAt = System.nanoTime()
         val rows = animeVideoProviders.episodes(anime.id, anime.episodes, anime.malId)
         val resolved = animeVideoProviders.sources(
             anilistId = anime.id,
@@ -283,7 +289,18 @@ fun AniLifeApp(
             episode = episode,
             dub = audio.equals("Dub", ignoreCase = true),
         )
-        val selected = resolved.firstOrNull() ?: return
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+        val selected = resolved.firstOrNull()
+        if (selected == null) {
+            logger.warn { "stream resolution found no servers; episode=$episode audio=$audio elapsedMs=$elapsedMs" }
+            return
+        }
+        val fallback = !target.url.isNullOrBlank() && resolved.none { it.url == target.url }
+        logger.info {
+            "stream resolved episode=$episode audio=$audio servers=${resolved.size} elapsedMs=$elapsedMs " +
+                "fallback=$fallback selected=${selected.provider}/${selected.server}"
+        }
+        if (fallback) logger.warn { "fallback server used for episode=$episode selected=${selected.provider}/${selected.server}" }
         val current = screen as? Screen.Player ?: return
         if (current.detail?.id != anime.id) return
         val label = formatPlayerEpisode(episode)
@@ -456,6 +473,9 @@ fun AniLifeApp(
                         isFullscreen = playerFullscreen,
                         onToggleFullscreen = { playerFullscreen = !playerFullscreen },
                         onSourceSelect = { source ->
+                            val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
+                            ActionBreadcrumbs.record("Clicked server: $serverName")
+                            logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality} url=${source.url}" }
                             screen = target.copy(
                                 title = "${target.detail?.title ?: target.title.substringBefore(" · Episode ")} · Episode ${formatPlayerEpisode(target.episode ?: 1.0)} · ${source.provider} ${source.quality ?: source.format.uppercase()}",
                                 url = source.url,

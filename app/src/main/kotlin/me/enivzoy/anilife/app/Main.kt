@@ -21,6 +21,9 @@ import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import io.github.oshai.kotlinlogging.KotlinLogging
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
 import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.ui.GlassHost
@@ -37,7 +40,11 @@ import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.geom.AffineTransform
 
+private val logger = KotlinLogging.logger {}
+
 fun main() {
+    runCatching { DiagnosticsPaths.ensure() }
+    installFatalExceptionHandler()
     if (relaunchWithSetupJre()) return
     application {
     val setupScope = rememberCoroutineScope()
@@ -166,6 +173,17 @@ fun main() {
                     }
                 }
             }
+        }
+    }
+}
+
+private fun installFatalExceptionHandler() {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        runCatching {
+            logger.error(throwable) { "FATAL uncaught exception on ${thread.name}" }
+            if (throwable is OutOfMemoryError) ActionBreadcrumbs.dump()
+            previous?.uncaughtException(thread, throwable) ?: throwable.printStackTrace()
         }
     }
 }

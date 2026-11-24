@@ -51,7 +51,11 @@ import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.AnimeDetail
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
+
+private val logger = KotlinLogging.logger {}
 
 @Composable
 fun AnimeWatchScreen(
@@ -110,6 +114,7 @@ fun AnimeWatchScreen(
     val activeEpisode = selectedEpisode
     LaunchedEffect(anilistId, activeEpisode, resolveAttempt, episodes.isNotEmpty()) {
         if (activeEpisode == null || episodes.isEmpty()) return@LaunchedEffect
+        val startedAt = System.nanoTime()
         try {
             val resolved = providers.sources(
                 anilistId = anilistId,
@@ -119,9 +124,12 @@ fun AnimeWatchScreen(
                 dub = dub,
             )
             sources = resolved
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
             if (resolved.isEmpty()) {
+                logger.warn { "stream resolution found no servers; episode=$activeEpisode audio=$dub elapsedMs=$elapsedMs" }
                 error = "No ${if (dub) "dub" else "sub"} streams were returned. Try another episode or audio track."
             } else {
+                logger.info { "stream resolved episode=$activeEpisode audio=$dub servers=${resolved.size} elapsedMs=$elapsedMs" }
                 error = null
                 // The initial episode (opened from the detail page) auto-plays once; if the user
                 // returns from the player we keep the resolved servers visible instead of looping
@@ -259,6 +267,9 @@ fun AnimeWatchScreen(
                                 }
                                 items(langSources, key = { "${it.provider}:${it.audio}:${it.server}:${it.url}" }) { source ->
                                     ServerRow(source = source) {
+                                        val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
+                                        ActionBreadcrumbs.record("Clicked server: $serverName")
+                                        logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality}" }
                                         val ep = episodeNumber(activeEpisode)
                                         onPlay(
                                             "$title · Episode $ep · ${source.provider} ${source.quality ?: source.format.uppercase()}",

@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.data
 
 import me.enivzoy.anilife.mpv.Mpv
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -33,19 +34,19 @@ object MpvBootstrap {
         return try {
             withContext(Dispatchers.IO) {
                 val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()
-                val releaseJson = client.send(
-                    HttpRequest.newBuilder(URI.create(RELEASE_API))
-                        .header("User-Agent", USER_AGENT).GET().build(),
-                    HttpResponse.BodyHandlers.ofString(),
-                ).body()
+                val releaseRequest = HttpRequest.newBuilder(URI.create(RELEASE_API))
+                    .header("User-Agent", USER_AGENT).GET().build()
+                val releaseJson = ResourceTracker.networkOpened(releaseRequest.uri().host).use {
+                    client.send(releaseRequest, HttpResponse.BodyHandlers.ofString())
+                }.body()
                 val assetUrl = Regex("\"browser_download_url\"\\s*:\\s*\"([^\"]*libmpv-[^\"]*x86_64-w64-mingw32-lgpl\\.zip)\"")
                     .find(releaseJson)?.groupValues?.get(1)
                     ?: return@withContext null
                 onStatus("fetching libmpv…")
-                val zipBytes = client.send(
-                    HttpRequest.newBuilder(URI.create(assetUrl)).header("User-Agent", USER_AGENT).GET().build(),
-                    HttpResponse.BodyHandlers.ofByteArray(),
-                ).body()
+                val assetRequest = HttpRequest.newBuilder(URI.create(assetUrl)).header("User-Agent", USER_AGENT).GET().build()
+                val zipBytes = ResourceTracker.networkOpened(assetRequest.uri().host).use {
+                    client.send(assetRequest, HttpResponse.BodyHandlers.ofByteArray())
+                }.body()
                 onStatus("extracting…")
                 ZipInputStream(zipBytes.inputStream()).use { zis ->
                     var entry = zis.nextEntry

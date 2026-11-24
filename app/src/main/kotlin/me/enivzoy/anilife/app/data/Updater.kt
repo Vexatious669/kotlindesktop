@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.data
 
 import me.enivzoy.anilife.core.model.Update
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,19 +74,31 @@ class Updater(
             .header("Accept", "*/*")
             .GET()
             .build()
-        val response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
+        val lease = ResourceTracker.networkOpened(request.uri().host)
+        val response = try {
+            http.send(request, HttpResponse.BodyHandlers.ofInputStream())
+        } catch (failure: Throwable) {
+            lease.close()
+            throw failure
+        }
+        val streamBody = lease.track(response.body())
         if (response.statusCode() >= 400) {
-            response.body().close()
+            streamBody.close()
             System.err.println("[Updater] asset download failed (HTTP ${response.statusCode()})")
             return@withContext false
         }
         val parent = destination.toAbsolutePath().parent
-        Files.createDirectories(parent)
-        val temporary = Files.createTempFile(parent, destination.fileName.toString(), ".part")
+        val temporary = try {
+            Files.createDirectories(parent)
+            Files.createTempFile(parent, destination.fileName.toString(), ".part")
+        } catch (failure: Throwable) {
+            streamBody.close()
+            throw failure
+        }
         val digest = MessageDigest.getInstance("SHA-256")
         var copied = 0L
         try {
-            response.body().use { input ->
+            streamBody.use { input ->
                 Files.newOutputStream(temporary).use { output ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
@@ -138,7 +151,9 @@ class Updater(
                 .header("Accept", "application/vnd.github+json")
                 .GET()
                 .build()
-            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            val response = ResourceTracker.networkOpened(request.uri().host).use {
+                http.send(request, HttpResponse.BodyHandlers.ofString())
+            }
             if (response.statusCode() >= 400) {
                 failures += "$url (HTTP ${response.statusCode()})"
                 continue

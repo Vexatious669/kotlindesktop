@@ -2,6 +2,8 @@
 
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.NextAiring
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +35,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.Properties
+
+private val logger = KotlinLogging.logger {}
 
 data class LocalEpisode(
     val anime: AnimeCard,
@@ -453,22 +457,31 @@ object DirectMediaDownloader {
                 }
                 headers.forEach { (name, value) -> requestBuilder.header(name, value) }
                 val request = requestBuilder.build()
-                val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
+                val lease = ResourceTracker.networkOpened(request.uri().host)
+                val response = try {
+                    client.send(request, HttpResponse.BodyHandlers.ofInputStream())
+                } catch (failure: Throwable) {
+                    lease.close()
+                    throw failure
+                }
+                val input = lease.track(response.body())
                 require(response.statusCode() in 200..299) { "The video server returned HTTP ${response.statusCode()}." }
                 val contentLength = response.headers().firstValue("Content-Length")
                 val totalBytes = if (contentLength.isPresent) contentLength.get().toLongOrNull() else null
-                val input = response.body()
                 val buffer = ByteArray(64 * 1024)
                 var downloaded = 0L
-                temporary.outputStream().use { output ->
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        downloaded += read.toLong()
-                        onProgress?.invoke(downloaded, totalBytes)
+                input.use { stream ->
+                    temporary.outputStream().use { output ->
+                        while (true) {
+                            val read = stream.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            downloaded += read.toLong()
+                            onProgress?.invoke(downloaded, totalBytes)
+                        }
                     }
                 }
+                logger.info { "download finished host=${request.uri().host} bytes=$downloaded expected=$totalBytes" }
                 require(downloaded > 0L) { "The video server returned an empty file." }
                 try {
                     Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
@@ -550,9 +563,11 @@ object DirectMediaDownloader {
             add(ffmpeg)
             addAll(streamArguments(url, headers, temporary.absolutePath, container))
         }
+        logger.info { "ffmpeg command: ${command.joinToString(" ")}" }
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         try {
             var lastSize = -1L
+            var drops = 0
             val diagnostics = mutableListOf<String>()
             process.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                 while (true) {
@@ -561,20 +576,31 @@ object DirectMediaDownloader {
                     if (line.startsWith("total_size=")) {
                         val size = line.substringAfter('=').trim().toLongOrNull()
                         if (size != null && size >= 0L && size != lastSize) {
+                            if (lastSize > 0L && size < lastSize) {
+                                drops++
+                                logger.warn { "stream byte size dropped from $lastSize to $size" }
+                            }
                             lastSize = size
                             onProgress?.invoke(size, null)
                         }
                     } else if (!line.startsWith("progress=") && line.isNotBlank()) {
                         diagnostics.add(line)
+                        if (line.contains("connection", ignoreCase = true) || line.contains("timed out", ignoreCase = true)) {
+                            drops++
+                            logger.warn { "ffmpeg stream drop: $line" }
+                        }
                     }
                 }
             }
             val exit = process.waitFor()
             if (!coroutineContext.isActive) throw CancellationException("Download cancelled.")
+            logger.info { "ffmpeg stream finished host=${URI(url).host} reportedBytes=$lastSize drops=$drops exit=$exit" }
             require(exit == 0) {
                 "FFmpeg exited with code $exit. ${diagnostics.takeLast(3).joinToString(" ").take(240)}"
             }
-            require(Files.isRegularFile(temporary.toPath()) && Files.size(temporary.toPath()) > 0L) {
+            val bytes = if (Files.isRegularFile(temporary.toPath())) Files.size(temporary.toPath()) else 0L
+            logger.info { "stream download bytes=$bytes" }
+            require(bytes > 0L) {
                 "The stream download produced an empty file."
             }
             try {

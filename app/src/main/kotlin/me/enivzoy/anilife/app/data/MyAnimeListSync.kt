@@ -26,6 +26,7 @@ import java.util.Base64
 import java.util.Properties
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 
 data class MyAnimeListUser(val id: Long, val name: String, val picture: String?)
 data class MyAnimeListEntry(
@@ -204,7 +205,9 @@ object MyAnimeListSync {
     }
 
     private suspend fun requestJson(request: HttpRequest) = withContext(Dispatchers.IO) {
-        val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+        val response = ResourceTracker.networkOpened(request.uri().host).use {
+            http.send(request, HttpResponse.BodyHandlers.ofString())
+        }
         val body = runCatching { json.parseToJsonElement(response.body()).jsonObject }.getOrNull()
         if (response.statusCode() !in 200..299) {
             val detail = body?.get("message")?.jsonPrimitive?.contentOrNull

@@ -12,6 +12,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import me.enivzoy.anilife.core.model.AnimeCard
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -335,7 +336,9 @@ internal class AniListAccountApi(
                     .header("Authorization", "Bearer $token")
                     .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(JsonObject.serializer(), payload)))
                     .build()
-                val response = http.send(httpRequest, HttpResponse.BodyHandlers.ofString())
+                val response = ResourceTracker.networkOpened(httpRequest.uri().host).use {
+                    http.send(httpRequest, HttpResponse.BodyHandlers.ofString())
+                }
                 parseGraphQlResponse(response.statusCode(), response.body())
             }
 
