@@ -456,7 +456,7 @@ private fun AvatarWithDndBadge(
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(CircleShape)
-                        .background(Color.White),
+                        .background(AniLifeColors.SurfaceVariant),
                 )
             } else {
                 Box(

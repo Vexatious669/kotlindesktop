@@ -302,7 +302,7 @@ private fun LoadedProfile(
     onOpenProfile: (String) -> Unit,
     onLogout: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxSize().background(AniLifeColors.Background).verticalScroll(rememberScrollState())) {
         Box(Modifier.fillMaxWidth().height(220.dp).background(AniLifeColors.SurfaceVariant)) {
             RemoteImage(
                 url = data.banner,
@@ -343,6 +343,7 @@ private fun LoadedProfile(
             Spacer(Modifier.height(20.dp))
             TabRow(
                 selectedTabIndex = tab,
+                modifier = Modifier.background(AniLifeColors.Background),
                 containerColor = AniLifeColors.Background,
                 contentColor = AniLifeColors.Foreground,
                 indicator = { positions ->
@@ -352,6 +353,7 @@ private fun LoadedProfile(
                         color = AniLifeColors.Primary,
                     )
                 },
+                divider = {},
             ) {
                 listOf("Overview", "Stats", "Activity").forEachIndexed { index, label ->
                     Tab(selected = tab == index, onClick = { onTab(index) }, text = { Text(label, fontSize = 13.sp) })

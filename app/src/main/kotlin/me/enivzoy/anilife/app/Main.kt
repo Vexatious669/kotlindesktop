@@ -24,6 +24,7 @@ import com.sun.jna.Pointer
 import io.github.oshai.kotlinlogging.KotlinLogging
 import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
 import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
+import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.ui.GlassHost
@@ -70,9 +71,13 @@ fun main() {
         state = state,
         icon = icon,
     ) {
-        LaunchedEffect(Unit) {
+        LaunchedEffect(appSettings) {
             window.minimumSize = Dimension(800, 480)
-            window.background = Color(10, 15, 10)
+            AniLifeColors.update(appSettings)
+            val background = awtColor(AniLifeColors.Background)
+            window.background = background
+            window.contentPane.background = background
+            window.rootPane.background = background
             applyDarkTitleBar(window)
         }
         AniLifeTheme(appSettings) {
@@ -252,6 +257,9 @@ private fun initialWindowSize(): DpSize {
 private fun loadWindowIcon(): BitmapPainter? = AniLifeIcon.load(64)?.let(::BitmapPainter)
 
  
+private fun awtColor(color: androidx.compose.ui.graphics.Color) =
+    Color(color.red, color.green, color.blue)
+
 private fun applyDarkTitleBar(window: java.awt.Window) {
     if (!System.getProperty("os.name").orEmpty().lowercase().contains("windows")) return
     runCatching {
