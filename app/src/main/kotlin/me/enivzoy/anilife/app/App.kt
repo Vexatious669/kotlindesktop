@@ -386,7 +386,7 @@ fun AniLifeApp(
                 }
             },
     ) {
-    Row(Modifier.fillMaxSize().background(AniLifeColors.Background)) {
+    Row(Modifier.fillMaxSize()) {
         if (screen !is Screen.Player) {
             AppSidebar(
                 current = screen,

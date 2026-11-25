@@ -108,6 +108,9 @@ import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.UpscaleQueueManager
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.EmptyPanel
+import me.enivzoy.anilife.app.ui.GlassButton
+import me.enivzoy.anilife.app.ui.GlassSegmentedControl
+import me.enivzoy.anilife.app.ui.GlassTabBar
 import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.appTween
 import me.enivzoy.anilife.app.ui.rememberAppFloat
@@ -254,32 +257,12 @@ fun DownloadsScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-        TabRow(
-            selectedTabIndex = topTab,
-            containerColor = AniLifeColors.Background,
-            contentColor = AniLifeColors.Foreground,
-            indicator = { tabPositions ->
-                TabRowDefaults.SecondaryIndicator(
-                    Modifier.tabIndicatorOffset(tabPositions[topTab]),
-                    color = AniLifeColors.Primary,
-                )
-            },
-        ) {
-            Tab(
-                selected = topTab == 0,
-                onClick = { topTab = 0 },
-                selectedContentColor = AniLifeColors.Foreground,
-                unselectedContentColor = AniLifeColors.MutedForeground,
-                text = { Text("Downloads") },
-            )
-            Tab(
-                selected = topTab == 1,
-                onClick = { topTab = 1 },
-                selectedContentColor = AniLifeColors.Foreground,
-                unselectedContentColor = AniLifeColors.MutedForeground,
-                text = { Text("Upscale") },
-            )
-        }
+        GlassTabBar(
+            labels = listOf("Downloads", "Upscale"),
+            selectedIndex = topTab,
+            onSelect = { topTab = it },
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
+        )
         if (topTab == 0) {
         error?.let { problem ->
             Box(Modifier.fillMaxWidth().padding(horizontal = 32.dp), contentAlignment = Alignment.Center) {
@@ -577,19 +560,13 @@ private fun DownloadsHome(
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.weight(1f),
             )
-            listOf("All", "Unwatched", "Watched").forEach { label ->
-                val selected = filter == label
-                OutlinedButton(
-                    onClick = { filter = label },
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, if (selected) AniLifeColors.Primary else AniLifeColors.Border),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (selected) AniLifeColors.Primary else AniLifeColors.SurfaceVariant,
-                        contentColor = if (selected) AniLifeColors.PrimaryForeground else AniLifeColors.TextPrimary,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                    modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
-                ) { Text(label, fontSize = 12.sp) }
+            listOf("All", "Unwatched", "Watched").let { filters ->
+                GlassSegmentedControl(
+                    options = filters,
+                    selectedIndex = filters.indexOf(filter).coerceAtLeast(0),
+                    onSelect = { filter = filters[it] },
+                    modifier = Modifier.width(276.dp),
+                )
             }
         }
         Row(
@@ -598,23 +575,24 @@ private fun DownloadsHome(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             listOf("Auto detect" to onAutoDetect, "Import" to onImportPortable, "Direct URL" to onDirectDownload).forEach { (label, action) ->
-                OutlinedButton(
+                GlassButton(
                     onClick = action,
                     enabled = actionsEnabled,
+                    compact = true,
                     shape = RoundedCornerShape(50),
-                    modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
                 ) { Text(label, fontSize = 12.sp) }
             }
-            OutlinedButton(
+            GlassButton(
                 onClick = onUpscale,
                 enabled = upscaleEnabled && actionsEnabled,
+                compact = true,
+                accent = true,
                 shape = RoundedCornerShape(50),
-                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
             ) { Text("Upscale", fontSize = 12.sp) }
-            OutlinedButton(
+            GlassButton(
                 onClick = { onAudioChange(if (audioTrack == "sub") "dub" else "sub") },
+                compact = true,
                 shape = RoundedCornerShape(50),
-                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
             ) { Text("Audio: ${audioTrack.uppercase()}", fontSize = 12.sp) }
             TextButton(
                 onClick = onClearFinishedDownloads,
@@ -629,24 +607,17 @@ private fun DownloadsHome(
                     message = "Auto detect scans folders and matches their anime titles. Import a portable library JSON to restore the files listed by your other AniLife install.",
                     action = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
+                            GlassButton(
                                 onClick = onAutoDetect,
                                 enabled = actionsEnabled,
-                                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
-                            ) {
-                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text("Auto detect")
-                            }
-                            OutlinedButton(
+                                leadingIcon = Icons.Rounded.AutoAwesome,
+                                accent = true,
+                            ) { Text("Auto detect") }
+                            GlassButton(
                                 onClick = onBrowse,
                                 enabled = browseEnabled,
-                                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
-                            ) {
-                                Icon(Icons.Rounded.Explore, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text("Browse")
-                            }
+                                leadingIcon = Icons.Rounded.Explore,
+                            ) { Text("Browse") }
                         }
                     },
                 )

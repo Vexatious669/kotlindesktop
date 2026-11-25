@@ -41,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,6 +63,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kashif_e.backdrop.backdrops.layerBackdrop
+import com.kashif_e.backdrop.backdrops.rememberLayerBackdrop
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.AppSettings
@@ -75,7 +78,9 @@ import me.enivzoy.anilife.app.ui.AnimePosterCard
 import me.enivzoy.anilife.app.ui.AnimeRow
 import me.enivzoy.anilife.app.ui.Chip
 import me.enivzoy.anilife.app.ui.ErrorPanel
+import me.enivzoy.anilife.app.ui.GlassIconButton
 import me.enivzoy.anilife.app.ui.LoadState
+import me.enivzoy.anilife.app.ui.LocalGlassBackdrop
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.PosterSkeleton
 import me.enivzoy.anilife.app.ui.appEnter
@@ -130,7 +135,9 @@ fun DetailScreen(
         if (result is LoadState.Ready) loadedDetail = result.value
     }
 
+    val glassSource = rememberLayerBackdrop()
     Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().layerBackdrop(glassSource)) {
         when (val current = state) {
             LoadState.Loading -> DetailSkeleton()
             is LoadState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -233,8 +240,11 @@ fun DetailScreen(
                 }
             }
         }
+        }
 
-        BackButton(onBack, Modifier.align(Alignment.TopStart).padding(16.dp))
+        CompositionLocalProvider(LocalGlassBackdrop provides glassSource) {
+            BackButton(onBack, Modifier.align(Alignment.TopStart).padding(16.dp))
+        }
     }
     if (showDownloadDialog && queueManager != null && loadedDetail != null) {
         val d = loadedDetail!!
@@ -304,23 +314,17 @@ fun DetailScreen(
 
 @Composable
 private fun BackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(AniLifeColors.Overlay)
-            .border(1.dp, AniLifeColors.Border, CircleShape)
-            .clickable(onClick = onBack)
-            .pointerHoverIcon(PointerIcon.Hand),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-            contentDescription = "Back",
-            tint = AniLifeColors.Foreground,
-            modifier = Modifier.size(20.dp),
-        )
-    }
+    GlassIconButton(
+        onClick = onBack,
+        icon = Icons.AutoMirrored.Rounded.ArrowBack,
+        contentDescription = "Back",
+        modifier = modifier,
+        size = 40.dp,
+        iconSize = 20.dp,
+        shape = CircleShape,
+        accent = AniLifeColors.Primary,
+        alwaysGlass = true,
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

@@ -65,6 +65,8 @@ import me.enivzoy.anilife.app.data.MyAnimeListEntry
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.data.MyAnimeListUser
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.GlassButton
+import me.enivzoy.anilife.app.ui.GlassTabBar
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.app.ui.hoverScale
@@ -182,7 +184,7 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
         loadProfile()
     }
 
-    Box(Modifier.fillMaxSize().background(AniLifeColors.Background)) {
+    Box(Modifier.fillMaxSize()) {
         when (val current = state) {
             ProfileState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = AniLifeColors.Primary)
@@ -306,7 +308,7 @@ private fun LoadedProfile(
 ) {
     val scrollState = rememberScrollState()
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().background(AniLifeColors.Background).verticalScroll(scrollState)) {
+    Column(Modifier.fillMaxSize().verticalScroll(scrollState)) {
         Box(Modifier.fillMaxWidth().height(220.dp).background(AniLifeColors.SurfaceVariant)) {
             RemoteImage(
                 url = data.banner,
@@ -345,29 +347,13 @@ private fun LoadedProfile(
                 Text(it, color = AniLifeColors.Destructive, fontSize = 12.sp)
             }
             Spacer(Modifier.height(20.dp))
-            TabRow(
-                selectedTabIndex = tab,
-                modifier = Modifier.background(AniLifeColors.Background),
-                containerColor = AniLifeColors.Background,
-                contentColor = AniLifeColors.Foreground,
-                indicator = { positions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(positions[tab]),
-                        color = AniLifeColors.Primary,
-                    )
-                },
-                divider = {},
-            ) {
-                listOf("Overview", "Stats", "Activity").forEachIndexed { index, label ->
-                    Tab(
-                        selected = tab == index,
-                        onClick = { onTab(index) },
-                        selectedContentColor = AniLifeColors.Foreground,
-                        unselectedContentColor = AniLifeColors.MutedForeground,
-                        text = { Text(label, fontSize = 13.sp) },
-                    )
-                }
-            }
+            GlassTabBar(
+                labels = listOf("Overview", "Stats", "Activity"),
+                selectedIndex = tab,
+                onSelect = onTab,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Spacer(Modifier.height(8.dp))
             when (tab) {
                 0 -> OverviewTab(data, onOpenAnime)
                 1 -> StatsTab(data)
@@ -565,15 +551,13 @@ private fun ProfileButton(
     enabled: Boolean = true,
     danger: Boolean = false,
 ) {
-    Button(
+    GlassButton(
         onClick = onClick,
+        modifier = modifier,
         enabled = enabled,
-        modifier = modifier.pointerHoverIcon(PointerIcon.Hand).hoverScale(),
+        accent = !danger,
+        danger = danger,
         shape = RoundedCornerShape(10.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (danger) AniLifeColors.Destructive else AniLifeColors.Primary,
-            contentColor = if (danger) AniLifeColors.Foreground else AniLifeColors.PrimaryForeground,
-        ),
     ) {
         Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }

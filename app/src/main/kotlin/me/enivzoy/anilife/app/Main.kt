@@ -28,6 +28,7 @@ import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.ui.GlassHost
+import me.enivzoy.anilife.app.ui.GlassShowcase
 import me.enivzoy.anilife.app.ui.ProvideHighRefresh
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DependencyManager
@@ -42,6 +43,11 @@ import java.awt.Toolkit
 import java.awt.geom.AffineTransform
 
 private val logger = KotlinLogging.logger {}
+
+/** Temporary hook for the development glass showcase; never enabled in normal runs. */
+private fun showcaseRequested(): Boolean =
+    System.getProperty("anilife.glassShowcase") == "true" ||
+        System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
 
 fun main() {
     runCatching { DiagnosticsPaths.ensure() }
@@ -96,6 +102,8 @@ fun main() {
                                 setupComplete = true
                             },
                         )
+                    } else if (showcaseRequested()) {
+                        GlassShowcase()
                     } else AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
                     val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("windows")
                     if (isWindows) {
