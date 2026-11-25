@@ -1335,16 +1335,17 @@ private fun ContentSettings(settings: AppSettings, onSettingsChange: ((AppSettin
 private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
     val themeMode = ThemeMode.fromStorage(settings.themeMode)
 
-    SettingsSection("Window material") {
-        SettingsRow(
-            "UI style",
-            "Liquid is the default. Your selection applies immediately and is saved in app settings.",
-        ) {
-            SettingsSegmented(
-                choices = ThemeMode.entries.map { it.storageKey to it.label },
-                selected = themeMode.storageKey,
-                onSelect = { value -> onSettingsChange { it.copy(themeMode = value) } },
-            )
+    SettingsSection("Theme") {
+        SettingsNote("Default keeps the original AniLife look. Glass themes apply instantly and are remembered in your app settings.")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ThemeMode.entries.forEach { mode ->
+                ThemePreviewCard(
+                    mode = mode,
+                    selected = mode == themeMode,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSettingsChange { it.copy(themeMode = mode.storageKey) } },
+                )
+            }
         }
     }
 
@@ -1395,7 +1396,7 @@ private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSet
         }
     }
 
-    if (themeMode != ThemeMode.LEGACY) {
+    if (themeMode != ThemeMode.DEFAULT) {
         SettingsSection("Glass customization") {
             SettingsNote("Conservative adjustments keep legibility and performance intact. Themes with limited blur support fall back to tinted surfaces.")
             SettingsRow("Blur strength", "Strength of the backdrop blur on glass surfaces.") {
@@ -1465,6 +1466,53 @@ private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSet
         ThemeEditor(
             css = settings.themeCss,
             onChange = { css -> onSettingsChange { it.copy(themeCss = css) } },
+        )
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(
+    mode: ThemeMode,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val borderColor = if (selected) AniLifeColors.Primary else AniLifeColors.Border
+    Column(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(if (selected) 2.dp else 1.dp, borderColor, RoundedCornerShape(12.dp))
+            .background(AniLifeColors.Card)
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        val appearance = LocalAppearance.current
+        CompositionLocalProvider(LocalAppearance provides appearance.copy(themeMode = mode)) {
+            Box(
+                Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(8.dp)).background(AniLifeColors.Background),
+            ) {
+                Box(
+                    Modifier.padding(5.dp).size(width = 11.dp, height = 38.dp)
+                        .clip(RoundedCornerShape(4.dp)).background(AniLifeColors.Sidebar),
+                )
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(7.dp).size(width = 34.dp, height = 6.dp)
+                        .clip(RoundedCornerShape(3.dp)).background(AniLifeColors.Muted),
+                )
+                Box(
+                    Modifier.align(Alignment.BottomEnd).padding(7.dp)
+                        .size(width = 52.dp, height = 18.dp)
+                        .glassSurface(shape = RoundedCornerShape(5.dp), alpha = 0.4f),
+                )
+            }
+        }
+        Text(
+            mode.label,
+            color = if (selected) AniLifeColors.Primary else AniLifeColors.Foreground,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
         )
     }
 }

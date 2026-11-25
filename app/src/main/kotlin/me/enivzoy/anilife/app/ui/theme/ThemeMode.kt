@@ -1,17 +1,14 @@
 package me.enivzoy.anilife.app.ui.theme
 
 enum class ThemeMode(val storageKey: String, val label: String) {
-    LEGACY("LEGACY", "Legacy"),
+    DEFAULT("DEFAULT", "Default"),
     FROSTED_GLASS("FROSTED_GLASS", "Frosted Glass"),
     LIQUID_GLASS("LIQUID_GLASS", "Liquid Glass"),
     ;
 
     companion object {
         fun fromStorage(value: String?): ThemeMode =
-            when {
-                value.equals("DEFAULT", ignoreCase = true) -> LEGACY
-                else -> entries.firstOrNull { it.storageKey.equals(value, ignoreCase = true) } ?: LIQUID_GLASS
-            }
+            entries.firstOrNull { it.storageKey.equals(value, ignoreCase = true) } ?: DEFAULT
     }
 }
 
@@ -24,7 +21,7 @@ enum class GlassStyle {
 
 val ThemeMode.glassStyle: GlassStyle
     get() = when (this) {
-        ThemeMode.LEGACY -> GlassStyle.LEGACY
+        ThemeMode.DEFAULT -> GlassStyle.LEGACY
         ThemeMode.FROSTED_GLASS -> GlassStyle.FROSTED
         ThemeMode.LIQUID_GLASS -> GlassStyle.LIQUID
     }

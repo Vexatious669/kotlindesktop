@@ -94,7 +94,7 @@ class AppSettingsTest {
                 )
             }
             val normalized = AppSettingsStore(file).settings.value
-            assertEquals("LIQUID_GLASS", normalized.themeMode)
+            assertEquals("DEFAULT", normalized.themeMode)
             assertEquals("AUTOMATIC", normalized.scrollbarVisibility)
             assertEquals("NORMAL", normalized.scrollAnimationDuration)
             assertEquals(2f, normalized.glassBlurIntensity)

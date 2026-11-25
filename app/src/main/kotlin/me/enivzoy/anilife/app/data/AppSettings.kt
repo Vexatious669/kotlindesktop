@@ -99,7 +99,7 @@ data class AppSettings(
     val titleLanguage: String = "english",
     val discordPresenceEnabled: Boolean = true,
     val highRefreshRateUi: Boolean = false,
-    val themeMode: String = "LIQUID_GLASS",
+    val themeMode: String = "DEFAULT",
     val smoothScrolling: Boolean = true,
     val scrollbarVisibility: String = "AUTOMATIC",
     val scrollAnimationDuration: String = "NORMAL",
@@ -193,7 +193,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             titleLanguage = properties.getProperty("titleLanguage") ?: if (properties.getProperty("preferEnglishTitles", "true").toBooleanStrictOrNull() ?: true) "english" else "romaji",
             discordPresenceEnabled = properties.getProperty("discordPresenceEnabled", "true").toBooleanStrictOrNull() ?: true,
             highRefreshRateUi = properties.getProperty("highRefreshRateUi", "false").toBooleanStrictOrNull() ?: false,
-            themeMode = properties.getProperty("themeMode", "LIQUID_GLASS"),
+            themeMode = properties.getProperty("themeMode", "DEFAULT"),
             smoothScrolling = properties.getProperty("smoothScrolling", "true").toBooleanStrictOrNull() ?: true,
             scrollbarVisibility = properties.getProperty("scrollbarVisibility", "AUTOMATIC"),
             scrollAnimationDuration = properties.getProperty("scrollAnimationDuration", "NORMAL"),
@@ -304,11 +304,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         themeCss = themeCss.take(20_000),
         sidebarIconShape = sidebarIconShape.takeIf { it in sidebarShapes } ?: "rounded",
         appFont = appFont.takeIf { it in fontFamilies } ?: "SansSerif",
-        themeMode = when {
-            themeMode == "DEFAULT" -> "LEGACY"
-            themeMode in themeModes -> themeMode
-            else -> "LIQUID_GLASS"
-        },
+        themeMode = themeMode.takeIf { it in themeModes } ?: "DEFAULT",
         scrollbarVisibility = scrollbarVisibility.takeIf { it in scrollbarVisibilities } ?: "AUTOMATIC",
         scrollAnimationDuration = scrollAnimationDuration.takeIf { it in scrollAnimationDurations } ?: "NORMAL",
         glassBlurIntensity = glassBlurIntensity.takeIf(Float::isFinite)?.coerceIn(0.5f, 2f) ?: 1f,
@@ -337,7 +333,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         val contentScales = listOf("fit", "crop", "fill")
         val supportedSubtitleLanguages = listOf("en", "ja", "es", "pt", "fr", "de", "it", "ru", "ar", "zh", "none")
         val fontFamilies = listOf("SansSerif", "Serif", "Monospaced", "Cursive")
-        val themeModes = setOf("LEGACY", "FROSTED_GLASS", "LIQUID_GLASS")
+        val themeModes = setOf("DEFAULT", "FROSTED_GLASS", "LIQUID_GLASS")
         val scrollbarVisibilities = setOf("AUTOMATIC", "ALWAYS", "HIDDEN")
         val scrollAnimationDurations = setOf("SHORT", "NORMAL", "LONG")
         val captionEdgeStyles = setOf("none", "outline", "shadow")
