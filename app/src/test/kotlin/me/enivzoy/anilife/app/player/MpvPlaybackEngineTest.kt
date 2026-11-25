@@ -123,5 +123,51 @@ class MpvPlaybackEngineTest {
         }
         return condition()
     }
+
+    @Test
+    fun hwdecForAutoReturnsAutoCopySafe() {
+        assertEquals("auto-copy-safe", hwdecFor("auto"))
+    }
+
+    @Test
+    fun hwdecForOffReturnsNo() {
+        assertEquals("no", hwdecFor("off"))
+    }
+
+    @Test
+    fun hwdecForEmptyReturnsNo() {
+        assertEquals("no", hwdecFor(""))
+    }
+
+    @Test
+    fun hwdecForUnknownReturnsNo() {
+        assertEquals("no", hwdecFor("anything"))
+    }
+
+    @Test
+    fun withHwdecReplacesExistingHwdecEntry() {
+        val options = listOf("hwdec" to "no", "vo" to "gpu")
+        val result = withHwdec(options, "auto-copy-safe")
+        assertEquals(2, result.size)
+        assertEquals("auto-copy-safe", result.first { it.first == "hwdec" }.second)
+    }
+
+    @Test
+    fun withHwdecAddsHwdecWhenMissing() {
+        val options = listOf("vo" to "gpu")
+        val result = withHwdec(options, "auto-copy-safe")
+        assertEquals(2, result.size)
+        assertEquals("auto-copy-safe", result.first { it.first == "hwdec" }.second)
+    }
+
+    @Test
+    fun withHwdecPutsHwdecAtEnd() {
+        val options = listOf("vo" to "gpu", "hwdec" to "no", "profile" to "low-latency")
+        val result = withHwdec(options, "auto-copy-safe")
+        assertEquals(3, result.size)
+        assertEquals("gpu", result[0].second)
+        assertEquals("low-latency", result[1].second)
+        assertEquals("auto-copy-safe", result[2].second)
+    }
 }
 

@@ -148,6 +148,7 @@ fun PlayerScreen(
                 subtitlesByDefault = settings.subtitlesByDefault,
                 subtitleLanguage = settings.subtitleLanguage,
                 subtitleAppearance = settings.subtitleAppearance,
+                gpuAcceleration = settings.gpuAcceleration,
             )
         }
     }
