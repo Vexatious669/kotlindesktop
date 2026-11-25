@@ -12,11 +12,12 @@ import kotlin.test.assertEquals
 
 class AppearanceConfigTest {
     @Test
-    fun themeModesMapToGlassStylesAndFallBackToDefault() {
-        assertEquals(ThemeMode.DEFAULT, ThemeMode.fromStorage(null))
-        assertEquals(ThemeMode.DEFAULT, ThemeMode.fromStorage("unknown"))
+    fun themeModesMapToGlassStylesAndDefaultToLiquid() {
+        assertEquals(ThemeMode.LIQUID_GLASS, ThemeMode.fromStorage(null))
+        assertEquals(ThemeMode.LIQUID_GLASS, ThemeMode.fromStorage("unknown"))
+        assertEquals(ThemeMode.LEGACY, ThemeMode.fromStorage("DEFAULT"))
         assertEquals(ThemeMode.FROSTED_GLASS, ThemeMode.fromStorage("frosted_glass"))
-        assertEquals(GlassStyle.LEGACY, ThemeMode.DEFAULT.glassStyle)
+        assertEquals(GlassStyle.LEGACY, ThemeMode.LEGACY.glassStyle)
         assertEquals(GlassStyle.FROSTED, ThemeMode.FROSTED_GLASS.glassStyle)
         assertEquals(GlassStyle.LIQUID, ThemeMode.LIQUID_GLASS.glassStyle)
     }
