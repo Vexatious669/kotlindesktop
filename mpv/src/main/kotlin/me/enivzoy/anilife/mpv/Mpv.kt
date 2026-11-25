@@ -11,6 +11,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
+import io.github.oshai.kotlinlogging.KotlinLogging
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
+
+private val logger = KotlinLogging.logger {}
 
 const val MPV_ERROR_NONE: Int = 0
 const val MPV_ERROR_OPTION_NOT_FOUND: Int = -5
@@ -120,10 +124,12 @@ class Mpv(
         for ((name, value) in initialOptions) {
             val code: Int = callInt(mpvSetOptionString, arrayOf<Any?>(handle, cstr(name), cstr(value)))
             if (code == MPV_ERROR_OPTION_NOT_FOUND) continue
+            if (code != MPV_ERROR_NONE) logger.error { "mpv option $name failed code=$code ${errorString(code)}" }
             check(code == MPV_ERROR_NONE) { "mpv option ${name}=${value} failed with code $code: ${errorString(code)}" }
         }
 
         val code: Int = callInt(mpvInitialize, arrayOf<Any?>(handle))
+        if (code != MPV_ERROR_NONE) logger.error { "mpv_initialize failed code=$code ${errorString(code)}" }
         check(code == MPV_ERROR_NONE) { "mpv_initialize failed with code $code: ${errorString(code)}" }
 
         eventThread = thread(name = "mpv-events") { eventLoop() }
@@ -131,7 +137,7 @@ class Mpv(
 
     override fun loadfile(url: String, flags: String) {
         val escapedUrl = url.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "")
-        command(buildString {
+        runCommand(buildString {
             append("loadfile \"").append(escapedUrl).append('\"')
             if (flags.isNotBlank()) append(' ').append(flags)
         })
@@ -146,15 +152,15 @@ class Mpv(
     }
 
     fun seek(seconds: Int) {
-        command("seek $seconds relative")
+        runCommand("seek $seconds relative")
     }
 
     fun seekTo(seconds: Double) {
-        command("seek ${seconds.coerceAtLeast(0.0)} absolute+exact")
+        runCommand("seek ${seconds.coerceAtLeast(0.0)} absolute+exact")
     }
 
     fun seekRelative(seconds: Double) {
-        command("seek $seconds relative+exact")
+        runCommand("seek $seconds relative+exact")
     }
 
     fun setPaused(paused: Boolean) {
@@ -209,11 +215,11 @@ class Mpv(
     }
 
     fun stop() {
-        command("stop")
+        runCommand("stop")
     }
 
     fun cycleSubtitleTrack() {
-        command("cycle sid")
+        runCommand("cycle sid")
     }
 
     fun setSubtitlesEnabled(enabled: Boolean) {
@@ -225,7 +231,7 @@ class Mpv(
         val flags = if (select) "select" else "auto"
         val escapedTitle = title.orEmpty().replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "")
         val escapedLanguage = language.orEmpty().replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "")
-        command(buildString {
+        runCommand(buildString {
             append("sub-add \"").append(escapedUrl).append("\" ").append(flags)
             if (escapedTitle.isNotBlank() || escapedLanguage.isNotBlank()) append(" \"").append(escapedTitle).append('\"')
             if (escapedLanguage.isNotBlank()) append(" \"").append(escapedLanguage).append('\"')
@@ -241,6 +247,8 @@ class Mpv(
         callVoid(mpvWakeup, arrayOf<Any?>(handle))
         eventThread.join()
         callVoid(mpvTerminateDestroy, arrayOf<Any?>(handle))
+        ResourceTracker.mpvDestroyed()
+        logger.debug { "mpv_terminate_destroy completed" }
     }
 
     fun startEvents(handler: (Event) -> Unit) {
@@ -411,16 +419,24 @@ class Mpv(
 
     private fun setOption(name: String, value: String) {
         val code: Int = callInt(mpvSetOptionString, arrayOf<Any?>(handle, cstr(name), cstr(value)))
+        if (code != MPV_ERROR_NONE) logger.error { "mpv option $name failed code=$code ${errorString(code)}" }
         check(code == MPV_ERROR_NONE) { "mpv option ${name}=${value} failed with code $code: ${errorString(code)}" }
     }
 
     private fun setProperty(name: String, value: String) {
         val code = callInt(mpvSetPropertyString, arrayOf<Any?>(handle, cstr(name), cstr(value)))
+        if (code != MPV_ERROR_NONE) logger.error { "mpv property $name failed code=$code ${errorString(code)}" }
         check(code == MPV_ERROR_NONE) { "mpv property ${name}=${value} failed with code $code: ${errorString(code)}" }
     }
 
-    private fun command(value: String) {
+    fun command(vararg arguments: String) {
+        require(arguments.isNotEmpty())
+        runCommand(arguments.joinToString(" "))
+    }
+
+    private fun runCommand(value: String) {
         val code = callInt(mpvCommandString, arrayOf<Any?>(handle, cstr(value)))
+        if (code != MPV_ERROR_NONE) logger.error { "mpv command failed code=$code ${errorString(code)}" }
         check(code == MPV_ERROR_NONE) { "mpv command failed: ${errorString(code)}" }
     }
 
@@ -447,8 +463,10 @@ class Mpv(
     }
 
     private fun createHandle(): Pointer {
-        val handle: Pointer = callPointer(mpvCreate, arrayOfNulls<Any?>(0))
-        check(true) { "mpv_create returned null" }
+        val handle: Pointer? = callPointer(mpvCreate, arrayOfNulls<Any?>(0))
+        check(handle != null && handle != Pointer.NULL) { "mpv_create returned null" }
+        ResourceTracker.mpvCreated()
+        logger.debug { "mpv_create returned handle=$handle" }
         return handle
     }
 

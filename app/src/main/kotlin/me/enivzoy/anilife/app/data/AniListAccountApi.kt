@@ -10,9 +10,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.enivzoy.anilife.core.model.AnimeCard
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -64,6 +64,17 @@ data class AniListListEntry(
     val updatedAt: Long,
 )
 
+data class ViewerProfile(
+    val name: String,
+    val avatar: String?,
+    val banner: String?,
+    val createdAt: Long,
+    val animeCount: Int,
+    val meanScore: Double,
+    val minutesWatched: Long,
+    val statuses: Map<String, Int>,
+)
+
 internal class AniListAccountApi(
     private val request: suspend (String, String, JsonObject) -> JsonObject = ::networkRequest,
 ) {
@@ -77,6 +88,28 @@ internal class AniListAccountApi(
             scoreFormat = AniListScoreFormat.parse(
                 ((viewer["mediaListOptions"] as? JsonObject)?.string("scoreFormat")),
             ),
+        )
+    }
+
+    suspend fun profile(token: String): ViewerProfile {
+        val data = request(token, PROFILE_QUERY, buildJsonObject {})
+        val viewer = data["Viewer"] as? JsonObject ?: error("AniList returned no user profile.")
+        val statistics = (viewer["statistics"] as? JsonObject)?.get("anime") as? JsonObject
+        val statusItems = statistics?.get("statuses") as? JsonArray ?: JsonArray(emptyList())
+        val statuses = statusItems.mapNotNull { item ->
+            (item as? JsonObject)?.let { status ->
+                status.string("status")?.let { key -> key to (status.int("count") ?: 0) }
+            }
+        }.toMap()
+        return ViewerProfile(
+            name = viewer.string("name")?.takeIf(String::isNotBlank) ?: "AniList user",
+            avatar = (viewer["avatar"] as? JsonObject)?.string("large")?.takeIf(String::isNotBlank),
+            banner = viewer.string("bannerImage")?.takeIf(String::isNotBlank),
+            createdAt = viewer.long("createdAt") ?: 0L,
+            animeCount = statistics?.int("count") ?: 0,
+            meanScore = statistics?.double("meanScore") ?: 0.0,
+            minutesWatched = statistics?.long("minutesWatched") ?: 0L,
+            statuses = statuses,
         )
     }
 
@@ -216,6 +249,26 @@ internal class AniListAccountApi(
             media { $MEDIA_FIELDS }
         """
 
+        const val PROFILE_QUERY = """query {
+  Viewer {
+    name
+    avatar { large }
+    bannerImage
+    createdAt
+    statistics {
+      anime {
+        count
+        meanScore
+        minutesWatched
+        statuses {
+          status
+          count
+        }
+      }
+    }
+  }
+}"""
+
         const val VIEWER_QUERY = """
             query {
               Viewer {
@@ -283,7 +336,9 @@ internal class AniListAccountApi(
                     .header("Authorization", "Bearer $token")
                     .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(JsonObject.serializer(), payload)))
                     .build()
-                val response = http.send(httpRequest, HttpResponse.BodyHandlers.ofString())
+                val response = ResourceTracker.networkOpened(httpRequest.uri().host).use {
+                    http.send(httpRequest, HttpResponse.BodyHandlers.ofString())
+                }
                 parseGraphQlResponse(response.statusCode(), response.body())
             }
 
@@ -316,16 +371,16 @@ internal class AniListAccountApi(
 }
 
 private fun JsonObject.string(name: String): String? =
-    this[name]?.jsonPrimitive?.contentOrNull
+    (this[name] as? JsonPrimitive)?.contentOrNull
 
 private fun JsonObject.long(name: String): Long? =
-    this[name]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+    (this[name] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
 
 private fun JsonObject.int(name: String): Int? =
-    this[name]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+    (this[name] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
 
 private fun JsonObject.double(name: String): Double? =
-    this[name]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
+    (this[name] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
 
 private fun JsonObject.boolean(name: String): Boolean? =
-    this[name]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+    (this[name] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()

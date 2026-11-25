@@ -19,6 +19,7 @@ import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.GZIPInputStream
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 
 internal data class WasmAnimeTitle(
     val anilistId: Long,
@@ -33,10 +34,18 @@ internal class WasmAnimeProviders(
     private val engine: ComponentEngine by lazy { runtime.createComponentEngine() }
     private val compiled: List<LoadedProvider> by lazy { loadProviders() }
 
-    fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean): List<AnimeVideoSource> =
-        (compiled + runCatching { importedProviders() }.getOrDefault(emptyList())).flatMap { provider ->
-            runCatching { provider.sources(title, episode, dub) }.getOrDefault(emptyList())
+    fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean): List<AnimeVideoSource> {
+        val owner = title.titles.firstOrNull() ?: "video provider"
+        // wasm provider stores are browser sandboxes; close them after each lookup
+        ResourceTracker.webViewCreated(owner)
+        return try {
+            (compiled + runCatching { importedProviders() }.getOrDefault(emptyList())).flatMap { provider ->
+                runCatching { provider.sources(title, episode, dub) }.getOrDefault(emptyList())
+            }
+        } finally {
+            ResourceTracker.webViewDestroyed()
         }
+    }
 
     fun bundledProviderNames(): List<String> = compiled.map { provider -> provider.name }
 
@@ -214,15 +223,22 @@ internal class WasmAnimeProviders(
             }
             val publisher = body?.let(HttpRequest.BodyPublishers::ofByteArray) ?: HttpRequest.BodyPublishers.noBody()
             val httpRequest = builder.method(method, publisher).build()
-            val response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream())
+            val lease = ResourceTracker.networkOpened("provider ${uri.host}")
+            val response = try {
+                http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream())
+            } catch (failure: Throwable) {
+                lease.close()
+                throw failure
+            }
+            val streamBody = lease.track(response.body())
             if (response.statusCode() in 300..399) {
-                response.body().close()
+                streamBody.close()
                 val location = response.headers().firstValue("location").orElse(null)
                     ?: error("Provider redirect response omitted its location.")
                 require(hop < MAX_REDIRECTS) { "Provider request exceeded the redirect limit." }
                 uri = uri.resolve(location)
             } else {
-                val responseBytes = response.body().use { input -> input.readNBytes(MAX_HTTP_BODY_BYTES + 1) }
+                val responseBytes = streamBody.use { input -> input.readNBytes(MAX_HTTP_BODY_BYTES + 1) }
                 require(responseBytes.size <= MAX_HTTP_BODY_BYTES) { "Provider response exceeded the size limit." }
                 val responseBody = responseBytes.let { bytes ->
                     if (response.headers().firstValue("content-encoding").orElse("").equals("gzip", true)) {

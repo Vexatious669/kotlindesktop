@@ -144,6 +144,11 @@ object AniListSync {
         refreshInternal()
     }
 
+    suspend fun viewerProfile(): ViewerProfile = mutex.withLock {
+        val (_, auth) = requireConnected()
+        api.profile(auth.accessToken)
+    }
+
     suspend fun addToList(anime: AnimeCard, status: AniListListStatus = AniListListStatus.PLANNING) =
         mutex.withLock {
             val (account, auth) = requireConnected()

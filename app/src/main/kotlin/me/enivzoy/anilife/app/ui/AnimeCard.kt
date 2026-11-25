@@ -1,8 +1,6 @@
 ﻿package me.enivzoy.anilife.app.ui
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -50,10 +48,10 @@ fun AnimePosterCard(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val scale by animateFloatAsState(if (hovered) 1.05f else 1f, tween(280), label = "poster-scale")
+    val scale by rememberAppFloat(if (hovered) 1.05f else 1f, durationMillis = 280)
     val ring by animateColorAsState(
         if (hovered) AniLifeColors.Ring.copy(alpha = 0.75f) else Color.Transparent,
-        tween(180),
+        appTween(180),
         label = "poster-ring",
     )
     val shape = RoundedCornerShape(8.dp)

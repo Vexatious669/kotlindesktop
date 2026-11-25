@@ -20,7 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectable
@@ -58,6 +61,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,6 +74,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
@@ -79,6 +84,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -103,10 +113,22 @@ import me.enivzoy.anilife.app.data.DiscordOAuthState
 import me.enivzoy.anilife.app.data.DiscordOAuthStatus
 import me.enivzoy.anilife.app.data.DiscordPresenceState
 import me.enivzoy.anilife.app.data.DiscordPresenceStatus
+import me.enivzoy.anilife.app.data.DefaultPlayerKeyBindings
+import me.enivzoy.anilife.app.data.PlayerAction
+import me.enivzoy.anilife.app.data.playerKeyLabel
+import me.enivzoy.anilife.app.data.rebindPlayerKey
 import me.enivzoy.anilife.app.data.ANILIFE_ICON_URL
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.DiscordProfilePreview
+import me.enivzoy.anilife.app.ui.appEnter
+import me.enivzoy.anilife.app.ui.adaptiveGlass
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.ThemeEditor
+import me.enivzoy.anilife.app.ui.glassSurface
+import me.enivzoy.anilife.app.ui.theme.LocalAppearance
+import me.enivzoy.anilife.app.ui.theme.ScrollAnimationDuration
+import me.enivzoy.anilife.app.ui.theme.ScrollbarVisibility
+import me.enivzoy.anilife.app.ui.theme.ThemeMode
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -132,6 +154,8 @@ fun SettingsScreen(
 ) {
     var page by remember { mutableStateOf(SettingsPage.Player) }
     var query by remember { mutableStateOf("") }
+    var listeningForAction by remember { mutableStateOf<PlayerAction?>(null) }
+    var shortcutMessage by remember { mutableStateOf<String?>(null) }
 
     val results = remember(query) {
         val needle = query.trim()
@@ -141,19 +165,38 @@ fun SettingsScreen(
         }
     }
 
-    Row(modifier.fillMaxSize().background(AniLifeColors.SettingsBackground)) {
-        SettingsSidebar(
-            page = page,
-            query = query,
-            onQueryChange = { query = it },
-            onSelect = {
-                page = it
-                query = ""
-            },
-        )
-        Box(Modifier.width(1.dp).fillMaxHeight().background(AniLifeColors.SettingsDivider))
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            SettingsHeader(
+    Box(
+        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            val target = listeningForAction ?: return@onPreviewKeyEvent false
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
+            if (event.key == Key.Escape) {
+                listeningForAction = null
+                shortcutMessage = null
+                return@onPreviewKeyEvent true
+            }
+            val rebind = rebindPlayerKey(settings.keyBindings, target, event.key)
+            onSettingsChange { current -> current.copy(keyBindings = rebind.bindings) }
+            shortcutMessage = buildString {
+                append("Saved ${playerKeyLabel(event.key)} for ${target.label}")
+                rebind.conflictWith?.let { append("; swapped with ${it.label}") }
+            }
+            listeningForAction = null
+            true
+        }
+    ) {
+        Row(modifier.fillMaxSize().background(AniLifeColors.SettingsBackground)) {
+            SettingsSidebar(
+                page = page,
+                query = query,
+                onQueryChange = { query = it },
+                onSelect = {
+                    page = it
+                    query = ""
+                },
+            )
+            Box(Modifier.width(1.dp).fillMaxHeight().background(AniLifeColors.SettingsDivider))
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                SettingsHeader(
                 title = if (query.isBlank()) page.title else "Search results",
                 subtitle = if (query.isBlank()) {
                     page.subtitle
@@ -161,14 +204,16 @@ fun SettingsScreen(
                     "${results.size} setting${if (results.size == 1) "" else "s"} matching “${query.trim()}”"
                 },
             )
+            val settingsScrollState = rememberScrollState()
+            Box(Modifier.weight(1f).fillMaxWidth()) {
             Column(
-                Modifier.weight(1f)
-                    .fillMaxWidth()
+                Modifier.fillMaxSize()
                     .padding(start = 4.dp, end = 8.dp)
                     .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                     .background(AniLifeColors.SettingsPanel)
+                    .adaptiveGlass(shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                     .border(1.dp, AniLifeColors.SettingsBorder, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(settingsScrollState)
                     .padding(horizontal = 26.dp, vertical = 16.dp),
             ) {
                 if (query.isNotBlank()) {
@@ -178,7 +223,13 @@ fun SettingsScreen(
                     }
                 } else {
                     when (page) {
-                        SettingsPage.Player -> PlayerSettings(settings, onSettingsChange)
+                        SettingsPage.Player -> PlayerSettings(
+                            settings = settings,
+                            onSettingsChange = onSettingsChange,
+                            listeningForAction = listeningForAction,
+                            onListen = { listeningForAction = it },
+                            shortcutMessage = shortcutMessage,
+                        )
                         SettingsPage.Subtitles -> SubtitleSettings(settings, onSettingsChange)
                         SettingsPage.Downloads -> DownloadSettings(settings, onSettingsChange)
                         SettingsPage.Servers -> ServerSettings()
@@ -200,10 +251,32 @@ fun SettingsScreen(
                             checkingForUpdates = checkingForUpdates,
                             onCheckForUpdates = onCheckForUpdates,
                         )
-                        SettingsPage.About -> AboutSettings(currentVersion)
+                        SettingsPage.About -> AboutSettings(currentVersion, settings)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+            }
+            PageScrollbar(
+                rememberScrollbarAdapter(settingsScrollState),
+                Modifier.align(Alignment.CenterEnd),
+            )
+            }
+        }
+        }
+        listeningForAction?.let { target ->
+            Box(
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(24.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AniLifeColors.Card)
+                    .border(1.dp, AniLifeColors.Border, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    "Press any key to bind to '${target.label}'... (Press ESC to cancel)",
+                    color = AniLifeColors.Foreground,
+                    fontSize = 13.sp,
+                )
             }
         }
     }
@@ -244,6 +317,7 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Skip outro automatically", SettingsPage.Player, "intro outro recap ending skip auto"),
     SettingSearchEntry("Screen size", SettingsPage.Player, "fit crop fill scaling display"),
     SettingSearchEntry("Player volume", SettingsPage.Player, "audio sound volume"),
+    SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebind shortcuts pause seek volume fullscreen"),
     SettingSearchEntry("Show captions by default", SettingsPage.Subtitles, "captions subtitles text default"),
     SettingSearchEntry("Preferred caption language", SettingsPage.Subtitles, "captions subtitles language"),
     SettingSearchEntry("Caption size", SettingsPage.Subtitles, "captions subtitles text scale size"),
@@ -252,6 +326,13 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Discord Rich Presence", SettingsPage.Accounts, "discord activity status watching idle connect"),
     SettingSearchEntry("Discord Application ID", SettingsPage.Accounts, "discord developer application id"),
     SettingSearchEntry("Title display language", SettingsPage.Content, "anime name title romaji english native"),
+    SettingSearchEntry("High Refresh Rate UI", SettingsPage.Appearance, "120fps animation frame rate smooth refresh"),
+    SettingSearchEntry("Appearance theme", SettingsPage.Appearance, "default frosted glass liquid glass theme mode look preview"),
+    SettingSearchEntry("Smooth scrolling", SettingsPage.Appearance, "scroll animation programmatic jump fling"),
+    SettingSearchEntry("Scrollbar visibility", SettingsPage.Appearance, "scrollbar automatic always hidden rounded thumb"),
+    SettingSearchEntry("Scroll animation duration", SettingsPage.Appearance, "scroll speed short normal long"),
+    SettingSearchEntry("Reduced motion", SettingsPage.Appearance, "accessibility animation off no motion"),
+    SettingSearchEntry("Glass customization", SettingsPage.Appearance, "blur transparency highlight edge reflections"),
     SettingSearchEntry("App font", SettingsPage.Appearance, "font typeface text sans serif mono"),
     SettingSearchEntry("Theme colors", SettingsPage.Appearance, "css theme colors palette editor custom look style"),
     SettingSearchEntry("Playback buffer", SettingsPage.Data, "stream buffering memory"),
@@ -404,7 +485,13 @@ private fun SearchResults(results: List<SettingSearchEntry>, onOpen: (SettingsPa
 }
 
 @Composable
-private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
+private fun PlayerSettings(
+    settings: AppSettings,
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
+    listeningForAction: PlayerAction?,
+    onListen: (PlayerAction?) -> Unit,
+    shortcutMessage: String?,
+) {
     SettingsRow(
         "Playback",
         "Which version to start with. You can switch per episode.",
@@ -502,6 +589,101 @@ private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSetting
             )
         }
     }
+    KeyboardShortcutsSection(
+        bindings = settings.keyBindings,
+        listeningForAction = listeningForAction,
+        onListen = onListen,
+        message = shortcutMessage,
+        onBindingsChange = { bindings -> onSettingsChange { it.copy(keyBindings = bindings) } },
+    )
+}
+
+@Composable
+private fun KeyboardShortcutsSection(
+    bindings: Map<PlayerAction, Key>,
+    listeningForAction: PlayerAction?,
+    onListen: (PlayerAction?) -> Unit,
+    message: String?,
+    onBindingsChange: (Map<PlayerAction, Key>) -> Unit,
+) {
+    SettingsSection("Keyboard Shortcuts") {
+        SettingsNote("Pick an action and press a key. A key already in use swaps its binding.")
+        val shape = RoundedCornerShape(12.dp)
+        val shortcutListState = rememberLazyListState()
+        Box(
+            Modifier.fillMaxWidth()
+                .height(324.dp)
+                .clip(shape)
+                .background(AniLifeColors.SettingsControl)
+                .border(1.dp, AniLifeColors.SettingsControlBorder, shape)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            LazyColumn(Modifier.fillMaxSize(), state = shortcutListState) {
+                PlayerAction.entries.forEach { action ->
+                    item(key = action.name) {
+                        ShortcutBindingRow(
+                            action = action,
+                            key = bindings[action] ?: DefaultPlayerKeyBindings.getValue(action),
+                            listening = listeningForAction == action,
+                            onListen = onListen,
+                        )
+                    }
+                }
+            }
+            PageScrollbar(shortcutListState, Modifier.align(Alignment.CenterEnd))
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SettingsButton("Restore Default Shortcuts") { onBindingsChange(DefaultPlayerKeyBindings) }
+            if (!message.isNullOrBlank()) {
+                Text(message, color = AniLifeColors.MutedForeground, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShortcutBindingRow(
+    action: PlayerAction,
+    key: Key,
+    listening: Boolean,
+    onListen: (PlayerAction?) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            action.label,
+            Modifier.weight(1f).padding(end = 12.dp),
+            color = AniLifeColors.Foreground,
+            fontSize = 13.sp,
+        )
+        ShortcutBadge(if (listening) "..." else playerKeyLabel(key))
+        Spacer(Modifier.width(10.dp))
+        SettingsButton(if (listening) "Listening..." else "Change") {
+            onListen(if (listening) null else action)
+        }
+    }
+}
+
+@Composable
+private fun ShortcutBadge(label: String) {
+    val shape = RoundedCornerShape(7.dp)
+    Text(
+        label,
+        Modifier.clip(shape)
+            .background(AniLifeColors.Background)
+            .border(1.dp, AniLifeColors.Border, shape)
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+        color = AniLifeColors.Foreground,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+    )
 }
 
 @Composable
@@ -1139,39 +1321,134 @@ private fun ContentSettings(settings: AppSettings, onSettingsChange: ((AppSettin
 
 @Composable
 private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
-    SettingsRow(
-        "App font",
-        "Typeface used across the interface.",
-    ) {
-        SettingsDropdown(
-            choices = AppSettingsStore.fontFamilies.map { it to fontLabel(it) },
-            selected = settings.appFont,
-            onSelect = { value -> onSettingsChange { it.copy(appFont = value) } },
-        )
+    val themeMode = ThemeMode.fromStorage(settings.themeMode)
+
+    SettingsSection("Window material") {
+        SettingsRow(
+            "UI style",
+            "Liquid is the default. Your selection applies immediately and is saved in app settings.",
+        ) {
+            SettingsSegmented(
+                choices = ThemeMode.entries.map { it.storageKey to it.label },
+                selected = themeMode.storageKey,
+                onSelect = { value -> onSettingsChange { it.copy(themeMode = value) } },
+            )
+        }
     }
-    SettingsRow(
-        "Custom font file",
-        "Point the app typeface at a .ttf or .otf file on this computer.",
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = {
-                    val parent = java.awt.Frame()
-                    parent.isVisible = false
-                    val dialog = java.awt.FileDialog(parent, "Choose the app font", java.awt.FileDialog.LOAD)
-                    dialog.isVisible = true
-                    val selected = dialog.file?.let { java.io.File(dialog.directory, it) }
-                    parent.dispose()
-                    if (selected != null) {
-                        onSettingsChange { it.copy(appFontFile = selected.absolutePath) }
-                    }
-                },
-            ) { Text("Choose font file") }
-            if (settings.appFontFile.isNotBlank()) {
-                OutlinedButton(onClick = { onSettingsChange { it.copy(appFontFile = "") } }) { Text("Clear") }
+
+    SettingsSection("Surface and motion") {
+        SettingsRow(
+            "High Refresh Rate UI",
+            "Drives hover, reveal, scroll and loading motion from a 120 Hz frame clock. Only used on high-refresh displays.",
+        ) {
+            SettingsSwitch(settings.highRefreshRateUi) { enabled ->
+                onSettingsChange { it.copy(highRefreshRateUi = enabled) }
+            }
+        }
+        SettingsRow(
+            "Reduced motion",
+            "Skip decorative animation and jump straight to the final state.",
+        ) {
+            SettingsSwitch(settings.reducedMotion) { enabled ->
+                onSettingsChange { it.copy(reducedMotion = enabled) }
+            }
+        }
+        SettingsRow(
+            "Smooth scrolling",
+            "Animate programmatic jumps, row arrows and scroll-to-item requests.",
+        ) {
+            SettingsSwitch(settings.smoothScrolling) { enabled ->
+                onSettingsChange { it.copy(smoothScrolling = enabled) }
+            }
+        }
+        SettingsRow(
+            "Scrollbar visibility",
+            "When the rounded scrollbar appears on scrolling surfaces.",
+        ) {
+            SettingsSegmented(
+                choices = ScrollbarVisibility.entries.map { it.storageKey to it.label },
+                selected = settings.scrollbarVisibility,
+                onSelect = { value -> onSettingsChange { it.copy(scrollbarVisibility = value) } },
+            )
+        }
+        SettingsRow(
+            "Scroll animation duration",
+            "Length of animated scroll-to and scroll-to-item requests.",
+        ) {
+            SettingsSegmented(
+                choices = ScrollAnimationDuration.entries.map { it.storageKey to it.label },
+                selected = settings.scrollAnimationDuration,
+                onSelect = { value -> onSettingsChange { it.copy(scrollAnimationDuration = value) } },
+            )
+        }
+    }
+
+    if (themeMode != ThemeMode.LEGACY) {
+        SettingsSection("Glass customization") {
+            SettingsNote("Conservative adjustments keep legibility and performance intact. Themes with limited blur support fall back to tinted surfaces.")
+            SettingsRow("Blur strength", "Strength of the backdrop blur on glass surfaces.") {
+                SettingsSliderRow(
+                    value = settings.glassBlurIntensity,
+                    valueRange = 0.5f..2f,
+                    valueLabel = "${(settings.glassBlurIntensity * 100).roundToInt()}%",
+                    onChange = { value -> onSettingsChange { it.copy(glassBlurIntensity = value) } },
+                )
+            }
+            SettingsRow("Transparency", "How much of the surface tint is blended in.") {
+                SettingsSliderRow(
+                    value = settings.glassTransparency,
+                    valueRange = 0.25f..0.85f,
+                    valueLabel = "${(settings.glassTransparency * 100).roundToInt()}%",
+                    onChange = { value -> onSettingsChange { it.copy(glassTransparency = value) } },
+                )
+            }
+            SettingsRow("Edge highlights", "Brightness of borders and reflections on glass surfaces.") {
+                SettingsSliderRow(
+                    value = settings.glassHighlightIntensity,
+                    valueRange = 0f..1.5f,
+                    valueLabel = "${(settings.glassHighlightIntensity * 100).roundToInt()}%",
+                    onChange = { value -> onSettingsChange { it.copy(glassHighlightIntensity = value) } },
+                )
             }
         }
     }
+
+    SettingsSection("Typeface") {
+        SettingsRow(
+            "App font",
+            "Typeface used across the interface.",
+        ) {
+            SettingsDropdown(
+                choices = AppSettingsStore.fontFamilies.map { it to fontLabel(it) },
+                selected = settings.appFont,
+                onSelect = { value -> onSettingsChange { it.copy(appFont = value) } },
+            )
+        }
+        SettingsRow(
+            "Custom font file",
+            "Point the app typeface at a .ttf or .otf file on this computer.",
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val parent = java.awt.Frame()
+                        parent.isVisible = false
+                        val dialog = java.awt.FileDialog(parent, "Choose the app font", java.awt.FileDialog.LOAD)
+                        dialog.isVisible = true
+                        val selected = dialog.file?.let { java.io.File(dialog.directory, it) }
+                        parent.dispose()
+                        if (selected != null) {
+                            onSettingsChange { it.copy(appFontFile = selected.absolutePath) }
+                        }
+                    },
+                ) { Text("Choose font file") }
+                if (settings.appFontFile.isNotBlank()) {
+                    OutlinedButton(onClick = { onSettingsChange { it.copy(appFontFile = "") } }) { Text("Clear") }
+                }
+            }
+        }
+    }
+
     SettingsSection("Theme colors") {
         ThemeEditor(
             css = settings.themeCss,
@@ -1351,6 +1628,7 @@ private fun DataSettings(
     pendingRestore?.let { document ->
         AlertDialog(
             onDismissRequest = { pendingRestore = null },
+            modifier = Modifier.appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -1443,7 +1721,7 @@ private fun AppSettingsPage(
 }
 
 @Composable
-private fun AboutSettings(currentVersion: String) {
+private fun AboutSettings(currentVersion: String, settings: AppSettings) {
     val uriHandler = LocalUriHandler.current
     var linkError by remember { mutableStateOf(false) }
 
@@ -1537,30 +1815,21 @@ private fun AboutSettings(currentVersion: String) {
         AboutCard {
             Text("Keyboard shortcuts", color = AniLifeColors.Foreground, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Player shortcuts work while a video is open.",
+                "Player shortcuts work while a video is open. Change them under Player settings.",
                 color = AniLifeColors.MutedForeground,
                 fontSize = 12.sp,
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "Space / K", "Play or pause")
-                    AboutShortcut(Modifier.weight(1f), "← / →", "Seek 5 seconds")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "J / L", "Seek 10 seconds")
-                    AboutShortcut(Modifier.weight(1f), "↑ / ↓", "Change volume")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "M", "Mute")
-                    AboutShortcut(Modifier.weight(1f), "F", "Fullscreen")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "Z / X", "Subtitle delay")
-                    AboutShortcut(Modifier.weight(1f), "[ / ]", "Playback speed")
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AboutShortcut(Modifier.weight(1f), "Enter", "Skip intro / outro")
-                    AboutShortcut(Modifier.weight(1f), "N / P", "Next / previous episode")
+                PlayerAction.entries.chunked(2).forEach { actions ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        actions.forEach { action ->
+                            AboutShortcut(
+                                Modifier.weight(1f),
+                                playerKeyLabel(settings.keyBindings[action] ?: DefaultPlayerKeyBindings.getValue(action)),
+                                action.label,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1831,7 +2100,7 @@ private fun SettingsDropdown(
                 modifier = Modifier.size(16.dp),
             )
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.appEnter()) {
             choices.forEach { (value, label) ->
                 DropdownMenuItem(
                     text = { Text(label, fontSize = 13.sp) },

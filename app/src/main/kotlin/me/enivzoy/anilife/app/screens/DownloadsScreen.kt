@@ -4,10 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -18,7 +22,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,17 +57,20 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -97,11 +103,20 @@ import me.enivzoy.anilife.app.data.ContinueStoreInstance
 import me.enivzoy.anilife.app.data.DownloadJob
 import me.enivzoy.anilife.app.data.DownloadQueueManager
 import me.enivzoy.anilife.app.data.DownloadStatus
+import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.UpscaleQueueManager
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.EmptyPanel
+import me.enivzoy.anilife.app.ui.GlassButton
+import me.enivzoy.anilife.app.ui.GlassSegmentedControl
+import me.enivzoy.anilife.app.ui.GlassTabBar
+import me.enivzoy.anilife.app.ui.appEnter
+import me.enivzoy.anilife.app.ui.appTween
+import me.enivzoy.anilife.app.ui.rememberAppFloat
 import me.enivzoy.anilife.app.ui.ErrorPanel
+import me.enivzoy.anilife.app.ui.hoverScale
+import me.enivzoy.anilife.app.ui.liquidGlass
 import me.enivzoy.anilife.app.ui.LoadState
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
@@ -242,21 +257,12 @@ fun DownloadsScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-        TabRow(
-            selectedTabIndex = topTab,
-            containerColor = AniLifeColors.Background,
-            contentColor = AniLifeColors.Foreground,
-            indicator = { tabPositions ->
-                val position = tabPositions[topTab]
-                TabRowDefaults.SecondaryIndicator(
-                    Modifier.offset(x = position.left).width(position.width),
-                    color = AniLifeColors.Primary,
-                )
-            },
-        ) {
-            Tab(selected = topTab == 0, onClick = { topTab = 0 }, text = { Text("Downloads") })
-            Tab(selected = topTab == 1, onClick = { topTab = 1 }, text = { Text("Upscale") })
-        }
+        GlassTabBar(
+            labels = listOf("Downloads", "Upscale"),
+            selectedIndex = topTab,
+            onSelect = { topTab = it },
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
+        )
         if (topTab == 0) {
         error?.let { problem ->
             Box(Modifier.fillMaxWidth().padding(horizontal = 32.dp), contentAlignment = Alignment.Center) {
@@ -315,28 +321,45 @@ fun DownloadsScreen(
                     }
                 },
             )
-        } else if (selectedDownloadAnime == null && episodes.isEmpty() && downloadJobs.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                EmptyPanel(
-                    icon = Icons.Rounded.Download,
-                    title = "No local episodes yet",
-                    message = "Auto detect scans folders and matches their anime titles. Import a portable library JSON to restore the files listed by your other AniLife install.",
-                    action = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { selectMediaFolder()?.let(::beginScan) }, enabled = !scanning && !importing) {
-                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text("Auto detect")
-                            }
-                            OutlinedButton(onClick = onBrowse, enabled = !importing) {
-                                Icon(Icons.Rounded.Explore, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text("Browse")
-                            }
+        } else if (selectedDownloadAnime == null) {
+            val watchedKeys = remember(continueEntries) {
+                buildSet<String> {
+                    continueEntries.forEach { entry ->
+                        val progress = entry.progress
+                        val lastWatched = if (progress.position >= progress.duration * 0.9) progress.episode else progress.episode - 1.0
+                        var episode = 1.0
+                        // continue rows point at the next unwatched episode, so earlier ones are watched.
+                        while (episode <= lastWatched) {
+                            add(downloadWatchedKey(entry.anime.title, entry.anime.id, episode))
+                            episode += 1.0
                         }
-                    },
-                )
+                    }
+                }
             }
+            DownloadsHome(
+                episodes = episodes,
+                downloadJobs = downloadJobs,
+                watchedKeys = watchedKeys,
+                downloadDirectory = settings.downloadDirectory,
+                onSettingsChange = onSettingsChange,
+                onPlay = onPlay,
+                onSelectAnime = { selectedDownloadAnime = it },
+                onAutoDetect = { selectMediaFolder()?.let(::beginScan) },
+                onBrowse = onBrowse,
+                browseEnabled = !importing,
+                onImportPortable = ::selectPortableLibrary,
+                onDirectDownload = { downloadError = null; showDownloadDialog = true },
+                onUpscale = { showUpscaleDialog = true },
+                upscaleEnabled = episodes.isNotEmpty(),
+                actionsEnabled = !scanning && !importing,
+                audioTrack = settings.audio,
+                onAudioChange = { audio -> onSettingsChange { it.copy(audio = audio) } },
+                onCancelDownload = queueManager::cancel,
+                onRetryDownload = queueManager::retry,
+                onRemoveDownload = queueManager::remove,
+                onClearFinishedDownloads = queueManager::clearFinished,
+                onRemoveEpisode = repository::removeLocalEpisode,
+            )
         } else {
             EpisodeList(
                 episodes = episodes,
@@ -414,6 +437,7 @@ fun DownloadsScreen(
     message?.let { text ->
         AlertDialog(
             onDismissRequest = { message = null },
+            modifier = Modifier.appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -457,6 +481,407 @@ fun DownloadsScreen(
 }
 
 @Composable
+private fun DownloadsHome(
+    episodes: List<LocalEpisode>,
+    downloadJobs: List<DownloadJob>,
+    watchedKeys: Set<String>,
+    downloadDirectory: String?,
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
+    onPlay: (String, String) -> Unit,
+    onSelectAnime: (me.enivzoy.anilife.core.model.AnimeCard) -> Unit,
+    onAutoDetect: () -> Unit,
+    onBrowse: () -> Unit,
+    browseEnabled: Boolean,
+    onImportPortable: () -> Unit,
+    onDirectDownload: () -> Unit,
+    onUpscale: () -> Unit,
+    upscaleEnabled: Boolean,
+    actionsEnabled: Boolean,
+    audioTrack: String,
+    onAudioChange: (String) -> Unit,
+    onCancelDownload: (String) -> Unit,
+    onRetryDownload: (String) -> Unit,
+    onRemoveDownload: (String) -> Unit,
+    onClearFinishedDownloads: () -> Unit,
+    onRemoveEpisode: (LocalEpisode) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf("All") }
+    val isSearching = query.isNotBlank()
+    val root = remember(downloadDirectory) {
+        downloadDirectory?.takeIf(String::isNotBlank) ?: DirectMediaDownloader.defaultDownloadDirectory().toString()
+    }
+    val statsText = remember(episodes, root) {
+        "${formatBytes(episodes.sumOf(LocalEpisode::bytes))} in downloads · ${formatBytes(downloadRootFreeSpace(root))} free · ${shortenDownloadPath(root)}"
+    }
+    val allItems = remember(episodes, downloadJobs, watchedKeys) {
+        buildDownloadsHomeItems(episodes, downloadJobs, watchedKeys)
+    }
+    val visibleItems = remember(allItems, query, filter) {
+        val q = query.trim().lowercase()
+        allItems.filter { item ->
+            (q.isBlank() || item.title.lowercase().contains(q)) &&
+                when (filter) {
+                    "Unwatched" -> !item.watched
+                    "Watched" -> item.watched
+                    else -> true
+                }
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                statsText,
+                color = AniLifeColors.MutedForeground,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = { chooseDownloadDirectory(onSettingsChange) },
+                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
+            ) { Text("Change", color = AniLifeColors.Primary, fontSize = 12.sp) }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text("Search downloads", color = AniLifeColors.MutedForeground, fontSize = 13.sp) },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f),
+            )
+            listOf("All", "Unwatched", "Watched").let { filters ->
+                GlassSegmentedControl(
+                    options = filters,
+                    selectedIndex = filters.indexOf(filter).coerceAtLeast(0),
+                    onSelect = { filter = filters[it] },
+                    modifier = Modifier.width(276.dp),
+                )
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            listOf("Auto detect" to onAutoDetect, "Import" to onImportPortable, "Direct URL" to onDirectDownload).forEach { (label, action) ->
+                GlassButton(
+                    onClick = action,
+                    enabled = actionsEnabled,
+                    compact = true,
+                    shape = RoundedCornerShape(50),
+                ) { Text(label, fontSize = 12.sp) }
+            }
+            GlassButton(
+                onClick = onUpscale,
+                enabled = upscaleEnabled && actionsEnabled,
+                compact = true,
+                accent = true,
+                shape = RoundedCornerShape(50),
+            ) { Text("Upscale", fontSize = 12.sp) }
+            GlassButton(
+                onClick = { onAudioChange(if (audioTrack == "sub") "dub" else "sub") },
+                compact = true,
+                shape = RoundedCornerShape(50),
+            ) { Text("Audio: ${audioTrack.uppercase()}", fontSize = 12.sp) }
+            TextButton(
+                onClick = onClearFinishedDownloads,
+                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
+            ) { Text("Clear finished", color = AniLifeColors.MutedForeground, fontSize = 12.sp) }
+        }
+        if (episodes.isEmpty() && downloadJobs.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                EmptyPanel(
+                    icon = Icons.Rounded.Download,
+                    title = "No local episodes yet",
+                    message = "Auto detect scans folders and matches their anime titles. Import a portable library JSON to restore the files listed by your other AniLife install.",
+                    action = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GlassButton(
+                                onClick = onAutoDetect,
+                                enabled = actionsEnabled,
+                                leadingIcon = Icons.Rounded.AutoAwesome,
+                                accent = true,
+                            ) { Text("Auto detect") }
+                            GlassButton(
+                                onClick = onBrowse,
+                                enabled = browseEnabled,
+                                leadingIcon = Icons.Rounded.Explore,
+                            ) { Text("Browse") }
+                        }
+                    },
+                )
+            }
+        } else {
+            Column(Modifier.weight(1f).fillMaxWidth()) {
+                key(isSearching) {
+                    AnimatedVisibility(
+                        visible = isSearching || visibleItems.isNotEmpty(),
+                        enter = fadeIn(appTween(400)) + scaleIn(initialScale = 0.95f),
+                        exit = fadeOut(appTween(200)) + scaleOut(targetScale = 0.95f),
+                    ) {
+                    if (visibleItems.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No downloads match \"$query\".", color = AniLifeColors.MutedForeground, fontSize = 13.sp)
+                        }
+                    } else {
+                        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                        Box(Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                state = listState,
+                                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 6.dp, bottom = 28.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                items(visibleItems, key = { it.key }) { item ->
+                                    DownloadsHomeCard(
+                                        item = item,
+                                        onPlay = {
+                                            item.localEpisode?.let { episode -> onPlay(episode.anime.title, episode.path.toString()) }
+                                        },
+                                        onCancel = { item.job?.id?.let(onCancelDownload) },
+                                        onRetry = { item.job?.id?.let(onRetryDownload) },
+                                        onDelete = {
+                                            val job = item.job
+                                            if (job != null) onRemoveDownload(job.id) else item.localEpisode?.let(onRemoveEpisode)
+                                        },
+                                        onOpenDetail = { item.anime?.let(onSelectAnime) },
+                                    )
+                                }
+                            }
+                            PageScrollbar(rememberScrollbarAdapter(listState), Modifier.align(Alignment.CenterEnd))
+                        }
+                    }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadsHomeCard(
+    item: DownloadsListItem,
+    onPlay: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onDelete: () -> Unit,
+    onOpenDetail: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val scale by rememberAppFloat(if (hovered) 1.015f else 1f, durationMillis = 180)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(16.dp))
+            .background(AniLifeColors.Card)
+            .liquidGlass()
+            .clickable(interactionSource = interaction, indication = null, onClick = onOpenDetail)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RemoteImage(
+            url = item.cover,
+            contentDescription = item.title,
+            modifier = Modifier.size(width = 60.dp, height = 90.dp).clip(RoundedCornerShape(8.dp)),
+            placeholderColor = parseAnimeColor(item.color),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                item.title,
+                color = AniLifeColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                item.statusText,
+                color = if (item.error != null) AniLifeColors.Destructive else AniLifeColors.MutedForeground,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            item.progress?.let { fraction ->
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                    color = AniLifeColors.Primary,
+                    trackColor = AniLifeColors.SurfaceVariant,
+                )
+            }
+            item.error?.let { problem ->
+                Text(problem, color = AniLifeColors.Destructive, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (item.job?.status == DownloadStatus.Queued || item.job?.status == DownloadStatus.Running) {
+                TextButton(
+                    onClick = onCancel,
+                    modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
+                ) { Text("Cancel", color = AniLifeColors.Destructive, fontSize = 12.sp) }
+            }
+            if (item.job?.status == DownloadStatus.Failed || item.job?.status == DownloadStatus.Cancelled) {
+                TextButton(
+                    onClick = onRetry,
+                    modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
+                ) { Text("Retry", color = AniLifeColors.Primary, fontSize = 12.sp) }
+            }
+            if (item.localEpisode != null && item.job?.status != DownloadStatus.Running && item.job?.status != DownloadStatus.Queued) {
+                Button(
+                    onClick = onPlay,
+                    colors = ButtonDefaults.buttonColors(containerColor = AniLifeColors.Primary, contentColor = AniLifeColors.PrimaryForeground),
+                    shape = RoundedCornerShape(9.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
+                ) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Play", fontSize = 12.sp)
+                }
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.hoverScale().pointerHoverIcon(PointerIcon.Hand),
+            ) { Icon(Icons.Rounded.DeleteOutline, contentDescription = "Remove download", tint = AniLifeColors.MutedForeground) }
+        }
+    }
+}
+
+private data class DownloadsListItem(
+    val key: String,
+    val title: String,
+    val cover: String?,
+    val color: String?,
+    val statusText: String,
+    val progress: Float?,
+    val error: String?,
+    val localEpisode: LocalEpisode?,
+    val job: DownloadJob?,
+    val watched: Boolean,
+    val anime: me.enivzoy.anilife.core.model.AnimeCard?,
+)
+
+private fun buildDownloadsHomeItems(
+    episodes: List<LocalEpisode>,
+    jobs: List<DownloadJob>,
+    watchedKeys: Set<String>,
+): List<DownloadsListItem> {
+    val items = linkedMapOf<String, DownloadsListItem>()
+    episodes.forEach { entry ->
+        val anime = entry.anime
+        val key = downloadEpisodeKey(entry)
+        items[key] = DownloadsListItem(
+            key = key,
+            title = anime.title,
+            cover = anime.cover,
+            color = anime.color,
+            statusText = "Episode ${entry.episode.episodeLabel()} · Downloaded",
+            progress = null,
+            error = null,
+            localEpisode = entry,
+            job = null,
+            watched = downloadWatchedKey(anime.title, anime.id, entry.episode) in watchedKeys,
+            anime = anime,
+        )
+    }
+    jobs.forEach { job ->
+        val local = job.localEpisode
+        val key = local?.let(::downloadEpisodeKey) ?: "job:${job.id}"
+        val existing = items[key]
+        val anime = local?.anime ?: job.anime ?: existing?.anime
+        val title = anime?.title ?: job.title
+        val percent = if (job.total != null && job.total > 0L) {
+            ((job.downloaded * 100L) / job.total).toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+        val statusText: String
+        val progress: Float?
+        val error: String?
+        when (job.status) {
+            DownloadStatus.Running -> {
+                statusText = "Downloading Episode ${job.episode.episodeLabel()} · $percent%"
+                progress = percent / 100f
+                error = null
+            }
+            DownloadStatus.Queued -> {
+                statusText = "Episode ${job.episode.episodeLabel()} · Queued"
+                progress = 0f
+                error = null
+            }
+            DownloadStatus.Failed, DownloadStatus.Cancelled -> {
+                statusText = "Episode ${job.episode.episodeLabel()} · ${job.status.name}"
+                progress = null
+                error = job.error
+            }
+            DownloadStatus.Done -> {
+                statusText = "Episode ${job.episode.episodeLabel()} · Downloaded"
+                progress = null
+                error = null
+            }
+        }
+        items[key] = DownloadsListItem(
+            key = key,
+            title = title,
+            cover = anime?.cover,
+            color = anime?.color,
+            statusText = statusText,
+            progress = progress,
+            error = error,
+            localEpisode = local ?: existing?.localEpisode,
+            job = job,
+            watched = downloadWatchedKey(title, anime?.id, job.episode) in watchedKeys,
+            anime = anime,
+        )
+    }
+    return items.values.sortedWith(
+        compareByDescending<DownloadsListItem> { it.job?.status == DownloadStatus.Running || it.job?.status == DownloadStatus.Queued }
+            .thenBy { it.title.lowercase() }
+            .thenBy { it.statusText },
+    )
+}
+
+private fun downloadWatchedKey(title: String, animeId: Long?, episode: Double): String = "${animeId ?: title}|${episode}"
+
+private fun shortenDownloadPath(path: String): String {
+    val normalized = path.replace('/', File.separatorChar).trimEnd(File.separatorChar)
+    val parts = normalized.split(File.separatorChar).filter(String::isNotBlank)
+    return if (parts.size <= 2) normalized else "...${File.separator}${parts.takeLast(2).joinToString(File.separator)}"
+}
+
+private fun downloadRootFreeSpace(path: String): Long {
+    var root = File(path)
+    while (!root.exists() && root.parentFile != null) root = root.parentFile!!
+    return root.usableSpace
+}
+
+private fun chooseDownloadDirectory(onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
+    val chooser = JFileChooser().apply {
+        fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+        dialogTitle = "Choose the download folder"
+    }
+    if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val chosen = chooser.selectedFile ?: return
+        onSettingsChange { it.copy(downloadDirectory = chosen.toPath().toAbsolutePath().normalize().toString()) }
+    }
+}
+
+@Composable
 private fun DirectDownloadDialog(
     audio: String,
     error: String?,
@@ -469,18 +894,23 @@ private fun DirectDownloadDialog(
     val number = episode.toDoubleOrNull()
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.appEnter(),
         containerColor = AniLifeColors.Card,
         titleContentColor = AniLifeColors.Foreground,
         textContentColor = AniLifeColors.MutedForeground,
         title = { Text("Download a video URL", fontWeight = FontWeight.SemiBold) },
         text = {
-            Column(Modifier.widthIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Downloads direct video files and HLS/DASH playlists. Playlists are saved with FFmpeg.", fontSize = 12.sp, lineHeight = 18.sp)
-                if (error != null) Text(error, color = AniLifeColors.Destructive, fontSize = 12.sp, lineHeight = 18.sp)
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
+            val dialogScrollState = rememberScrollState()
+            Box(Modifier.widthIn(max = 520.dp)) {
+                Column(Modifier.fillMaxWidth().verticalScroll(dialogScrollState), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Downloads direct video files and HLS/DASH playlists. Playlists are saved with FFmpeg.", fontSize = 12.sp, lineHeight = 18.sp)
+                    if (error != null) Text(error, color = AniLifeColors.Destructive, fontSize = 12.sp, lineHeight = 18.sp)
+                    OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
+                }
+                PageScrollbar(dialogScrollState, Modifier.align(Alignment.CenterEnd))
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = AniLifeColors.MutedForeground) } },
@@ -541,7 +971,7 @@ private fun ScanReview(
                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(result.folders, key = { it.name }) { folder ->
+                items(result.folders, key = { "${it.name}-${it.episodes.firstOrNull()?.path}" }) { folder ->
                     MatchRow(folder, candidateIndex[folder.name] ?: 0) { onCandidate(folder.name, it) }
                 }
             }
@@ -590,7 +1020,7 @@ private fun MatchRow(folder: DetectedFolder, selectedIndex: Int, onSelect: (Int)
         }
         Box {
             TextButton(onClick = { expanded = true }) { Text("Change", color = AniLifeColors.Primary, fontSize = 12.sp) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.appEnter()) {
                 folder.matches.forEachIndexed { index, anime ->
                     DropdownMenuItem(
                         text = { Text(anime.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -763,6 +1193,8 @@ private fun EpisodeList(
                     }
                 }
             }
+            val episodeGridState = rememberLazyGridState()
+            val episodeListState = androidx.compose.foundation.lazy.rememberLazyListState()
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -794,14 +1226,16 @@ private fun EpisodeList(
                 }
             }
             if (gridLayout) {
+                Box(Modifier.weight(1f)) {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 280.dp),
-                    modifier = Modifier.weight(1f),
+                    state = episodeGridState,
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(selectedEpisodes) { entry ->
+                    items(selectedEpisodes, key = { it.path.toString() }) { entry ->
                         DownloadEpisodeGridCard(
                             entry = entry,
                             selected = downloadEpisodeKey(entry) in selectedKeys,
@@ -812,13 +1246,17 @@ private fun EpisodeList(
                         )
                     }
                 }
+                PageScrollbar(episodeGridState, Modifier.align(Alignment.CenterEnd))
+                }
             } else {
+                Box(Modifier.weight(1f)) {
                 LazyColumn(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxSize(),
+                    state = episodeListState,
                     contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
-                    items(selectedEpisodes) { entry ->
+                    items(selectedEpisodes, key = { it.path.toString() }) { entry ->
                         DownloadEpisodeRow(
                             entry = entry,
                             selected = downloadEpisodeKey(entry) in selectedKeys,
@@ -828,6 +1266,8 @@ private fun EpisodeList(
                             onRemove = onRemove,
                         )
                     }
+                }
+                PageScrollbar(episodeListState, Modifier.align(Alignment.CenterEnd))
                 }
             }
         }
@@ -866,7 +1306,7 @@ private fun EpisodeList(
                 TextButton(onClick = { actionsExpanded = true }, enabled = actionsEnabled) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = "Download actions", tint = AniLifeColors.MutedForeground)
                 }
-                DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }, modifier = Modifier.appEnter()) {
                     DropdownMenuItem(
                         text = { Text("Auto detect local episodes") },
                         onClick = { actionsExpanded = false; onAutoDetect() },
@@ -917,12 +1357,14 @@ private fun EpisodeList(
         }
 
         if (tab == "queue") {
+            val queueListState = androidx.compose.foundation.lazy.rememberLazyListState()
             if (downloadJobs.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text("No downloads queued.", color = AniLifeColors.MutedForeground, fontSize = 13.sp, lineHeight = 18.sp)
                 }
             } else {
-                LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(Modifier.fillMaxSize(), state = queueListState, contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(downloadJobs, key = { it.id }) { job ->
                         DownloadJobRow(
                             job = job,
@@ -936,6 +1378,8 @@ private fun EpisodeList(
                             TextButton(onClick = onClearFinishedDownloads) { Text("Clear finished", color = AniLifeColors.MutedForeground, fontSize = 12.sp) }
                         }
                     }
+                }
+                PageScrollbar(queueListState, Modifier.align(Alignment.CenterEnd))
                 }
             }
         } else if (filteredGroups.isEmpty()) {
@@ -982,7 +1426,7 @@ private fun DownloadAnimeCard(
     val downloadFraction = totalEpisodes?.let { (downloadedCount.toFloat() / it).coerceIn(0f, 1f) } ?: 0f
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val scale by androidx.compose.animation.core.animateFloatAsState(if (hovered) 1.06f else 1f, androidx.compose.animation.core.tween(200), label = "card-scale")
+    val scale by rememberAppFloat(if (hovered) 1.06f else 1f, durationMillis = 200)
     Column(
         Modifier.fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }

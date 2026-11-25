@@ -1,6 +1,10 @@
 package me.enivzoy.anilife.app.screens
 
 import androidx.compose.ui.input.key.Key
+import me.enivzoy.anilife.app.data.DefaultPlayerKeyBindings
+import me.enivzoy.anilife.app.data.PlayerAction
+import me.enivzoy.anilife.app.data.playerActionFor
+import me.enivzoy.anilife.app.data.rebindPlayerKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -12,11 +16,9 @@ class PlayerShortcutsTest {
         val volumes = mutableListOf<Int>()
         var mutes = 0
         var fullscreens = 0
+        var pips = 0
         val speeds = mutableListOf<Float>()
         val delays = mutableListOf<Double>()
-        var skips = 0
-        var next = 0
-        var previous = 0
     }
 
     private fun shortcuts(recorded: Recorder) = PlayerShortcuts(
@@ -25,15 +27,13 @@ class PlayerShortcutsTest {
         onVolumeChange = { recorded.volumes += it },
         onToggleMute = { recorded.mutes += 1 },
         onToggleFullscreen = { recorded.fullscreens += 1 },
+        onTogglePip = { recorded.pips += 1 },
         onSpeedChange = { recorded.speeds += it },
         onSubtitleDelay = { recorded.delays += it },
-        onSkip = { recorded.skips += 1 },
-        onNext = { recorded.next += 1 },
-        onPrevious = { recorded.previous += 1 },
     )
 
-    private fun press(recorded: Recorder, key: Key) {
-        playerShortcutFor(key)?.let { applyPlayerShortcut(it, shortcuts(recorded)) }
+    private fun press(recorded: Recorder, key: Key, bindings: Map<PlayerAction, Key> = DefaultPlayerKeyBindings) {
+        bindings.playerActionFor(key)?.let { applyPlayerAction(it, shortcuts(recorded)) }
     }
 
     @Test
@@ -71,21 +71,31 @@ class PlayerShortcutsTest {
         press(recorded, Key.X)
         press(recorded, Key.LeftBracket)
         press(recorded, Key.RightBracket)
-        press(recorded, Key.Enter)
-        press(recorded, Key.N)
-        press(recorded, Key.P)
+        press(recorded, Key.I)
 
         assertEquals(1, recorded.mutes)
         assertEquals(1, recorded.fullscreens)
+        assertEquals(1, recorded.pips)
         assertEquals(listOf(-0.1, 0.1), recorded.delays)
-        assertEquals(listOf(-0.25f, 0.25f), recorded.speeds)
-        assertEquals(1, recorded.skips)
-        assertEquals(1, recorded.next)
-        assertEquals(1, recorded.previous)
+        assertEquals(listOf(-0.1f, 0.1f), recorded.speeds)
+    }
+
+    @Test
+    fun aCustomBindingReplacesTheDefaultAndSwapsConflicts() {
+        val recorded = Recorder()
+        val rebound = rebindPlayerKey(DefaultPlayerKeyBindings, PlayerAction.MUTE, Key.M)
+        assertEquals(PlayerAction.MUTE, rebound.bindings.playerActionFor(Key.M))
+
+        val swapped = rebindPlayerKey(rebound.bindings, PlayerAction.FULLSCREEN, Key.M)
+        assertEquals(PlayerAction.FULLSCREEN, swapped.bindings.playerActionFor(Key.M))
+        assertEquals(PlayerAction.MUTE, swapped.conflictWith)
+
+        press(recorded, Key.M, swapped.bindings)
+        assertEquals(1, recorded.fullscreens)
     }
 
     @Test
     fun anUnknownKeyIsNotAShortcut() {
-        assertNull(playerShortcutFor(Key.Q))
+        assertNull(DefaultPlayerKeyBindings.playerActionFor(Key.Q))
     }
 }

@@ -297,7 +297,7 @@ fun DiscordProfilePreview(
                             DropdownMenu(
                                 expanded = menuExpanded,
                                 onDismissRequest = { menuExpanded = false },
-                                modifier = Modifier.background(DiscordCardTokens.PopupBg),
+                                modifier = Modifier.background(DiscordCardTokens.PopupBg).appEnter(),
                             ) {
                                 DropdownMenuItem(
                                     text = {
@@ -456,7 +456,7 @@ private fun AvatarWithDndBadge(
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(CircleShape)
-                        .background(Color.White),
+                        .background(AniLifeColors.SurfaceVariant),
                 )
             } else {
                 Box(
@@ -485,6 +485,7 @@ private fun AvatarWithDndBadge(
             tooltip = {
                 Box(
                     modifier = Modifier
+                        .appEnter()
                         .shadow(8.dp, RoundedCornerShape(6.dp))
                         .clip(RoundedCornerShape(6.dp))
                         .background(DiscordCardTokens.PopupBg)

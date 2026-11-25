@@ -1,7 +1,6 @@
 package me.enivzoy.anilife.app
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,10 +38,14 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.nio.file.Path
+import java.awt.Desktop
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.data.DiscordOAuth
@@ -62,18 +65,31 @@ import me.enivzoy.anilife.app.screens.PlayerScreen
 import me.enivzoy.anilife.app.screens.ProvidersScreen
 import me.enivzoy.anilife.app.screens.ScheduleScreen
 import me.enivzoy.anilife.app.screens.SettingsScreen
-import me.enivzoy.anilife.app.screens.formatSetupBytes
-import me.enivzoy.anilife.app.screens.MyAnimeListScreen
+import me.enivzoy.anilife.app.screens.UpdateDialog
+import me.enivzoy.anilife.app.screens.ProfileScreen
 import me.enivzoy.anilife.app.screens.NotificationsScreen
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.Updater
+import me.enivzoy.anilife.app.data.UpdateState
+import me.enivzoy.anilife.app.data.UpdateException
+import me.enivzoy.anilife.app.data.UpdateHttpException
+import me.enivzoy.anilife.app.data.SizeMismatchException
+import me.enivzoy.anilife.app.data.ChecksumException
+import me.enivzoy.anilife.app.data.redactForLog
 import me.enivzoy.anilife.app.data.MpvBootstrap
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.ReleaseNotifier
 import me.enivzoy.anilife.core.model.Update
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
+import me.enivzoy.anilife.core.diagnostics.MemoryProfiler
+import io.github.oshai.kotlinlogging.KotlinLogging
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AppSidebar
+import me.enivzoy.anilife.app.ui.appEnter
+import me.enivzoy.anilife.app.ui.liquidGlass
+import me.enivzoy.anilife.app.ui.rememberAppScreenTransition
 import me.enivzoy.anilife.mpv.Mpv
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -82,14 +98,15 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
- 
-
-
+private val logger = KotlinLogging.logger {}
+private val updaterLogger = KotlinLogging.logger("AniLife.updater")
+private const val UPDATE_LOG_TAIL_BYTES = 200 * 1024
 
 @Composable
 fun AniLifeApp(
     settingsStore: AppSettingsStore,
     onPlayerFullscreen: (Boolean) -> Unit = {},
+    onPlayerPip: (Boolean) -> Unit = {},
     onExitApplication: () -> Unit = {},
 ) {
     val animeVideoProviders = remember { AnimeVideoProviders() }
@@ -112,19 +129,20 @@ fun AniLifeApp(
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var homeLoaded by remember { mutableStateOf(false) }
     var playerFullscreen by remember { mutableStateOf(false) }
+    var isPipMode by remember { mutableStateOf(false) }
     val consumedWatchAutoPlays = remember { mutableStateListOf<Long>() }
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
     var updateCheckStatus by remember { mutableStateOf<String?>(null) }
     var checkingForUpdates by remember { mutableStateOf(false) }
-    var updateActionStatus by remember { mutableStateOf<String?>(null) }
-    var updateProgress by remember { mutableStateOf<Pair<Long, Long?>?>(null) }
-    var installingUpdate by remember { mutableStateOf(false) }
+    var updateState by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
+    var shareNotice by remember { mutableStateOf(false) }
 
     suspend fun checkForUpdates(showUpToDate: Boolean) {
         if (checkingForUpdates) return
         checkingForUpdates = true
         updateCheckStatus = if (showUpToDate) "Checking for updates…" else null
-        updateActionStatus = null
+        shareNotice = false
         updater.clear()
         try {
             val currentVersion = Updater.currentVersion()
@@ -139,49 +157,90 @@ fun AniLifeApp(
         } catch (failure: Exception) {
             val detail = failure.message?.takeIf(String::isNotBlank) ?: "Unknown error"
             updateCheckStatus = "Update check failed: $detail"
-            System.err.println("[Updater] update check failed: $detail")
+            updaterLogger.error {
+                "update check failed ${failure::class.java.simpleName}: ${redactForLog(detail)}"
+            }
         } finally {
             checkingForUpdates = false
         }
     }
 
+    fun shareUpdateLogs() {
+        val text = runCatching {
+            val bytes = Files.readAllBytes(Updater.logFile())
+            val tail = if (bytes.size > UPDATE_LOG_TAIL_BYTES) {
+                bytes.copyOfRange(bytes.size - UPDATE_LOG_TAIL_BYTES, bytes.size)
+            } else {
+                bytes
+            }
+            String(tail, StandardCharsets.UTF_8)
+        }.getOrElse { failure ->
+            updaterLogger.warn {
+                "update logs not read ${failure::class.java.simpleName}: " +
+                    redactForLog(failure.message.orEmpty())
+            }
+            "updater.log is missing."
+        }
+        clipboard.setText(AnnotatedString(text))
+        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+            runCatching { Desktop.getDesktop().open(DiagnosticsPaths.logs.toFile()) }
+                .onFailure { failure ->
+                    updaterLogger.warn {
+                        "update logs folder not opened ${failure::class.java.simpleName}: " +
+                            redactForLog(failure.message.orEmpty())
+                    }
+                }
+        }
+        shareNotice = true
+    }
+
     fun installUpdate(update: Update) {
-        if (installingUpdate) return
+        if (updateState.busy) return
         scope.launch {
-            installingUpdate = true
-            updateProgress = null
-            updateActionStatus = "Downloading and verifying AniLife ${update.version}…"
+            shareNotice = false
+            updateState = UpdateState.Downloading(null)
+            var lastPercent = -1
             try {
                 val extension = if (update.url.contains(".msi", ignoreCase = true)) "msi" else "exe"
                 val destination = Updater.updatesDirectory().resolve("anilife-${update.version}.$extension")
-                if (!updater.download(update, destination) { bytes, total ->
-                        updateProgress = bytes to total
+                updater.download(update, destination) { bytes, total ->
+                    val percent = if (total != null && total > 0L) {
+                        (bytes * 100 / total).toInt()
+                    } else {
+                        -1
                     }
-                ) {
-                    updateActionStatus = "Download or verification failed. Check your connection and retry."
-                    return@launch
+                    if (percent != lastPercent) {
+                        lastPercent = percent
+                        updateState = UpdateState.Downloading(if (percent >= 0) percent / 100f else null)
+                    }
                 }
-                updateActionStatus = "Starting the installer…"
+                updateState = UpdateState.Installing
                 updater.installWindows(destination)
+                delay(1500L)
                 updater.clear()
                 onExitApplication()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                val detail = failure.message?.takeIf(String::isNotBlank) ?: "Unknown error"
-                updateActionStatus = "Update failed: $detail"
-                System.err.println("[Updater] install failed: $detail")
-            } finally {
-                installingUpdate = false
+                updaterLogger.error {
+                    "install failed ${failure::class.java.simpleName}: " +
+                        redactForLog(failure.message.orEmpty())
+                }
+                updateState = UpdateState.Failed(shortUpdateFailureMessage(failure))
             }
         }
     }
 
     LaunchedEffect(Unit) {
+        MemoryProfiler.start(this)
+        Updater.reportPreviousInstall()
         AniListSync.restore()
         MyAnimeListSync.configure()
         MyAnimeListSync.restore()
         DiscordOAuth.restore()
+    }
+    DisposableEffect(Unit) {
+        onDispose { MemoryProfiler.stop() }
     }
     LaunchedEffect(settings.checkUpdatesOnLaunch) {
         if (settings.checkUpdatesOnLaunch) {
@@ -235,8 +294,10 @@ fun AniLifeApp(
 
     LaunchedEffect(screen) {
         playerFullscreen = screen is Screen.Player
+        if (screen !is Screen.Player) isPipMode = false
     }
     LaunchedEffect(playerFullscreen) { onPlayerFullscreen(playerFullscreen) }
+    LaunchedEffect(isPipMode) { onPlayerPip(isPipMode) }
 
     fun navigateTo(next: Screen) {
         if (next == screen) return
@@ -271,6 +332,7 @@ fun AniLifeApp(
 
     suspend fun resolvePlayerEpisode(target: Screen.Player, episode: Double, audio: String) {
         val anime = target.detail ?: return
+        val startedAt = System.nanoTime()
         val rows = animeVideoProviders.episodes(anime.id, anime.episodes, anime.malId)
         val resolved = animeVideoProviders.sources(
             anilistId = anime.id,
@@ -279,7 +341,18 @@ fun AniLifeApp(
             episode = episode,
             dub = audio.equals("Dub", ignoreCase = true),
         )
-        val selected = resolved.firstOrNull() ?: return
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+        val selected = resolved.firstOrNull()
+        if (selected == null) {
+            logger.warn { "stream resolution found no servers; episode=$episode audio=$audio elapsedMs=$elapsedMs" }
+            return
+        }
+        val fallback = !target.url.isNullOrBlank() && resolved.none { it.url == target.url }
+        logger.info {
+            "stream resolved episode=$episode audio=$audio servers=${resolved.size} elapsedMs=$elapsedMs " +
+                "fallback=$fallback selected=${selected.provider}/${selected.server}"
+        }
+        if (fallback) logger.warn { "fallback server used for episode=$episode selected=${selected.provider}/${selected.server}" }
         val current = screen as? Screen.Player ?: return
         if (current.detail?.id != anime.id) return
         val label = formatPlayerEpisode(episode)
@@ -313,7 +386,7 @@ fun AniLifeApp(
                 }
             },
     ) {
-    Row(Modifier.fillMaxSize().background(AniLifeColors.Background)) {
+    Row(Modifier.fillMaxSize()) {
         if (screen !is Screen.Player) {
             AppSidebar(
                 current = screen,
@@ -339,11 +412,13 @@ fun AniLifeApp(
                 },
         ) {
             key(settings.titleLanguage) {
-            Crossfade(
+            val screenTransition = rememberAppScreenTransition()
+            AnimatedContent(
                 targetState = screen,
-                animationSpec = tween(180),
+                transitionSpec = { screenTransition },
                 label = "screen",
             ) { target ->
+                Box(Modifier.fillMaxSize().appEnter()) {
                 when (target) {
                     Screen.Home -> HomeScreen(
                         repository = repository,
@@ -387,7 +462,7 @@ fun AniLifeApp(
                         notifier = releaseNotifier,
                         onOpenAnime = { navigateTo(Screen.Detail(it)) },
                     )
-                    Screen.Profile -> MyAnimeListScreen(repository)
+                    Screen.Profile -> ProfileScreen(onOpenAnime = { navigateTo(Screen.Detail(it)) })
                     Screen.Downloads -> DownloadsScreen(
                         repository = repository,
                         settings = settings,
@@ -450,8 +525,14 @@ fun AniLifeApp(
                         settings = settings,
                         onSettingsChange = { updated -> updateSettings { updated } },
                         isFullscreen = playerFullscreen,
+                        isPipMode = isPipMode,
+                        onTogglePip = { isPipMode = !isPipMode },
+                        onClosePip = { isPipMode = false },
                         onToggleFullscreen = { playerFullscreen = !playerFullscreen },
                         onSourceSelect = { source ->
+                            val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
+                            ActionBreadcrumbs.record("Clicked server: $serverName")
+                            logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality} url=${source.url}" }
                             screen = target.copy(
                                 title = "${target.detail?.title ?: target.title.substringBefore(" · Episode ")} · Episode ${formatPlayerEpisode(target.episode ?: 1.0)} · ${source.provider} ${source.quality ?: source.format.uppercase()}",
                                 url = source.url,
@@ -485,6 +566,7 @@ fun AniLifeApp(
                         },
                         onBack = ::goBack,
                     )
+                }
                 }
                 }
             }
@@ -530,6 +612,7 @@ fun AniLifeApp(
     pickError?.let { message ->
         AlertDialog(
             onDismissRequest = { pickError = null },
+            modifier = Modifier.liquidGlass(shape = RoundedCornerShape(28.dp)).appEnter(),
             containerColor = AniLifeColors.Card,
             titleContentColor = AniLifeColors.Foreground,
             textContentColor = AniLifeColors.MutedForeground,
@@ -544,62 +627,31 @@ fun AniLifeApp(
     }
 
     availableUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = {
-                if (!installingUpdate) {
-                    updater.clear()
-                    updateActionStatus = null
-                }
+        UpdateDialog(
+            update = update,
+            state = updateState,
+            onUpdate = {
+                shareNotice = false
+                installUpdate(update)
             },
-            containerColor = AniLifeColors.Card,
-            titleContentColor = AniLifeColors.Foreground,
-            textContentColor = AniLifeColors.MutedForeground,
-            title = { Text("Update available", fontWeight = FontWeight.SemiBold) },
-            text = {
-                Text(
-                    text = (if (update.changelog.isBlank()) "AniLife ${update.version} is available."
-                    else "AniLife ${update.version} is available.\n\n${update.changelog}") +
-                        updateActionStatus?.let { "\n\n$it" }.orEmpty() +
-                        updateProgress?.let { (bytes, total) ->
-                            "\n${formatUpdateProgress(bytes, total)}"
-                        }.orEmpty(),
-                    fontSize = 14.sp,
-                    lineHeight = 21.sp,
-                )
+            onLater = {
+                updater.clear()
+                updateState = UpdateState.Idle
+                shareNotice = false
             },
-            confirmButton = {
-                TextButton(
-                    onClick = { installUpdate(update) },
-                    enabled = !installingUpdate,
-                ) {
-                    Text(
-                        if (installingUpdate) "Please wait…" else "Update now",
-                        color = AniLifeColors.Primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        updater.clear()
-                        updateActionStatus = null
-                    },
-                    enabled = !installingUpdate,
-                ) {
-                    Text("Later", color = AniLifeColors.MutedForeground, fontWeight = FontWeight.SemiBold)
-                }
-            },
+            onShareLogs = { shareUpdateLogs() },
+            shareNotice = shareNotice,
         )
     }
 }
 
-private fun formatUpdateProgress(bytes: Long, total: Long?): String =
-    if (total != null && total > 0L) {
-        "${formatSetupBytes(bytes)} / ${formatSetupBytes(total)} (${bytes * 100 / total}%)"
-    } else {
-        formatSetupBytes(bytes)
-    }
+private fun shortUpdateFailureMessage(failure: Exception): String = when (failure) {
+    is UpdateHttpException -> "Update request failed (HTTP ${failure.status})."
+    is SizeMismatchException -> "Downloaded file size didn't match. Retry or share logs."
+    is ChecksumException -> "Checksum didn't match. Retry or share logs."
+    is UpdateException -> failure.message?.takeIf(String::isNotBlank) ?: "Update failed."
+    else -> "Update failed. Check your connection and retry."
+}
 
 private fun formatPlayerEpisode(number: Double): String =
     if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()

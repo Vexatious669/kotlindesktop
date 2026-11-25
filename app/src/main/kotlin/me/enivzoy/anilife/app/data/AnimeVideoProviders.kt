@@ -1,7 +1,10 @@
 ﻿package me.enivzoy.anilife.app.data
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -19,6 +22,8 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.zip.GZIPInputStream
 import java.util.concurrent.ConcurrentHashMap
+
+private val logger = KotlinLogging.logger {}
 
 data class AnimeEpisode(
     val number: Double,
@@ -164,7 +169,9 @@ class AnimeVideoProviders(
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "application/json")
                 .GET().build()
-            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            val response = ResourceTracker.networkOpened(request.uri().host).use {
+                http.send(request, HttpResponse.BodyHandlers.ofString())
+            }
             if (response.statusCode() !in 200..299) {
                 throw IOException("MyAnimeList episode API returned HTTP ${response.statusCode()}.")
             }
@@ -200,6 +207,8 @@ class AnimeVideoProviders(
         episode: Double,
         dub: Boolean,
     ): List<AnimeVideoSource> = withContext(Dispatchers.IO) {
+        val startedAt = System.nanoTime()
+        ActionBreadcrumbs.record("Resolving stream URL for episode: $episode")
         val result = runCatching { miruroSources(anilistId, episode, dub) }
             .onFailure { System.err.println("Miruro source lookup failed: ${it.message}") }
             .getOrDefault(emptyList())
@@ -210,12 +219,15 @@ class AnimeVideoProviders(
                 dub,
             )
         }.onFailure { System.err.println("WASM provider lookup failed: ${it.message}") }.getOrDefault(emptyList())
-        (result.filter { it.audio == if (dub) "Dub" else "Sub" } + extra)
+        val combined = (result.filter { it.audio == if (dub) "Dub" else "Sub" } + extra)
             .distinctBy { it.url }
             .sortedByDescending { source ->
                 Regex("(\\d{3,4})\\s*p", RegexOption.IGNORE_CASE).find(source.quality.orEmpty())
                     ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
             }
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+        logger.info { "stream lookup completed episode=$episode dub=$dub servers=${combined.size} elapsedMs=$elapsedMs" }
+        combined
     }
 
     private suspend fun miruroSources(anilistId: Long, episode: Double, dub: Boolean): List<AnimeVideoSource> {
@@ -305,7 +317,9 @@ class AnimeVideoProviders(
                     .header("Sec-Fetch-Dest", "empty")
                     .header("Accept", "application/json, application/octet-stream;q=0.9, */*;q=0.8")
                     .GET().build()
-                val response = http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+                val response = ResourceTracker.networkOpened(request.uri().host).use {
+                    http.send(request, HttpResponse.BodyHandlers.ofByteArray())
+                }
                 if (response.statusCode() !in 200..299) {
                     val detail = response.body().toString(Charsets.UTF_8).take(180)
                     if (response.statusCode() in 400..499) throw IOException("Provider catalog rejected the request (${response.statusCode()}): $detail")

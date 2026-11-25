@@ -8,10 +8,12 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import me.enivzoy.anilife.mpv.EndReason
 import me.enivzoy.anilife.mpv.Event
 import me.enivzoy.anilife.mpv.Mpv
+import me.enivzoy.anilife.mpv.MpvError
 import me.enivzoy.anilife.mpv.PropertyValue
 import me.enivzoy.anilife.mpv.defaultPlayerOptions
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
+import me.enivzoy.anilife.app.data.PlayerAction
 import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.SubtitleAppearance
 import kotlinx.serialization.json.Json
@@ -26,6 +28,10 @@ import org.jetbrains.skia.ImageInfo
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
+import io.github.oshai.kotlinlogging.KotlinLogging
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+
+private val logger = KotlinLogging.logger {}
 
 data class PlayerSubtitleTrack(
     val id: Int,
@@ -113,10 +119,18 @@ class MpvPlaybackEngine(
     @Volatile private var lastMpvPosition = 0.0
     @Volatile private var lastMpvPositionAt = 0L
     @Volatile private var lastFrameAt = 0L
+    @Volatile private var state = "idle"
 
     fun start() {
         if (worker != null || closed.get()) return
+        transition("loading")
         worker = thread(name = "AniLife-playback", isDaemon = true) { runPlayback() }
+    }
+
+    private fun transition(next: String, detail: String = "") {
+        if (state == next && detail.isBlank()) return
+        state = next
+        logger.info { if (detail.isBlank()) "mpv state=$next" else "mpv state=$next $detail" }
     }
 
     private fun runPlayback() {
@@ -127,6 +141,7 @@ class MpvPlaybackEngine(
             mpv.observeDouble("time-pos")
             mpv.observeDouble("duration")
             mpv.observeFlag("pause")
+            mpv.observeFlag("mute")
             mpv.startEvents(::onEvent)
             val target = mpv.createSoftwareVideoSurface(renderWidth, renderHeight, renderFormat)
             surface = target
@@ -163,6 +178,9 @@ class MpvPlaybackEngine(
             error = failure.message?.takeIf(String::isNotBlank)
                 ?: failure::class.simpleName
                 ?: "Playback failed"
+            val code = (failure as? MpvError)?.code
+            transition("error", listOfNotNull(code?.let { "code=$it" }, error).joinToString(" ").ifBlank { "playback failed" })
+            logger.error(failure) { "mpv playback failed code=$code" }
             isLoading = false
         } finally {
             release()
@@ -187,6 +205,7 @@ class MpvPlaybackEngine(
                 }
                 "pause" -> (event.value as? PropertyValue.Flag)?.value?.let {
                     isPlaying = !it
+                    transition(if (it) "idle" else "playing")
                     if (it) {
                         // Paused: sync position to last mpv report.
                         lastMpvPosition = positionSeconds
@@ -198,9 +217,12 @@ class MpvPlaybackEngine(
                     }
                     reportPresence(force = true)
                 }
+                "mute" -> (event.value as? PropertyValue.Flag)?.value?.let { isMuted = it }
             }
             Event.FileLoaded -> {
                 isLoading = false
+                transition("playing")
+                ActionBreadcrumbs.record("Started playback")
                 player?.getFlagProperty("pause")?.let { isPlaying = !it }
                 player?.getDoubleProperty("duration")
                     ?.takeIf { it.isFinite() && it > 0.0 }
@@ -224,8 +246,12 @@ class MpvPlaybackEngine(
                     isPlaying = false
                     positionSeconds = durationSeconds
                     hasEnded = true
+                    transition("idle")
                 } else if (event.reason == EndReason.ERROR) {
                     error = event.error ?: "mpv could not play this stream"
+                    val code = event.code
+                    logger.error { "mpv end-file error code=$code error=$error" }
+                    transition("error", "code=$code $error")
                 }
                 isLoading = false
                 onPresence(null)
@@ -233,9 +259,8 @@ class MpvPlaybackEngine(
             is Event.Log -> {
                 val level = event.level
                 val msg = event.text
-                if (level == "error" || level == "fatal" || level == "warn") {
-                    System.err.println("mpv[$level]: $msg")
-                }
+                if (level == "error" || level == "fatal") logger.error { "mpv[$level]: $msg" }
+                else if (level == "warn") logger.warn { "mpv[$level]: $msg" }
             }
             else -> Unit
         }
@@ -274,6 +299,32 @@ class MpvPlaybackEngine(
         isPlaying = playing
         player?.setPaused(!playing)
         reportPresence(force = true)
+    }
+
+    fun runPlayerAction(action: PlayerAction) {
+        val mpv = player ?: return
+        when (action) {
+            PlayerAction.PLAY_PAUSE -> mpv.command("cycle", "pause")
+            PlayerAction.SEEK_FORWARD_5 -> mpv.command("seek", "5")
+            PlayerAction.SEEK_BACKWARD_5 -> mpv.command("seek", "-5")
+            PlayerAction.SEEK_FORWARD_10 -> mpv.command("seek", "10")
+            PlayerAction.SEEK_BACKWARD_10 -> mpv.command("seek", "-10")
+            PlayerAction.VOLUME_UP -> mpv.command("add", "volume", "5")
+            PlayerAction.VOLUME_DOWN -> mpv.command("add", "volume", "-5")
+            PlayerAction.MUTE -> mpv.command("cycle", "mute")
+            PlayerAction.FULLSCREEN -> Unit
+            PlayerAction.TOGGLE_PIP -> Unit
+            PlayerAction.SUBTITLE_DELAY_LATER -> {
+                mpv.command("add", "sub-delay", "0.1")
+                subtitleDelaySeconds += 0.1
+            }
+            PlayerAction.SUBTITLE_DELAY_EARLIER -> {
+                mpv.command("add", "sub-delay", "-0.1")
+                subtitleDelaySeconds -= 0.1
+            }
+            PlayerAction.SPEED_UP -> mpv.command("add", "speed", "0.1")
+            PlayerAction.SPEED_DOWN -> mpv.command("add", "speed", "-0.1")
+        }
     }
 
     fun seekTo(seconds: Double) {
@@ -398,6 +449,7 @@ class MpvPlaybackEngine(
     }
 
     private fun release() {
+        transition("idle")
         surface?.let { runCatching { it.close() } }
         surface = null
         player?.let { runCatching { it.shutdown() } }

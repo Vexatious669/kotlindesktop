@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -59,7 +60,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AudioType
+import me.enivzoy.anilife.app.ui.adaptiveGlass
+import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.DownloadConfig
+import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.RemoteImage
 import me.enivzoy.anilife.app.ui.Resolution
 import me.enivzoy.anilife.core.model.AnimeDetail
@@ -128,14 +132,18 @@ fun DownloadConfigDialog(
                     .heightIn(max = 900.dp)
                     .clip(DialogShape)
                     .background(AniLifeColors.Card)
+                    .adaptiveGlass(shape = DialogShape)
+                    .appEnter()
                     .border(1.dp, AniLifeColors.Border, DialogShape),
             ) {
                 Header(detail = detail, totalEpisodes = episodes.size, onClose = onDismiss)
                 HorizontalDivider(color = AniLifeColors.Border)
 
+                val scrollState = rememberScrollState()
+                Box(Modifier.weight(1f)) {
                 Column(
-                    Modifier.weight(1f)
-                        .verticalScroll(rememberScrollState())
+                    Modifier.fillMaxSize()
+                        .verticalScroll(scrollState)
                         .padding(horizontal = 24.dp, vertical = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
@@ -274,6 +282,8 @@ fun DownloadConfigDialog(
                             Text("All episodes are already downloaded.", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
                         }
                     }
+                }
+                PageScrollbar(scrollState, Modifier.align(Alignment.CenterEnd))
                 }
 
                 Footer(
@@ -460,7 +470,7 @@ private fun ServerRow(selected: String, options: List<String>, onSelect: (String
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.background(AniLifeColors.Secondary),
+                modifier = Modifier.background(AniLifeColors.Secondary).appEnter(),
             ) {
                 options.forEach { option ->
                     DropdownMenuItem(
@@ -483,40 +493,45 @@ private fun EpisodeGrid(
     selected: List<Int>,
     onToggle: (Int) -> Unit,
 ) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 56.dp),
-        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(episodes, key = { it }) { episode ->
-            val isDownloaded = episode in downloaded
-            val isSelected = episode in selected
-            Box(
-                Modifier.aspectRatio(1.6f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(
-                        when {
-                            isDownloaded -> AniLifeColors.CardHover.copy(alpha = 0.5f)
-                            isSelected -> AniLifeColors.Primary
-                            else -> AniLifeColors.Secondary
+    val gridState = rememberLazyGridState()
+    Box(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 56.dp),
+            modifier = Modifier.fillMaxSize(),
+            state = gridState,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(episodes, key = { it }) { episode ->
+                val isDownloaded = episode in downloaded
+                val isSelected = episode in selected
+                Box(
+                    Modifier.aspectRatio(1.6f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            when {
+                                isDownloaded -> AniLifeColors.CardHover.copy(alpha = 0.5f)
+                                isSelected -> AniLifeColors.Primary
+                                else -> AniLifeColors.Secondary
+                            },
+                        )
+                        .then(if (isDownloaded) Modifier else Modifier.clickable { onToggle(episode) }),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        episode.toString(),
+                        color = when {
+                            isDownloaded -> AniLifeColors.MutedForeground.copy(alpha = 0.5f)
+                            isSelected -> AniLifeColors.PrimaryForeground
+                            else -> AniLifeColors.Foreground
                         },
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     )
-                    .then(if (isDownloaded) Modifier else Modifier.clickable { onToggle(episode) }),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    episode.toString(),
-                    color = when {
-                        isDownloaded -> AniLifeColors.MutedForeground.copy(alpha = 0.5f)
-                        isSelected -> AniLifeColors.PrimaryForeground
-                        else -> AniLifeColors.Foreground
-                    },
-                    fontSize = 12.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                )
+                }
             }
         }
+        PageScrollbar(gridState, Modifier.align(Alignment.CenterEnd))
     }
 }
 

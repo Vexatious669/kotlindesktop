@@ -21,8 +21,15 @@ import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import io.github.oshai.kotlinlogging.KotlinLogging
+import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
+import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
+import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AniLifeIcon
 import me.enivzoy.anilife.app.ui.AniLifeTheme
+import me.enivzoy.anilife.app.ui.GlassHost
+import me.enivzoy.anilife.app.ui.GlassShowcase
+import me.enivzoy.anilife.app.ui.ProvideHighRefresh
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DependencyManager
 import me.enivzoy.anilife.app.data.dependencyDirectory
@@ -35,7 +42,16 @@ import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.geom.AffineTransform
 
+private val logger = KotlinLogging.logger {}
+
+/** Temporary hook for the development glass showcase; never enabled in normal runs. */
+private fun showcaseRequested(): Boolean =
+    System.getProperty("anilife.glassShowcase") == "true" ||
+        System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
+
 fun main() {
+    runCatching { DiagnosticsPaths.ensure() }
+    installFatalExceptionHandler()
     if (relaunchWithSetupJre()) return
     application {
     val setupScope = rememberCoroutineScope()
@@ -61,23 +77,34 @@ fun main() {
         state = state,
         icon = icon,
     ) {
-        LaunchedEffect(Unit) {
+        LaunchedEffect(appSettings) {
             window.minimumSize = Dimension(800, 480)
-            window.background = Color(10, 15, 10)
+            AniLifeColors.update(appSettings)
+            val background = awtColor(AniLifeColors.Background)
+            window.background = background
+            window.contentPane.background = background
+            window.rootPane.background = background
             applyDarkTitleBar(window)
         }
         AniLifeTheme(appSettings) {
-            LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
-            var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
-            if (!setupComplete) {
-                SetupScreen(
-                    manager = dependencyManager,
-                    onContinue = {
-                        dependencyManager.configurePaths()
-                        setupComplete = true
-                    },
-                )
-            } else AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
+            GlassHost {
+                ProvideHighRefresh(
+                    enabled = appSettings.highRefreshRateUi,
+                    reducedMotion = appSettings.reducedMotion,
+                ) {
+                    LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
+                    var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
+                    if (!setupComplete) {
+                        SetupScreen(
+                            manager = dependencyManager,
+                            onContinue = {
+                                dependencyManager.configurePaths()
+                                setupComplete = true
+                            },
+                        )
+                    } else if (showcaseRequested()) {
+                        GlassShowcase()
+                    } else AniLifeApp(settingsStore = settingsStore, onPlayerFullscreen = { fullscreen ->
                     val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("windows")
                     if (isWindows) {
                         if (fullscreen && windowedStyle.value == null) {
@@ -158,9 +185,22 @@ fun main() {
                         state.placement = previousPlacement.value.takeUnless { it == WindowPlacement.Fullscreen }
                             ?: WindowPlacement.Floating
                     }
-            }, onExitApplication = ::exitApplication)
+            }, onPlayerPip = { pip -> state.isMinimized = pip }, onExitApplication = ::exitApplication)
+                    }
+                }
+            }
         }
     }
+}
+
+private fun installFatalExceptionHandler() {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        runCatching {
+            logger.error(throwable) { "FATAL uncaught exception on ${thread.name}" }
+            if (throwable is OutOfMemoryError) ActionBreadcrumbs.dump()
+            previous?.uncaughtException(thread, throwable) ?: throwable.printStackTrace()
+        }
     }
 }
 
@@ -228,6 +268,9 @@ private fun initialWindowSize(): DpSize {
 private fun loadWindowIcon(): BitmapPainter? = AniLifeIcon.load(64)?.let(::BitmapPainter)
 
  
+private fun awtColor(color: androidx.compose.ui.graphics.Color) =
+    Color(color.red, color.green, color.blue)
+
 private fun applyDarkTitleBar(window: java.awt.Window) {
     if (!System.getProperty("os.name").orEmpty().lowercase().contains("windows")) return
     runCatching {

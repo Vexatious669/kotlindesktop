@@ -4,7 +4,7 @@ import org.gradle.api.tasks.WriteProperties
 plugins {
     kotlin("jvm")
     id("org.jetbrains.compose")
-    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.21"
 }
 
 repositories {
@@ -52,9 +52,12 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.14.0")
     implementation("net.java.dev.jna:jna-platform:5.14.0")
     implementation("xyz.orbitary:perigee:0.0.2")
-    implementation("org.jetbrains.compose.material3:material3-desktop:1.7.3")
-    implementation("org.jetbrains.compose.foundation:foundation-desktop:1.7.3")
-    implementation("org.jetbrains.compose.ui:ui-desktop:1.7.3")
+    implementation("org.jetbrains.compose.material3:material3-desktop:1.9.0")
+    implementation("org.jetbrains.compose.foundation:foundation-desktop:1.9.3")
+    implementation("org.jetbrains.compose.ui:ui-desktop:1.9.3")
+    implementation("io.github.kashif-mehmood-km:backdrop:0.0.1-alpha02")
+    implementation("io.github.oshai:kotlin-logging-jvm:5.1.4")
+    implementation("ch.qos.logback:logback-classic:1.4.14")
     implementation(kotlin("stdlib"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -94,6 +97,11 @@ tasks.processResources {
 compose.desktop {
     application {
         mainClass = "me.enivzoy.anilife.app.MainKt"
+        jvmArgs += listOf(
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            "-XX:HeapDumpPath=${System.getProperty("user.home")}/AppData/Roaming/AniLife/heapdumps/",
+            "-Xlog:gc*:file=${System.getProperty("user.home")}/AppData/Roaming/AniLife/logs/gc.log:time,uptime,level,tags",
+        )
         nativeDistributions {
             if (isLinux) {
                 targetFormats(TargetFormat.Deb)

@@ -2,7 +2,6 @@
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -27,8 +26,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,7 +39,9 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.enivzoy.anilife.app.ui.scroll.rememberScrollController
 import me.enivzoy.anilife.core.model.AnimeCard
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
  
@@ -57,10 +60,13 @@ fun AnimeRow(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val controller = rememberScrollController()
+    var scrollJob by remember { mutableStateOf<Job?>(null) }
 
     fun scroll(direction: Int) {
         val viewport = listState.layoutInfo.viewportSize.width.toFloat().takeIf { it > 0f } ?: 900f
-        scope.launch { listState.animateScrollBy(direction * viewport * 0.85f) }
+        scrollJob?.cancel()
+        scrollJob = scope.launch { controller.scrollBy(listState, direction * viewport * 0.85f) }
     }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -7,7 +7,6 @@ import androidx.compose.foundation.focusable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +46,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -68,10 +68,12 @@ import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
 import me.enivzoy.anilife.app.data.Presence
+import me.enivzoy.anilife.app.data.PlayerAction
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.player.MpvPlaybackEngine
 import me.enivzoy.anilife.app.player.WakeLock
+import me.enivzoy.anilife.app.ui.appTween
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.AnimeDetail
 import me.enivzoy.anilife.core.model.SkipTimes
@@ -110,6 +112,9 @@ fun PlayerScreen(
     settings: AppSettings = AppSettings(),
     onSettingsChange: (AppSettings) -> Unit = {},
     isFullscreen: Boolean = true,
+    isPipMode: Boolean = false,
+    onTogglePip: () -> Unit = {},
+    onClosePip: () -> Unit = {},
     onToggleFullscreen: () -> Unit = {},
     onSourceSelect: (AnimeVideoSource) -> Unit = {},
     onAudioChange: (String) -> Unit = {},
@@ -425,53 +430,92 @@ fun PlayerScreen(
     }
 
     val focusRequester = remember { FocusRequester() }
+    var playerSurfaceFocused by remember { mutableStateOf(true) }
     LaunchedEffect(focusRequester) {
         withFrameNanos { }
         focusRequester.requestFocus()
     }
+    val bindingsState = rememberUpdatedState(settings.keyBindings)
     val shortcutState = rememberUpdatedState(
         PlayerShortcuts(
             onTogglePause = {
-                if (engine != null) engine.togglePause()
+                if (engine != null) engine.runPlayerAction(PlayerAction.PLAY_PAUSE)
                 else {
                     if (simulatedPosition >= fallbackDurationSeconds) simulatedPosition = 0.0
                     simulatedPlaying = !simulatedPlaying
                 }
             },
             onSeekRelative = { delta ->
-                if (engine != null) engine.seekRelative(delta)
+                val action = when (delta) {
+                    5.0 -> PlayerAction.SEEK_FORWARD_5
+                    -5.0 -> PlayerAction.SEEK_BACKWARD_5
+                    10.0 -> PlayerAction.SEEK_FORWARD_10
+                    -10.0 -> PlayerAction.SEEK_BACKWARD_10
+                    else -> null
+                }
+                if (engine != null && action != null) engine.runPlayerAction(action)
                 else simulatedPosition = (simulatedPosition + delta).coerceIn(0.0, fallbackDurationSeconds)
             },
             onVolumeChange = { delta ->
-                onSettingsChange(settings.copy(volume = (settings.volume + delta).coerceIn(0, 100)))
+                val action = if (delta > 0) PlayerAction.VOLUME_UP else PlayerAction.VOLUME_DOWN
+                val next = (settings.volume + delta).coerceIn(0, 100)
+                if (engine != null) {
+                    engine.runPlayerAction(action)
+                    if (next == settings.volume) engine.setVolume(next)
+                } else {
+                    onSettingsChange(settings.copy(volume = next))
+                }
             },
             onToggleMute = {
-                if (engine != null) engine.setMute(!engine.isMuted)
+                if (engine != null) engine.runPlayerAction(PlayerAction.MUTE)
             },
             onToggleFullscreen = onToggleFullscreen,
+            onTogglePip = onTogglePip,
             onSpeedChange = { delta ->
-                playbackSpeed = (playbackSpeed + delta).coerceIn(0.25f, 4f)
+                val action = if (delta > 0) PlayerAction.SPEED_UP else PlayerAction.SPEED_DOWN
+                val next = (playbackSpeed + delta).coerceIn(0.25f, 3f)
+                if (engine != null) {
+                    engine.runPlayerAction(action)
+                    if (next == playbackSpeed) engine.setSpeed(next.toDouble())
+                }
+                playbackSpeed = next
             },
             onSubtitleDelay = { delta ->
-                if (engine != null) engine.shiftSubtitles(engine.subtitleDelaySeconds + delta)
+                val action = if (delta > 0) PlayerAction.SUBTITLE_DELAY_LATER else PlayerAction.SUBTITLE_DELAY_EARLIER
+                if (engine != null) engine.runPlayerAction(action)
             },
-            onSkip = {
-                val active = activeSkip ?: return@PlayerShortcuts
-                if (activeSkipKey != null) handledSkipKeys = handledSkipKeys + activeSkipKey
-                val target = skipTarget(active, durationSeconds)
-                if (engine != null) engine.seekTo(target)
-                else simulatedPosition = target.coerceIn(0.0, fallbackDurationSeconds)
-            },
-            onNext = { next?.let(onEpisodeChange) },
-            onPrevious = { previous?.let(onEpisodeChange) },
         )
     )
+
+    val videoSurface: @Composable (Modifier) -> Unit = { surfaceModifier ->
+        engine?.videoFrame?.let { frame ->
+            Image(
+                bitmap = frame,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = surfaceModifier,
+            )
+        }
+    }
+
+    if (isPipMode) {
+        PipPlayerWindow(
+            videoSurface = videoSurface,
+            isPlaying = isPlaying,
+            onTogglePause = { shortcutState.value.onTogglePause() },
+            onSeek = { shortcutState.value.onSeekRelative(it) },
+            onClose = onClosePip,
+            onPreviewKeyEvent = { event ->
+                handlePlayerShortcut(event, shortcutState.value, bindingsState.value)
+            },
+        )
+    }
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
             .pointerHoverIcon(if (controlsVisible) PointerIcon.Default else HiddenPlayerCursor)
             .onPreviewKeyEvent { event ->
-                if (handlePlayerShortcut(event, shortcutState.value)) {
+                if (handlePlayerShortcut(event, shortcutState.value, bindingsState.value, !playerSurfaceFocused)) {
                     controlsVisible = true
                     pointerActivity += 1
                     true
@@ -481,6 +525,7 @@ fun PlayerScreen(
             }
             .focusRequester(focusRequester)
             .focusable()
+            .onFocusChanged { playerSurfaceFocused = it.isFocused }
             // The mouse moving anywhere over the picture brings the chrome back. Desktop reports
             // movement as a Move event, which the pointer block below would otherwise miss.
             .onPointerEvent(PointerEventType.Move) {
@@ -502,14 +547,7 @@ fun PlayerScreen(
             }
         },
     ) {
-        engine?.videoFrame?.let { frame ->
-            Image(
-                bitmap = frame,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        if (!isPipMode) videoSurface(Modifier.fillMaxSize())
         val notice = engine?.error
             ?: engine?.takeIf { it.isLoading && it.videoFrame == null }?.let { "Buffering…" }
         if (notice != null) {
@@ -569,8 +607,8 @@ fun PlayerScreen(
         AnimatedVisibility(
             visible = controlsVisible,
             modifier = Modifier.fillMaxSize(),
-            enter = fadeIn(tween(180)),
-            exit = fadeOut(tween(260)),
+            enter = fadeIn(appTween(180)),
+            exit = fadeOut(appTween(260)),
         ) {
         PlayerControlsScaffold(
             title = showTitle,

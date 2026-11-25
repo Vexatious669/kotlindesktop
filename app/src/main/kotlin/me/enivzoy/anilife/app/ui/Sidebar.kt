@@ -1,18 +1,12 @@
 ﻿package me.enivzoy.anilife.app.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,19 +23,13 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.unit.dp
 import me.enivzoy.anilife.app.Screen
 
@@ -61,7 +49,7 @@ fun AppSidebar(
         modifier = modifier
             .width(64.dp)
             .fillMaxHeight()
-            .background(AniLifeColors.Sidebar)
+            .liquidGlass(shape = RoundedCornerShape(0.dp))
             .drawBehind {
                 val x = size.width - 0.5f
                 drawLine(
@@ -122,30 +110,15 @@ private fun NavIcon(
     size: androidx.compose.ui.unit.Dp = 40.dp,
     onClick: () -> Unit,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val background: Color = when {
-        selected -> AniLifeColors.SidebarAccent
-        hovered -> AniLifeColors.SidebarAccent.copy(alpha = 0.65f)
-        else -> Color.Transparent
-    }
-    val tint = if (selected || hovered) AniLifeColors.Foreground else AniLifeColors.MutedForeground
-
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(RoundedCornerShape(10.dp))
-            .background(background)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .pointerHoverIcon(PointerIcon.Hand),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = tint,
-            modifier = Modifier.size(20.dp),
-        )
-    }
+    GlassIconButton(
+        onClick = onClick,
+        icon = icon,
+        contentDescription = label,
+        size = size,
+        iconSize = 20.dp,
+        selected = selected,
+        accent = AniLifeColors.SidebarAccent,
+        shape = RoundedCornerShape(10.dp),
+    )
 }
 

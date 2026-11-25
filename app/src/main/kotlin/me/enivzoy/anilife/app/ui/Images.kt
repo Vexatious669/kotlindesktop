@@ -28,6 +28,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.security.MessageDigest
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import java.time.Duration
 
  
@@ -75,7 +76,9 @@ object RemoteImages {
             .header("Accept", "image/*")
             .GET()
             .build()
-        val response = client.send(request, HttpResponse.BodyHandlers.ofByteArray())
+        val response = ResourceTracker.networkOpened(request.uri().host).use {
+            client.send(request, HttpResponse.BodyHandlers.ofByteArray())
+        }
         if (response.statusCode() in 200..299) response.body() else null
     }.getOrNull()
 

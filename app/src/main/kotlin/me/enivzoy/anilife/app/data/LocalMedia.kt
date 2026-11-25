@@ -2,6 +2,8 @@
 
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.NextAiring
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +35,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.Properties
+
+private val logger = KotlinLogging.logger {}
 
 data class LocalEpisode(
     val anime: AnimeCard,
@@ -453,22 +457,31 @@ object DirectMediaDownloader {
                 }
                 headers.forEach { (name, value) -> requestBuilder.header(name, value) }
                 val request = requestBuilder.build()
-                val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
+                val lease = ResourceTracker.networkOpened(request.uri().host)
+                val response = try {
+                    client.send(request, HttpResponse.BodyHandlers.ofInputStream())
+                } catch (failure: Throwable) {
+                    lease.close()
+                    throw failure
+                }
+                val input = lease.track(response.body())
                 require(response.statusCode() in 200..299) { "The video server returned HTTP ${response.statusCode()}." }
                 val contentLength = response.headers().firstValue("Content-Length")
                 val totalBytes = if (contentLength.isPresent) contentLength.get().toLongOrNull() else null
-                val input = response.body()
                 val buffer = ByteArray(64 * 1024)
                 var downloaded = 0L
-                temporary.outputStream().use { output ->
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        downloaded += read.toLong()
-                        onProgress?.invoke(downloaded, totalBytes)
+                input.use { stream ->
+                    temporary.outputStream().use { output ->
+                        while (true) {
+                            val read = stream.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            downloaded += read.toLong()
+                            onProgress?.invoke(downloaded, totalBytes)
+                        }
                     }
                 }
+                logger.info { "download finished host=${request.uri().host} bytes=$downloaded expected=$totalBytes" }
                 require(downloaded > 0L) { "The video server returned an empty file." }
                 try {
                     Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
@@ -481,6 +494,51 @@ object DirectMediaDownloader {
                 throw error
             }
         }
+
+    internal fun streamArguments(
+        url: String,
+        headers: Map<String, String>,
+        outputPath: String,
+        container: String,
+    ): List<String> = buildList {
+        add("-nostdin")
+        add("-y")
+        add("-loglevel")
+        add("error")
+        // hls needs the network protocols whitelisted or ffmpeg exits with -22
+        add("-protocol_whitelist")
+        add("file,http,https,tcp,tls,crypto")
+        val userAgent = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
+        val referer = headers.entries.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
+        val otherHeaders = headers.filterKeys { key ->
+            !key.equals("User-Agent", ignoreCase = true) && !key.equals("Referer", ignoreCase = true)
+        }
+        if (userAgent != null) {
+            add("-user_agent")
+            add(userAgent)
+        }
+        if (referer != null) {
+            add("-referer")
+            add(referer)
+        }
+        if (otherHeaders.isNotEmpty()) {
+            add("-headers")
+            add(otherHeaders.entries.joinToString("\r\n") { "${it.key}: ${it.value}" } + "\r\n")
+        }
+        add("-i")
+        add(url)
+        add("-map")
+        add("0:v?")
+        add("-map")
+        add("0:a?")
+        add("-c")
+        add("copy")
+        add("-progress")
+        add("pipe:1")
+        add("-f")
+        add(container)
+        add(outputPath)
+    }
 
     private suspend fun downloadStream(
         url: String,
@@ -500,50 +558,16 @@ object DirectMediaDownloader {
         val safeEpisodeTitle = episodeTitle?.takeIf(String::isNotBlank)?.let { " - ${safeName(it)}" }.orEmpty()
         val destination = File(directory, "${safeName(animeTitle)} - E$episodeLabel$safeEpisodeTitle.mkv")
         val temporary = File(directory, "${destination.name}.${java.util.UUID.randomUUID()}.part")
-        val userAgent = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
-        val referer = headers.entries.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
-        val otherHeaders = headers.filterKeys { key ->
-            !key.equals("User-Agent", ignoreCase = true) && !key.equals("Referer", ignoreCase = true)
-        }
+        val container = if (destination.extension.equals("mp4", ignoreCase = true)) "mp4" else "matroska"
         val command = buildList {
             add(ffmpeg)
-            add("-nostdin")
-            add("-y")
-            add("-loglevel")
-            add("error")
-            add("-protocol_whitelist")
-            add("file,http,https,tcp,tls,crypto,data")
-            if (userAgent != null) {
-                add("-user_agent")
-                add(userAgent)
-            }
-            if (referer != null) {
-                add("-referer")
-                add(referer)
-            }
-            if (otherHeaders.isNotEmpty()) {
-                add("-headers")
-                add(otherHeaders.entries.joinToString("\r\n") { "${it.key}: ${it.value}" } + "\r\n")
-            }
-            add("-i")
-            add(url)
-            add("-map")
-            add("0:v:0")
-            add("-map")
-            add("0:a?")
-            add("-map")
-            add("0:s?")
-            add("-c")
-            add("copy")
-            add("-progress")
-            add("pipe:1")
-            add("-f")
-            add("matroska")
-            add(temporary.absolutePath)
+            addAll(streamArguments(url, headers, temporary.absolutePath, container))
         }
+        logger.info { "ffmpeg command: ${command.joinToString(" ")}" }
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         try {
             var lastSize = -1L
+            var drops = 0
             val diagnostics = mutableListOf<String>()
             process.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                 while (true) {
@@ -552,20 +576,31 @@ object DirectMediaDownloader {
                     if (line.startsWith("total_size=")) {
                         val size = line.substringAfter('=').trim().toLongOrNull()
                         if (size != null && size >= 0L && size != lastSize) {
+                            if (lastSize > 0L && size < lastSize) {
+                                drops++
+                                logger.warn { "stream byte size dropped from $lastSize to $size" }
+                            }
                             lastSize = size
                             onProgress?.invoke(size, null)
                         }
                     } else if (!line.startsWith("progress=") && line.isNotBlank()) {
                         diagnostics.add(line)
+                        if (line.contains("connection", ignoreCase = true) || line.contains("timed out", ignoreCase = true)) {
+                            drops++
+                            logger.warn { "ffmpeg stream drop: $line" }
+                        }
                     }
                 }
             }
             val exit = process.waitFor()
             if (!coroutineContext.isActive) throw CancellationException("Download cancelled.")
+            logger.info { "ffmpeg stream finished host=${URI(url).host} reportedBytes=$lastSize drops=$drops exit=$exit" }
             require(exit == 0) {
                 "FFmpeg exited with code $exit. ${diagnostics.takeLast(3).joinToString(" ").take(240)}"
             }
-            require(Files.isRegularFile(temporary.toPath()) && Files.size(temporary.toPath()) > 0L) {
+            val bytes = if (Files.isRegularFile(temporary.toPath())) Files.size(temporary.toPath()) else 0L
+            logger.info { "stream download bytes=$bytes" }
+            require(bytes > 0L) {
                 "The stream download produced an empty file."
             }
             try {

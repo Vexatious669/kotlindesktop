@@ -1,30 +1,39 @@
 package me.enivzoy.anilife.app.data
 
-import me.enivzoy.anilife.core.model.Update
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
+import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
+import me.enivzoy.anilife.core.model.Update
+import java.io.File
 import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.StandardCopyOption
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val logger = KotlinLogging.logger("AniLife.updater")
 
 private const val DEFAULT_MANIFEST_URL =
     "https://github.com/anilifecommunity/kotlindesktop/releases/latest/download/latest.json"
@@ -32,21 +41,71 @@ private const val DEFAULT_MANIFEST_URL =
 private const val FALLBACK_MANIFEST_URL =
     "https://api.github.com/repos/anilifecommunity/kotlindesktop/releases/latest"
 
-/**
- * Checks the latest GitHub release without following its installer asset redirect. The parser
- * also accepts the version manifest format used by earlier releases.
- */
+private const val PROGRESS_STEP_PERCENT = 25L
+private const val PROGRESS_STEP_BYTES = 10L * 1024L * 1024L
+private const val INSTALL_SUCCESS = 0
+private const val INSTALL_RESTART_REQUIRED = 3010
+
+open class UpdateException(message: String) : IOException(message)
+
+class UpdateHttpException(val status: Int) : UpdateException("HTTP $status")
+
+class SizeMismatchException(val expected: Long, val actual: Long) :
+    UpdateException("size mismatch: expected $expected bytes, actual $actual")
+
+class ChecksumException(val expected: String, val actual: String) :
+    UpdateException("sha256 mismatch: expected $expected, actual $actual")
+
+internal fun redactForLog(value: String): String {
+    val home = System.getProperty("user.home")
+    val homeRedacted = if (!home.isNullOrBlank() &&
+        (value == home || value.startsWith(home + File.separator))
+    ) {
+        "~" + value.removePrefix(home)
+    } else {
+        value
+    }
+    return if (homeRedacted.startsWith("http://", ignoreCase = true) ||
+        homeRedacted.startsWith("https://", ignoreCase = true)
+    ) {
+        homeRedacted.substringBefore('?')
+    } else {
+        homeRedacted
+    }
+}
+
+internal fun installCommand(installer: Path, msiLog: Path): List<String> =
+    if (installer.fileName.toString().endsWith(".msi", ignoreCase = true)) {
+        listOf("msiexec.exe", "/i", installer.toString(), "/qn", "/norestart", "/L*v", msiLog.toString())
+    } else {
+        listOf(installer.toString(), "/quiet", "/norestart")
+    }
+
+private fun cmdQuote(value: String): String = "\"${value.replace("\"", "\"\"")}\""
+
+private fun rateLimitMessage(reset: String?): String {
+    val retryAt = reset?.toLongOrNull()
+        ?.let(Instant::ofEpochSecond)
+        ?.let { LocalDateTime.ofInstant(it, ZoneId.systemDefault()) }
+        ?.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+    return if (retryAt == null) {
+        "GitHub rate limit reached. Retry later."
+    } else {
+        "GitHub rate limit reached. Retry after $retryAt local time."
+    }
+}
+
 class Updater(
     private val http: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(15))
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build(),
     private val manifestUrl: String = DEFAULT_MANIFEST_URL,
+    private val fallbackManifestUrl: String = FALLBACK_MANIFEST_URL,
 ) {
     private val mutableUpdate = MutableStateFlow<Update?>(null)
     val update: StateFlow<Update?> = mutableUpdate.asStateFlow()
 
-    /** Returns the newer [Update] for [currentVersion], or null when the app is up to date. */
     suspend fun check(currentVersion: String): Update? = withContext(Dispatchers.IO) {
         val update = fetchUpdate(currentVersion)
         mutableUpdate.value = update
@@ -57,35 +116,60 @@ class Updater(
         mutableUpdate.value = null
     }
 
-    /** Streams the release asset to disk, verifies it, then publishes it at [destination]. */
     suspend fun download(
         update: Update,
         destination: Path,
         onProgress: (Long, Long?) -> Unit = { _, _ -> },
     ): Boolean = withContext(Dispatchers.IO) {
-        val uri = httpUri(update.url) ?: run {
-            System.err.println("[Updater] invalid download URL for version ${update.version}")
-            return@withContext false
-        }
+        logger.info { "download start version=${update.version} url=${redactForLog(update.url)}" }
+        val uri = httpUri(update.url)
+            ?: throw UpdateException("invalid download URL for version ${update.version}")
+        logger.info { "download expected size=${update.sizeBytes}" }
         val request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(600))
             .header("User-Agent", "AniLife-Updater")
             .header("Accept", "*/*")
             .GET()
             .build()
-        val response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
-        if (response.statusCode() >= 400) {
-            response.body().close()
-            System.err.println("[Updater] asset download failed (HTTP ${response.statusCode()})")
-            return@withContext false
+        val lease = ResourceTracker.networkOpened(request.uri().host)
+        val response = try {
+            http.send(request, HttpResponse.BodyHandlers.ofInputStream())
+        } catch (failure: Throwable) {
+            lease.close()
+            logger.error {
+                "download request failed ${failure::class.java.simpleName}: ${redactForLog(failure.message.orEmpty())}"
+            }
+            throw failure
         }
+        val streamBody = lease.track(response.body())
+        if (response.statusCode() >= 400) {
+            streamBody.close()
+            val status = response.statusCode()
+            logger.error { "download failed version=${update.version} HTTP $status" }
+            throw UpdateHttpException(status)
+        }
+        logger.info { "download response status=${response.statusCode()}" }
+
         val parent = destination.toAbsolutePath().parent
-        Files.createDirectories(parent)
-        val temporary = Files.createTempFile(parent, destination.fileName.toString(), ".part")
+        val temporary = try {
+            Files.createDirectories(parent)
+            Files.createTempFile(parent, destination.fileName.toString(), ".part")
+        } catch (failure: Throwable) {
+            streamBody.close()
+            logger.error {
+                "download temp creation failed ${failure::class.java.simpleName}: ${redactForLog(failure.message.orEmpty())}"
+            }
+            throw failure
+        }
+        logger.info { "download temp path=${redactForLog(temporary.toString())}" }
+
         val digest = MessageDigest.getInstance("SHA-256")
+        val started = System.nanoTime()
+        val total = update.sizeBytes.takeIf { it > 0L }
         var copied = 0L
+        var lastStep = 0L
         try {
-            response.body().use { input ->
+            streamBody.use { input ->
                 Files.newOutputStream(temporary).use { output ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
@@ -94,63 +178,155 @@ class Updater(
                         digest.update(buffer, 0, read)
                         output.write(buffer, 0, read)
                         copied += read
-                        onProgress(copied, update.sizeBytes.takeIf { it > 0L })
+                        onProgress(copied, total)
+                        val step = if (total != null) {
+                            copied * 100 / total / PROGRESS_STEP_PERCENT
+                        } else {
+                            copied / PROGRESS_STEP_BYTES
+                        }
+                        if (step != lastStep) {
+                            lastStep = step
+                            if (total != null) {
+                                logger.info { "download progress ${copied * 100 / total}% bytes=$copied total=$total" }
+                            } else {
+                                logger.info { "download progress bytes=$copied" }
+                            }
+                        }
                     }
                 }
             }
-            if (update.sizeBytes > 0L && copied != update.sizeBytes) {
-                System.err.println("[Updater] asset size mismatch for ${update.version}")
-                return@withContext false
+            if (total != null && copied != total) {
+                logger.error { "size verification failed expected=$total actual=$copied" }
+                throw SizeMismatchException(total, copied)
             }
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
-            if (update.sha256.isNotBlank() && !actual.equals(update.sha256, ignoreCase = true)) {
-                System.err.println("[Updater] sha256 mismatch for ${update.version}")
-                return@withContext false
+            logger.info { "sha256 expected=${update.sha256.ifBlank { "n/a" }} actual=$actual" }
+            if (update.sha256.isBlank()) {
+                logger.warn { "sha256 missing for version ${update.version}; verification skipped (actual=$actual)" }
+            } else if (!actual.equals(update.sha256, ignoreCase = true)) {
+                logger.error { "sha256 mismatch expected=${update.sha256} actual=$actual" }
+                throw ChecksumException(update.sha256, actual)
             }
             try {
                 Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } catch (_: AtomicMoveNotSupportedException) {
                 Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING)
             }
+            val durationMs = (System.nanoTime() - started) / 1_000_000
+            logger.info { "download complete version=${update.version} bytes=$copied durationMs=$durationMs" }
             true
         } finally {
-            Files.deleteIfExists(temporary)
+            runCatching { Files.deleteIfExists(temporary) }
         }
     }
 
-    /** Starts the downloaded Windows installer silently; the caller should exit afterwards. */
     fun installWindows(installer: Path) {
-        val name = installer.fileName.toString().lowercase()
-        if (name.endsWith(".msi")) {
-            ProcessBuilder("msiexec", "/i", installer.toString(), "/qn", "/norestart").start()
-        } else {
-            ProcessBuilder(installer.toString(), "/quiet", "/norestart").start()
+        val logs = DiagnosticsPaths.logs
+        Files.createDirectories(logs)
+        Files.createDirectories(updatesDirectory())
+        val msiLog = logs.resolve("updater-msi.log")
+        val marker = logs.resolve("updater-result.txt")
+        val command = installCommand(installer, msiLog)
+        val appPath = ProcessHandle.current().info().command().orElse(null)
+        val helper = updatesDirectory().resolve("run-updater.cmd")
+        val lines = buildList {
+            add("@echo off")
+            add("setlocal")
+            add(command.joinToString(" ") { cmdQuote(it) })
+            add("set CODE=%ERRORLEVEL%")
+            add("echo %CODE%>${cmdQuote(marker.toString())}")
+            if (appPath != null) {
+                add("if \"%CODE%\"==\"$INSTALL_SUCCESS\" start \"\" ${cmdQuote(appPath)}")
+                add("if \"%CODE%\"==\"$INSTALL_RESTART_REQUIRED\" start \"\" ${cmdQuote(appPath)}")
+            }
+            add("endlocal")
         }
+        Files.write(helper, lines, StandardCharsets.UTF_8)
+        logger.info { "install command=${command.joinToString(" ") { redactForLog(it) }}" }
+        logger.info {
+            "install helper launched path=${redactForLog(helper.toString())} " +
+                "app=${appPath?.let(::redactForLog) ?: "n/a"}"
+        }
+        ProcessBuilder("cmd.exe", "/c", "start", "\"\"", "/b", helper.toString()).start()
     }
 
     private suspend fun fetchUpdate(currentVersion: String): Update? {
+        logger.info { "update check start current=$currentVersion" }
         val failures = mutableListOf<String>()
-        for (url in listOf(manifestUrl, FALLBACK_MANIFEST_URL)) {
-            val uri = URI.create(url)
-            val request = HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofSeconds(30))
-                .header("User-Agent", "AniLife-Updater")
-                .header("Accept", "application/vnd.github+json")
-                .GET()
-                .build()
-            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
-            if (response.statusCode() >= 400) {
-                failures += "$url (HTTP ${response.statusCode()})"
-                continue
+        for (url in listOf(manifestUrl, fallbackManifestUrl)) {
+            val safeUrl = redactForLog(url)
+            logger.info { "manifest query url=$safeUrl" }
+            try {
+                val uri = URI.create(url)
+                val request = HttpRequest.newBuilder(uri)
+                    .timeout(Duration.ofSeconds(30))
+                    .header("User-Agent", "AniLife-Updater")
+                    .header("Accept", "application/vnd.github+json")
+                    .GET()
+                    .build()
+                val response = ResourceTracker.networkOpened(uri.host).use {
+                    http.send(request, HttpResponse.BodyHandlers.ofString())
+                }
+                val remaining = response.headers().firstValue("X-RateLimit-Remaining").orElse("n/a")
+                val reset = response.headers().firstValue("X-RateLimit-Reset").orElse("n/a")
+                val status = response.statusCode()
+                logger.info {
+                    "manifest response url=$safeUrl status=$status " +
+                        "ratelimit-remaining=$remaining ratelimit-reset=$reset"
+                }
+                if (status >= 400) {
+                    val detail = if ((status == 403 || status == 429) && remaining == "0") {
+                        rateLimitMessage(reset)
+                    } else {
+                        "HTTP $status"
+                    }
+                    logger.warn { "manifest failure url=$safeUrl $detail" }
+                    failures += "$safeUrl: $detail"
+                    continue
+                }
+                return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                val detail = "${failure::class.java.simpleName}: ${redactForLog(failure.message.orEmpty())}"
+                logger.warn { "manifest failure url=$safeUrl $detail" }
+                failures += "$safeUrl: $detail"
             }
-            return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
         }
-        throw IOException("Update manifest fetch failed: ${failures.joinToString(", ")}")
+        val message = "Update manifest fetch failed: ${failures.joinToString("; ")}"
+        logger.error { message }
+        throw UpdateException(message)
     }
 
     companion object {
         const val FALLBACK_VERSION = "1.0.0"
         const val UPDATES_DIRECTORY = "updates"
+
+        fun logFile(): Path = DiagnosticsPaths.logs.resolve("updater.log")
+
+        fun reportPreviousInstall() {
+            val marker = DiagnosticsPaths.logs.resolve("updater-result.txt")
+            if (!Files.isRegularFile(marker)) return
+            val code = runCatching { Files.readString(marker, StandardCharsets.UTF_8).trim() }
+                .getOrNull()
+                ?.toIntOrNull()
+            if (code == null) {
+                logger.warn { "previous installer exit code unreadable path=${redactForLog(marker.toString())}" }
+            } else {
+                val message = "previous installer exit code $code"
+                if (code == INSTALL_SUCCESS || code == INSTALL_RESTART_REQUIRED) {
+                    logger.info { message }
+                } else {
+                    logger.warn { message }
+                }
+            }
+            runCatching { Files.deleteIfExists(marker) }.onFailure { failure ->
+                logger.warn {
+                    "updater result marker not deleted ${failure::class.java.simpleName}: " +
+                        redactForLog(failure.message.orEmpty())
+                }
+            }
+        }
 
         fun currentVersion(): String {
             val stream = Updater::class.java.classLoader.getResourceAsStream("version/version.properties")
@@ -162,7 +338,7 @@ class Updater(
             val base = System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }
                 ?.let { Path.of(it) }
                 ?: Path.of(System.getProperty("user.home"), ".local", "share")
-            return base.resolve("AniLife").resolve("updates")
+            return base.resolve("AniLife").resolve(UPDATES_DIRECTORY)
         }
 
         fun parseVersion(version: String): List<Int> =

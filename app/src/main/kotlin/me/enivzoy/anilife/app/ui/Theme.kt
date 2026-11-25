@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AppSettings
+import me.enivzoy.anilife.app.ui.theme.ProvideAppearance
 import java.io.File
 
  
@@ -57,6 +58,8 @@ object AniLifeColors {
     val Input get() = token("input", 0x26FFFFFF)
     val Primary get() = themed("primary", appearance.buttonColor, 0xFF87D66A)
     val PrimaryForeground get() = token("primary-foreground", 0xFF0A0F0A)
+    val SurfaceVariant get() = themed("surface-variant", appearance.animeCardColor, 0xFF1A261A)
+    val TextPrimary get() = Foreground
     val Secondary get() = token("secondary", 0xFF1A261A)
     val SecondaryForeground get() = token("secondary-foreground", 0xFFF8F8F8)
     val Accent get() = token("accent", 0xFF1A261A)
@@ -186,8 +189,11 @@ fun AniLifeTheme(settings: AppSettings, content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = scheme,
         typography = typography,
-        content = content,
-    )
+    ) {
+        ProvideAppearance(settings) {
+            content()
+        }
+    }
 }
 
 private fun Typography.withFont(font: FontFamily) = copy(

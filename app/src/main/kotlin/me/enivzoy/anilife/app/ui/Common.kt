@@ -1,14 +1,6 @@
 ﻿package me.enivzoy.anilife.app.ui
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.LocalScrollbarStyle
-import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,7 +26,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -57,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.NextAiring
+import me.enivzoy.anilife.app.ui.scroll.AniLifeScrollbar
 import me.enivzoy.anilife.core.model.countdown
 import me.enivzoy.anilife.core.model.formatLabel
 import kotlinx.coroutines.CancellationException
@@ -83,13 +74,7 @@ suspend fun <T> loadState(block: suspend () -> T): LoadState<T> = try {
  
 @Composable
 fun Shimmer(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val progress by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1350, easing = LinearEasing), RepeatMode.Restart),
-        label = "shimmer-progress",
-    )
+    val progress by rememberAppLoop(1350)
     val brush = Brush.linearGradient(
         colors = listOf(AniLifeColors.Card, AniLifeColors.CardHover, AniLifeColors.Card),
         start = Offset(progress * 900f - 450f, 0f),
@@ -100,23 +85,32 @@ fun Shimmer(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.d
 
  
 @Composable
-fun PageScrollbar(adapter: ScrollbarAdapter, modifier: Modifier = Modifier) {
-    val style = LocalScrollbarStyle.current.copy(
-        minimalHeight = 28.dp,
-        thickness = 8.dp,
-        shape = RoundedCornerShape(4.dp),
-        unhoverColor = AniLifeColors.Foreground.copy(alpha = 0.16f),
-        hoverColor = AniLifeColors.Foreground.copy(alpha = 0.4f),
-    )
-    CompositionLocalProvider(LocalScrollbarStyle provides style) {
-        VerticalScrollbar(
-            adapter = adapter,
-            modifier = modifier
-                .fillMaxHeight()
-                .padding(horizontal = 2.dp, vertical = 4.dp),
-        )
-    }
-}
+fun PageScrollbar(
+    state: androidx.compose.foundation.lazy.grid.LazyGridState,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+) = AniLifeScrollbar(state = state, modifier = modifier, active = active)
+
+@Composable
+fun PageScrollbar(
+    adapter: ScrollbarAdapter,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+) = AniLifeScrollbar(adapter = adapter, modifier = modifier, active = active)
+
+@Composable
+fun PageScrollbar(
+    state: androidx.compose.foundation.ScrollState,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+) = AniLifeScrollbar(state = state, modifier = modifier, active = active)
+
+@Composable
+fun PageScrollbar(
+    state: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+) = AniLifeScrollbar(state = state, modifier = modifier, active = active)
 
  
 @Composable

@@ -2,6 +2,7 @@ package me.enivzoy.anilife.app.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Person
@@ -42,6 +44,7 @@ import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.MyAnimeListEntry
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.PageScrollbar
 
 @Composable
 fun MyAnimeListScreen(repository: AniListRepository) {
@@ -147,18 +150,22 @@ fun MyAnimeListScreen(repository: AniListRepository) {
                 Text("MyAnimeList list", color = AniLifeColors.Foreground, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                 Text("${entries.size} titles", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
             }
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                items(entries, key = { it.id }) { entry ->
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                            .background(AniLifeColors.Card.copy(alpha = 0.65f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(entry.title, color = AniLifeColors.Foreground, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
-                        Text("${entry.status.replace('_', ' ')} · ${entry.watched} watched", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+            Box(Modifier.weight(1f)) {
+                val listState = rememberLazyListState()
+                LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    items(entries, key = { it.id }) { entry ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                .background(AniLifeColors.Card.copy(alpha = 0.65f))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(entry.title, color = AniLifeColors.Foreground, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                            Text("${entry.status.replace('_', ' ')} · ${entry.watched} watched", color = AniLifeColors.MutedForeground, fontSize = 11.sp)
+                        }
                     }
                 }
+                PageScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
         }
     }

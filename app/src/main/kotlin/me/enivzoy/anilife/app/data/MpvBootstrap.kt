@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.data
 
 import me.enivzoy.anilife.mpv.Mpv
+import me.enivzoy.anilife.core.diagnostics.ResourceTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -28,18 +29,18 @@ object MpvBootstrap {
         return try {
             withContext(Dispatchers.IO) {
                 val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()
-                val releaseJson = client.send(
-                    request(MPV_RELEASES, "application/vnd.github+json"),
-                    HttpResponse.BodyHandlers.ofString(),
-                ).body()
+                val releaseRequest = request(MPV_RELEASES, "application/vnd.github+json")
+                val releaseJson = ResourceTracker.networkOpened(releaseRequest.uri().host).use {
+                    client.send(releaseRequest, HttpResponse.BodyHandlers.ofString())
+                }.body()
                 val source = parseReleaseSource(releaseJson, releaseAssetPattern(Dependency.MPV))
                 onStatus("fetching libmpv…")
                 val archive = Files.createTempFile("anilife-mpv-", ".7z")
                 try {
-                    val bytes = client.send(
-                        request(source.url, "application/octet-stream"),
-                        HttpResponse.BodyHandlers.ofByteArray(),
-                    ).body()
+                    val assetRequest = request(source.url, "application/octet-stream")
+                    val bytes = ResourceTracker.networkOpened(assetRequest.uri().host).use {
+                        client.send(assetRequest, HttpResponse.BodyHandlers.ofByteArray())
+                    }.body()
                     Files.write(archive, bytes)
                     onStatus("extracting…")
                     extractArchive(
