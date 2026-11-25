@@ -49,6 +49,11 @@ private fun showcaseRequested(): Boolean =
     System.getProperty("anilife.glassShowcase") == "true" ||
         System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
 
+/** Skip the first-run dependency setup (for development when deps are already on PATH). */
+private fun skipSetup(): Boolean =
+    System.getProperty("anilife.skipSetup") == "true" ||
+        System.getenv("ANILIFE_SKIP_SETUP") == "1"
+
 fun main() {
     runCatching { DiagnosticsPaths.ensure() }
     installFatalExceptionHandler()
@@ -94,7 +99,7 @@ fun main() {
                 ) {
                     LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
                     var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
-                    if (!setupComplete) {
+                    if (!setupComplete && !skipSetup()) {
                         SetupScreen(
                             manager = dependencyManager,
                             onContinue = {
