@@ -7,6 +7,7 @@ import java.nio.file.Path
 import java.util.Properties
 
 const val DEFAULT_DISCORD_APPLICATION_ID = "1567301811604553728"
+val gpuAccelerationModes = setOf("auto", "off")
 
 enum class HomeSection(val label: String) {
     CONTINUE_WATCHING("Continue watching"),
@@ -63,8 +64,8 @@ data class AppSettings(
     val subtitlesByDefault: Boolean = true,
     val autoplayNextEpisode: Boolean = true,
     val resumePlayback: Boolean = true,
-    val hardwareDecoding: Boolean = true,
     val playbackBufferSize: String = "auto",
+    val gpuAcceleration: String = "auto",
     val contentScale: String = "fit",
     val showSkipButton: Boolean = true,
     val skipButtonSeconds: Int = 85,
@@ -149,8 +150,9 @@ class AppSettingsStore(private val file: File = settingsFile()) {
                 .toIntOrNull()?.coerceIn(1, 100) ?: 80,
             syncSavedToAccount = properties.getProperty("syncSavedToAccount", "true").toBooleanStrictOrNull() ?: true,
             resumePlayback = properties.getProperty("resumePlayback", "true").toBooleanStrictOrNull() ?: true,
-            hardwareDecoding = properties.getProperty("hardwareDecoding", "true").toBooleanStrictOrNull() ?: true,
             playbackBufferSize = properties.getProperty("playbackBufferSize", "auto"),
+            gpuAcceleration = properties.getProperty("gpuAcceleration")
+                ?: if (properties.getProperty("hardwareDecoding") == "false") "off" else "auto",
             contentScale = properties.getProperty("contentScale", "fit"),
             showSkipButton = properties.getProperty("showSkipButton", "true").toBooleanStrictOrNull() ?: true,
             skipButtonSeconds = properties.getProperty("skipButtonSeconds", "85").toIntOrNull() ?: 85,
@@ -204,8 +206,8 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("aniListSubmitPercent", settings.aniListSubmitPercent.toString())
             setProperty("syncSavedToAccount", settings.syncSavedToAccount.toString())
             setProperty("resumePlayback", settings.resumePlayback.toString())
-            setProperty("hardwareDecoding", settings.hardwareDecoding.toString())
             setProperty("playbackBufferSize", settings.playbackBufferSize)
+            setProperty("gpuAcceleration", settings.gpuAcceleration)
             setProperty("contentScale", settings.contentScale)
             setProperty("showSkipButton", settings.showSkipButton.toString())
             setProperty("skipButtonSeconds", settings.skipButtonSeconds.toString())
@@ -254,6 +256,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         audio = if (audio == "dub") "dub" else "sub",
         subtitleLanguage = subtitleLanguage.takeIf { it in supportedSubtitleLanguages } ?: "en",
         playbackBufferSize = playbackBufferSize.takeIf { it in bufferSizes } ?: "auto",
+        gpuAcceleration = gpuAcceleration.takeIf { it in gpuAccelerationModes } ?: "auto",
         contentScale = contentScale.takeIf { it in contentScales } ?: "fit",
         skipButtonSeconds = skipButtonSeconds.coerceIn(10, 300),
         volume = volume.coerceIn(0, 100),

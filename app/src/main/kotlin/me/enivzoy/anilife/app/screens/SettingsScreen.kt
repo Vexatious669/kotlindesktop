@@ -215,7 +215,7 @@ private enum class SettingsPage(
     val icon: ImageVector,
     val keywords: String,
 ) {
-    Player("Player", "Playback, skipping, and how the player looks", Icons.Rounded.PlayCircle, "audio dubbed sub resume autoplay skip volume picture"),
+    Player("Player", "Playback, skipping, and how the player looks", Icons.Rounded.PlayCircle, "audio dubbed sub resume autoplay skip volume picture gpu hardware decoding performance"),
     Subtitles("Subtitles", "Captions, language, and text size", Icons.Rounded.Subtitles, "captions subtitles language text size"),
     Downloads("Downloads", "Where episodes are saved", Icons.Rounded.Download, "folder directory storage path"),
     Servers("Servers", "The video providers AniLife plays through", Icons.Rounded.Dns, "providers streaming wasm servers extensions"),
@@ -224,7 +224,7 @@ private enum class SettingsPage(
     Content("Content", "Titles and what the app opens with", Icons.Rounded.VideoLibrary, "title language romaji english native"),
     Appearance("Appearance", "Theme and type", Icons.Rounded.Palette, "css theme colors palette font typeface editor"),
     Data("Data", "Backups, MyAnimeList files, and storage", Icons.Rounded.Storage, "buffer memory cache storage backup restore export import xml json"),
-    App("App", "Updates, decoding, performance, and startup", Icons.Rounded.Apps, "updates version release hardware decoding gpu startup intro splash"),
+    App("App", "Updates and startup", Icons.Rounded.Apps, "updates version release startup intro splash"),
     About("About", "Version, keyboard shortcuts, and the people behind it", Icons.Rounded.Info, "app version metadata player providers credits links website discord shortcuts repository"),
 }
 
@@ -244,6 +244,7 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Skip outro automatically", SettingsPage.Player, "intro outro recap ending skip auto"),
     SettingSearchEntry("Screen size", SettingsPage.Player, "fit crop fill scaling display"),
     SettingSearchEntry("Player volume", SettingsPage.Player, "audio sound volume"),
+    SettingSearchEntry("GPU acceleration", SettingsPage.Player, "hardware decoding gpu graphics card cpu decoder performance"),
     SettingSearchEntry("Show captions by default", SettingsPage.Subtitles, "captions subtitles text default"),
     SettingSearchEntry("Preferred caption language", SettingsPage.Subtitles, "captions subtitles language"),
     SettingSearchEntry("Caption size", SettingsPage.Subtitles, "captions subtitles text scale size"),
@@ -260,7 +261,6 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Export MyAnimeList XML", SettingsPage.Data, "mal export xml list"),
     SettingSearchEntry("Import MyAnimeList XML", SettingsPage.Data, "mal import xml list"),
     SettingSearchEntry("Play startup intro", SettingsPage.App, "animation splash opening startup"),
-    SettingSearchEntry("Hardware decoding", SettingsPage.App, "gpu acceleration decoder cpu"),
     SettingSearchEntry("Check for updates on launch", SettingsPage.App, "automatic updates release startup"),
     SettingSearchEntry("Check for updates now", SettingsPage.App, "update version release check"),
     SettingSearchEntry("About AniLife", SettingsPage.About, "app version metadata player credits links website discord shortcuts repository"),
@@ -499,6 +499,18 @@ private fun PlayerSettings(settings: AppSettings, onSettingsChange: ((AppSetting
                 valueRange = 0f..100f,
                 valueLabel = "${settings.volume}%",
                 onChange = { value -> onSettingsChange { it.copy(volume = value.toInt()) } },
+            )
+        }
+    }
+    SettingsSection("Performance") {
+        SettingsRow(
+            "GPU acceleration",
+            "Decode video on your graphics card to cut CPU use. Takes effect the next time a video starts. Turn it off if you see glitches or green frames.",
+        ) {
+            SettingsSegmented(
+                choices = listOf("auto" to "Auto", "off" to "Off"),
+                selected = settings.gpuAcceleration,
+                onSelect = { value -> onSettingsChange { it.copy(gpuAcceleration = value) } },
             )
         }
     }
@@ -1431,12 +1443,6 @@ private fun AppSettingsPage(
             "Show the AniLife animation when the app opens.",
         ) {
             SettingsSwitch(settings.playIntro) { enabled -> onSettingsChange { it.copy(playIntro = enabled) } }
-        }
-        SettingsRow(
-            "Hardware decoding",
-            "Reduce CPU use. Turn it off if playback has visual artifacts.",
-        ) {
-            SettingsSwitch(settings.hardwareDecoding) { enabled -> onSettingsChange { it.copy(hardwareDecoding = enabled) } }
         }
     }
 }
