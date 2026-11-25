@@ -100,7 +100,6 @@ compose.desktop {
         jvmArgs += listOf(
             "-XX:+HeapDumpOnOutOfMemoryError",
             "-XX:HeapDumpPath=${System.getProperty("user.home")}/AppData/Roaming/AniLife/heapdumps/",
-            "-Xlog:gc*:file=${System.getProperty("user.home")}/AppData/Roaming/AniLife/logs/gc.log:time,uptime,level,tags",
         )
         nativeDistributions {
             if (isLinux) {
