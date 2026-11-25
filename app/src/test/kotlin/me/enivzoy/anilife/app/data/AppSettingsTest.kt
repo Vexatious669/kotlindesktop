@@ -1,9 +1,12 @@
 ﻿package me.enivzoy.anilife.app.data
 
 import androidx.compose.ui.input.key.Key
+import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import java.time.Instant
 import xyz.orbitary.perigee.activity.ActivityType
 
@@ -221,6 +224,87 @@ class AppSettingsTest {
 
             store.update { it.copy(keyBindings = DefaultPlayerKeyBindings) }
             assertEquals(DefaultPlayerKeyBindings, AppSettingsStore(file).settings.value.keyBindings)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun gpuAccelerationDefaultsToAuto() {
+        assertEquals("auto", AppSettings().gpuAcceleration)
+    }
+
+    @Test
+    fun gpuAccelerationPersistsAcrossStoreInstances() {
+        val root = Files.createTempDirectory("AniLife-settings-gpu")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val store = AppSettingsStore(file)
+            store.update { it.copy(gpuAcceleration = "off") }
+            assertEquals("off", AppSettingsStore(file).settings.value.gpuAcceleration)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun invalidGpuAccelerationValueIsNormalizedToAuto() {
+        val root = Files.createTempDirectory("AniLife-settings-gpu-invalid")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            File(file.absolutePath).writeText("gpuAcceleration=banana\n")
+            assertEquals("auto", AppSettingsStore(file).settings.value.gpuAcceleration)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun legacyHardwareDecodingFalseMigratesToOff() {
+        val root = Files.createTempDirectory("AniLife-settings-gpu-legacy")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            File(file.absolutePath).writeText("hardwareDecoding=false\n")
+            assertEquals("off", AppSettingsStore(file).settings.value.gpuAcceleration)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun legacyHardwareDecodingTrueMigratesToAuto() {
+        val root = Files.createTempDirectory("AniLife-settings-gpu-legacy-true")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            File(file.absolutePath).writeText("hardwareDecoding=true\n")
+            assertEquals("auto", AppSettingsStore(file).settings.value.gpuAcceleration)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun newGpuAccelerationKeyWinsOverLegacyHardwareDecoding() {
+        val root = Files.createTempDirectory("AniLife-settings-gpu-both")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            File(file.absolutePath).writeText("gpuAcceleration=off\nhardwareDecoding=true\n")
+            assertEquals("off", AppSettingsStore(file).settings.value.gpuAcceleration)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun updateDoesNotWriteLegacyHardwareDecodingKey() {
+        val root = Files.createTempDirectory("AniLife-settings-gpu-write")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val store = AppSettingsStore(file)
+            store.update { it.copy(gpuAcceleration = "off") }
+            val content = File(file.absolutePath).readText()
+            assertFalse(content.contains("hardwareDecoding"))
+            assertTrue(content.contains("gpuAcceleration=off"))
         } finally {
             root.toFile().deleteRecursively()
         }

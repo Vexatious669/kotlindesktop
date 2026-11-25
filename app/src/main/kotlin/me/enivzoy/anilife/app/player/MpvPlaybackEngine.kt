@@ -63,6 +63,11 @@ internal fun subtitleLanguageMatches(code: String?, wanted: String): Boolean {
     return actual == target || actual.take(2) == target.take(2)
 }
 
+internal fun hwdecFor(gpuAcceleration: String): String = if (gpuAcceleration == "auto") "auto-copy-safe" else "no"
+
+internal fun withHwdec(options: List<Pair<String, String>>, hwdec: String): List<Pair<String, String>> =
+    options.filterNot { it.first == "hwdec" } + ("hwdec" to hwdec)
+
 /**
  * Drives libmpv for the player screen.
  *
@@ -83,7 +88,8 @@ class MpvPlaybackEngine(
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
-    private val playbackBufferSize: String = "auto",
+private val playbackBufferSize: String = "auto",
+    private val gpuAcceleration: String = "off",
     /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
     private var presenceInfo: DiscordPlaybackInfo? = null,
     private val onPresence: (Presence?) -> Unit = {},
@@ -135,7 +141,8 @@ class MpvPlaybackEngine(
 
     private fun runPlayback() {
         try {
-            val mpv = Mpv(initialOptions = playbackOptions(headers))
+            val hwdec = hwdecFor(gpuAcceleration)
+            val mpv = createMpvWithFallback(headers, hwdec)
             player = mpv
             applySubtitleAppearanceTo(mpv, activeSubtitleAppearance)
             mpv.observeDouble("time-pos")
@@ -456,24 +463,33 @@ class MpvPlaybackEngine(
         player = null
     }
 
-    private fun playbackOptions(headers: Map<String, String>): List<Pair<String, String>> {
+    private fun playbackOptions(headers: Map<String, String>, hwdec: String): List<Pair<String, String>> {
         val options = defaultPlayerOptions()
-            .filterNot { it.first == "hwdec" }
-            .toMutableList()
-        // The software renderer needs decoded frames in system memory.
-        options += "hwdec" to "no"
-        // Captions are drawn into the rendered frame, so they follow these options too.
-        options += "sub-visibility" to "yes"
-        options += subtitleAppearanceOptions(activeSubtitleAppearance)
-        options += "sub-ass-override" to "no"
-        subtitleLanguage.trim().lowercase()
-            .takeIf { it.isNotEmpty() && it != "none" }
-            ?.let { options += "slang" to it }
-        val fields = headers.entries
-            .filter { it.key.isNotBlank() && it.value.isNotBlank() }
-            .map { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }
-        if (fields.isNotEmpty()) options += "http-header-fields" to fields.joinToString(",")
-        return options
+        return withHwdec(options, hwdec).toMutableList().apply {
+            // Captions are drawn into the rendered frame, so they follow these options too.
+            add("sub-visibility" to "yes")
+            addAll(subtitleAppearanceOptions(activeSubtitleAppearance))
+            add("sub-ass-override" to "no")
+            subtitleLanguage.trim().lowercase()
+                .takeIf { it.isNotEmpty() && it != "none" }
+                ?.let { add("slang" to it) }
+            val fields = headers.entries
+                .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+                .map { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }
+            if (fields.isNotEmpty()) add("http-header-fields" to fields.joinToString(","))
+        }
+    }
+
+    private fun createMpvWithFallback(headers: Map<String, String>, hwdec: String): Mpv {
+        try {
+            return Mpv(initialOptions = playbackOptions(headers, hwdec))
+        } catch (e: Exception) {
+            if (hwdec != "no") {
+                System.err.println("mpv[warn]: GPU decoding was disabled for this video: ${e.message}. Falling back to CPU decoding.")
+                return Mpv(initialOptions = playbackOptions(headers, "no"))
+            }
+            throw e
+        }
     }
 }
 

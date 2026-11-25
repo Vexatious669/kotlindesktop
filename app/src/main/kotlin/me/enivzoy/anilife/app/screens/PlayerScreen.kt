@@ -173,7 +173,8 @@ fun PlayerScreen(
                 subtitlesByDefault = settings.subtitlesByDefault,
                 subtitleLanguage = settings.subtitleLanguage,
                 subtitleAppearance = settings.subtitleAppearance,
-                playbackBufferSize = settings.playbackBufferSize,
+playbackBufferSize = settings.playbackBufferSize,
+                gpuAcceleration = settings.gpuAcceleration,
                 presenceInfo = playbackInfo,
                 onPresence = reportPresence,
             )
