@@ -35,7 +35,6 @@ import com.kashif_e.backdrop.backdrops.layerBackdrop
 import com.kashif_e.backdrop.backdrops.rememberLayerBackdrop
 import com.kashif_e.backdrop.drawBackdrop
 import com.kashif_e.backdrop.effects.blur
-import com.kashif_e.backdrop.effects.colorControls
 import com.kashif_e.backdrop.effects.lens
 import com.kashif_e.backdrop.effects.reflectiveGlass
 import com.kashif_e.backdrop.highlight.Highlight
@@ -101,7 +100,7 @@ private fun AmbientWallpaper(style: GlassStyle) {
                 )
                 drawRect(
                     brush = Brush.radialGradient(
-                        colors = listOf(AniLifeColors.Success.copy(alpha = primaryStrength * 0.7f), Color.Transparent),
+                        colors = listOf(AniLifeColors.Primary.copy(alpha = primaryStrength * 0.7f), Color.Transparent),
                         center = Offset(size.width * 0.92f, size.height * 0.90f),
                         radius = size.minDimension * 0.75f,
                     ),
@@ -109,9 +108,9 @@ private fun AmbientWallpaper(style: GlassStyle) {
                 drawRect(
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color(0xFF1B3A2E).copy(alpha = primaryStrength * 0.8f),
+                            AniLifeColors.Primary.copy(alpha = primaryStrength * 0.8f),
                             Color.Transparent,
-                            Color(0xFF10222E).copy(alpha = primaryStrength * 0.6f),
+                            AniLifeColors.Card.copy(alpha = primaryStrength * 0.6f),
                         ),
                         start = Offset(size.width * 0.4f, 0f),
                         end = Offset(size.width * 0.8f, size.height),
@@ -196,7 +195,7 @@ fun Modifier.adaptiveGlass(
  *
  * Rendering pipeline for one surface:
  *  1. sample the registered backdrop layer,
- *  2. blur it (depth of field) and lift saturation/contrast,
+ *  2. blur it (depth of field),
  *  3. refract it: a Skia runtime shader displaces samples along the rounded-rect edge (lens)
  *     and adds a specular sweep, edge glow, chromatic dispersion and vignette,
  *  4. composite a tint, a top specular sheen and a pointer-localised light on the surface,
@@ -238,10 +237,13 @@ fun Modifier.glassSurface(
         GlassStyle.LIQUID -> (alpha * appearance.glassTransparency / 0.5f * 0.22f)
     }.coerceIn(0.06f, 0.72f)
 
+    // tinting from the css background keeps a dark theme dark no matter what sits behind it;
+    // scaling by transparency keeps the appearance slider meaningful
+    val baseTintAlpha = (0.40f + 0.60f * appearance.glassTransparency).coerceIn(0.40f, 0.90f)
+
     val surfaceTint = when {
         accent != null -> accent.copy(alpha = (tintAlpha * 0.85f).coerceIn(0.08f, 0.6f))
-        style == GlassStyle.FROSTED -> Color(0xFFDCE7E2).copy(alpha = tintAlpha * 0.55f)
-        else -> AniLifeColors.SurfaceVariant.copy(alpha = tintAlpha)
+        else -> AniLifeColors.Background.copy(alpha = baseTintAlpha)
     }
     val borderColor = when {
         accent != null -> accent.copy(alpha = 0.42f + 0.2f * interactionTarget)
@@ -282,21 +284,6 @@ fun Modifier.glassSurface(
         GlassStyle.LIQUID -> 10.dp
     } * appearance.glassBlurIntensity
     val blurPx = with(density) { blurRadius.toPx() }
-    val saturation = when (style) {
-        GlassStyle.LEGACY -> 1.05f
-        GlassStyle.FROSTED -> 1.01f
-        GlassStyle.LIQUID -> 1.08f
-    }
-    val brightness = when (style) {
-        GlassStyle.LEGACY -> 0.96f
-        GlassStyle.FROSTED -> 0.94f
-        GlassStyle.LIQUID -> 0.82f
-    }
-    val contrast = when (style) {
-        GlassStyle.LEGACY -> 1.01f
-        GlassStyle.FROSTED -> 1.005f
-        GlassStyle.LIQUID -> 1.02f
-    }
     val highlightAlpha = ((0.30f + 0.40f * interactionTarget) * appearance.glassHighlightIntensity)
         .coerceIn(0f, 0.85f)
     val reflectionStrength = when (style) {
@@ -324,7 +311,6 @@ fun Modifier.glassSurface(
             shape = { shape },
             effects = {
                 blur(blurPx)
-                colorControls(saturation = saturation, brightness = brightness, contrast = contrast)
                 if (useShader) {
                     reflectiveGlass(
                         reflectionStrength,
