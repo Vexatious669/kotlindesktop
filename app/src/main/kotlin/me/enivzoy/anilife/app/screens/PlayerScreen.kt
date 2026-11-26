@@ -373,6 +373,7 @@ playbackBufferSize = settings.playbackBufferSize,
         }
         if (smartHistory.lastOrNull() == current) return@LaunchedEffect
         smartHistory += current
+        // zero means keep everything; otherwise the oldest visited episode is removed.
         val keep = settings.expSmartDownloadsStartAfter
         if (keep > 0) {
             while (smartHistory.size > keep) smartDeleter(smartHistory.removeAt(0))
