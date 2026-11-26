@@ -32,6 +32,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -53,12 +54,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import me.enivzoy.anilife.app.data.AniListConnection
 import me.enivzoy.anilife.app.data.AniListListStatus
 import me.enivzoy.anilife.app.data.AniListSync
 import me.enivzoy.anilife.app.data.MyAnimeListEntry
@@ -114,6 +117,7 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
     val anilistEntries by AniListSync.entries.collectAsState()
     val malUser by MyAnimeListSync.user.collectAsState()
     val malConfigured by MyAnimeListSync.configured.collectAsState()
+    val aniListStatus by AniListSync.status.collectAsState()
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<ProfileState>(ProfileState.Loading) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -192,12 +196,26 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
 
             ProfileState.Unlinked -> UnlinkedProfile(
                 malConfigured = malConfigured,
+                aniListConnecting = aniListStatus.connection == AniListConnection.CONNECTING,
                 error = error,
                 onAniList = {
+                    error = null
                     try {
                         AniListSync.beginAuth()
                     } catch (failure: Throwable) {
                         error = failure.message ?: "Couldn't open AniList sign-in."
+                    }
+                },
+                onConnectAniList = { token ->
+                    scope.launch {
+                        error = null
+                        try {
+                            AniListSync.connect(token)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            error = failure.message ?: "AniList sign-in failed."
+                        }
                     }
                 },
                 onMal = {
@@ -254,10 +272,15 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
 @Composable
 private fun UnlinkedProfile(
     malConfigured: Boolean,
+    aniListConnecting: Boolean,
     error: String?,
     onAniList: () -> Unit,
+    onConnectAniList: (String) -> Unit,
     onMal: () -> Unit,
 ) {
+    var showAniListTokenField by remember { mutableStateOf(false) }
+    var aniListToken by remember { mutableStateOf("") }
+
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             Modifier.padding(32.dp).widthIn(max = 460.dp)
@@ -277,14 +300,38 @@ private fun UnlinkedProfile(
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(4.dp))
-            ProfileButton("Link AniList", onClick = onAniList, modifier = Modifier.fillMaxWidth())
-            Text(
-                "After approving in your browser, paste the token in the AniList account settings.",
-                color = AniLifeColors.MutedForeground,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                textAlign = TextAlign.Center,
+            ProfileButton(
+                "Link AniList",
+                onClick = {
+                    onAniList()
+                    showAniListTokenField = true
+                },
+                enabled = !aniListConnecting,
+                modifier = Modifier.fillMaxWidth(),
             )
+            if (showAniListTokenField) {
+                Text(
+                    "After approving in your browser, copy the long access token from the redirect URL (or paste the full URL) here.",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    textAlign = TextAlign.Center,
+                )
+                OutlinedTextField(
+                    value = aniListToken,
+                    onValueChange = { aniListToken = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("AniList access token or redirect URL") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                ProfileButton(
+                    text = if (aniListConnecting) "Connecting..." else "Connect AniList",
+                    onClick = { onConnectAniList(aniListToken) },
+                    enabled = aniListToken.isNotBlank() && !aniListConnecting,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Spacer(Modifier.height(4.dp))
             ProfileButton("Link MAL", onClick = onMal, enabled = malConfigured, modifier = Modifier.fillMaxWidth())
             if (!malConfigured) {

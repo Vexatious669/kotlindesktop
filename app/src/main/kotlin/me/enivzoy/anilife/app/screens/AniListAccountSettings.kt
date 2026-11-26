@@ -169,7 +169,7 @@ fun AniListAccountSettings(repository: AniListRepository) {
             }
         } else {
             Text(
-                "Use the official implicit sign-in flow. AniLife never asks for an authorization code or client secret.",
+                "After approving access in your browser, paste the long access token from the redirect URL or paste the full URL. AniLife never asks for an authorization code or client secret.",
                 color = AniLifeColors.MutedForeground,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
