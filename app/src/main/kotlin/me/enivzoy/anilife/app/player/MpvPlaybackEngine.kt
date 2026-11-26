@@ -122,10 +122,9 @@ private val playbackBufferSize: String = "auto",
     @Volatile private var worker: Thread? = null
     @Volatile private var activeSubtitleAppearance = subtitleAppearance
     @Volatile private var lastPresenceReportAt = 0L
-    @Volatile private var lastMpvPosition = 0.0
-    @Volatile private var lastMpvPositionAt = 0L
     @Volatile private var lastFrameAt = 0L
     @Volatile private var state = "idle"
+    private val positionClock = PositionClock()
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -155,14 +154,6 @@ private val playbackBufferSize: String = "auto",
             mpv.loadfile(url)
 
             while (!closed.get()) {
-                // Smooth position tracking: advance positionSeconds between mpv's time-pos reports.
-                if (isPlaying && lastMpvPositionAt > 0L) {
-                    val elapsed = (System.currentTimeMillis() - lastMpvPositionAt) / 1000.0
-                    val interpolated = (lastMpvPosition + elapsed).coerceAtMost(durationSeconds.takeIf { it > 0.0 } ?: Double.MAX_VALUE)
-                    if (interpolated > positionSeconds) {
-                        positionSeconds = interpolated
-                    }
-                }
                 if (target.needsRender()) {
                     // Limit frame rate to ~30fps to reduce memory pressure from ImageBitmap allocation.
                     val now = System.currentTimeMillis()
@@ -198,10 +189,8 @@ private val playbackBufferSize: String = "auto",
         when (event) {
             is Event.PropertyChange -> when (event.name) {
                 "time-pos" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
-                    lastMpvPosition = it.coerceAtLeast(0.0)
-                    lastMpvPositionAt = System.currentTimeMillis()
-                    positionSeconds = lastMpvPosition
-                    // Position-only updates are throttled; transport changes report immediately.
+                    val position = it.coerceAtLeast(0.0)
+                    if (positionClock.offer(position)) positionSeconds = position
                     reportPresence()
                 }
                 "duration" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
@@ -211,22 +200,15 @@ private val playbackBufferSize: String = "auto",
                     }
                 }
                 "pause" -> (event.value as? PropertyValue.Flag)?.value?.let {
+                    positionClock.flush()
                     isPlaying = !it
                     transition(if (it) "idle" else "playing")
-                    if (it) {
-                        // Paused: sync position to last mpv report.
-                        lastMpvPosition = positionSeconds
-                        lastMpvPositionAt = System.currentTimeMillis()
-                    } else {
-                        // Resumed: reset tracking.
-                        lastMpvPosition = positionSeconds
-                        lastMpvPositionAt = System.currentTimeMillis()
-                    }
                     reportPresence(force = true)
                 }
                 "mute" -> (event.value as? PropertyValue.Flag)?.value?.let { isMuted = it }
             }
             Event.FileLoaded -> {
+                positionClock.reset()
                 isLoading = false
                 transition("playing")
                 ActionBreadcrumbs.record("Started playback")
@@ -249,6 +231,7 @@ private val playbackBufferSize: String = "auto",
                 reportPresence(force = true)
             }
             is Event.EndFile -> {
+                positionClock.reset()
                 if (event.reason == EndReason.EOF) {
                     isPlaying = false
                     positionSeconds = durationSeconds
