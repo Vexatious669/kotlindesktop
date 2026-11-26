@@ -14,10 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -43,8 +41,6 @@ import com.kashif_e.backdrop.effects.reflectiveGlass
 import com.kashif_e.backdrop.highlight.Highlight
 import com.kashif_e.backdrop.highlight.HighlightStyle
 import com.kashif_e.backdrop.platform.PlatformCapabilities
-import kotlinx.coroutines.delay
-import java.io.File
 import me.enivzoy.anilife.app.ui.theme.GlassStyle
 import me.enivzoy.anilife.app.ui.theme.LocalAppearance
 import me.enivzoy.anilife.app.ui.theme.glassStyle
@@ -59,26 +55,6 @@ import me.enivzoy.anilife.app.ui.theme.glassStyle
  */
 val LocalGlassBackdrop = compositionLocalOf<Backdrop?> { null }
 
-/** Temporary render-diagnostic switch. Enabled only by ANILIFE_GLASS_DEBUG at launch. */
-internal object GlassDebug {
-    val enabled = System.getenv("ANILIFE_GLASS_DEBUG") != null
-    private val file = File(System.getProperty("java.io.tmpdir"), "anilife-glass-debug.txt")
-    val tick = mutableIntStateOf(0)
-    var skips: Set<String> = if (enabled) read() else emptySet()
-        private set
-
-    private fun read(): Set<String> =
-        if (file.exists()) file.readText().trim().split(',').filter { it.isNotBlank() }.toSet() else emptySet()
-
-    fun reload() {
-        val next = read()
-        if (next != skips) {
-            skips = next
-            tick.intValue++
-        }
-    }
-}
-
 /**
  * Root host that registers the ambient wallpaper plane as the glass source.
  *
@@ -91,14 +67,6 @@ internal object GlassDebug {
 fun GlassHost(content: @Composable () -> Unit) {
     val backdrop = rememberLayerBackdrop()
     val style = LocalAppearance.current.themeMode.glassStyle
-    if (GlassDebug.enabled) {
-        LaunchedEffect(Unit) {
-            while (true) {
-                delay(300)
-                GlassDebug.reload()
-            }
-        }
-    }
     Box(Modifier.fillMaxSize().background(AniLifeColors.Background)) {
         Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
             AmbientWallpaper(style)
@@ -267,7 +235,7 @@ fun Modifier.glassSurface(
     val tintAlpha = when (style) {
         GlassStyle.LEGACY -> (alpha * appearance.glassTransparency / 0.5f * 0.42f)
         GlassStyle.FROSTED -> (alpha * appearance.glassTransparency / 0.5f * 0.30f)
-        GlassStyle.LIQUID -> (alpha * appearance.glassTransparency / 0.5f * 0.36f)
+        GlassStyle.LIQUID -> (alpha * appearance.glassTransparency / 0.5f * 0.22f)
     }.coerceIn(0.06f, 0.72f)
 
     val surfaceTint = when {
@@ -309,22 +277,32 @@ fun Modifier.glassSurface(
     }
 
     val blurRadius = when (style) {
-        GlassStyle.LEGACY -> 18.dp
-        GlassStyle.FROSTED -> 12.dp
-        GlassStyle.LIQUID -> 24.dp
+        GlassStyle.LEGACY -> 8.dp
+        GlassStyle.FROSTED -> 6.dp
+        GlassStyle.LIQUID -> 10.dp
     } * appearance.glassBlurIntensity
     val blurPx = with(density) { blurRadius.toPx() }
     val saturation = when (style) {
-        GlassStyle.LEGACY -> 1.35f
-        GlassStyle.FROSTED -> 1.10f
-        GlassStyle.LIQUID -> 1.50f
+        GlassStyle.LEGACY -> 1.05f
+        GlassStyle.FROSTED -> 1.01f
+        GlassStyle.LIQUID -> 1.08f
+    }
+    val brightness = when (style) {
+        GlassStyle.LEGACY -> 0.96f
+        GlassStyle.FROSTED -> 0.94f
+        GlassStyle.LIQUID -> 0.82f
+    }
+    val contrast = when (style) {
+        GlassStyle.LEGACY -> 1.01f
+        GlassStyle.FROSTED -> 1.005f
+        GlassStyle.LIQUID -> 1.02f
     }
     val highlightAlpha = ((0.30f + 0.40f * interactionTarget) * appearance.glassHighlightIntensity)
         .coerceIn(0f, 0.85f)
     val reflectionStrength = when (style) {
-        GlassStyle.LEGACY -> 0.26f
-        GlassStyle.FROSTED -> 0.20f
-        GlassStyle.LIQUID -> 0.40f
+        GlassStyle.LEGACY -> 0.12f
+        GlassStyle.FROSTED -> 0.10f
+        GlassStyle.LIQUID -> 0.18f
     } * (0.75f + 0.45f * interactionTarget)
     val distortion = when (style) {
         GlassStyle.LEGACY -> 0.30f
@@ -340,68 +318,56 @@ fun Modifier.glassSurface(
     val refractionHeight = with(density) { 16.dp.toPx() }
     val refractionAmount = with(density) { 9.dp.toPx() }
 
-    if (GlassDebug.enabled) GlassDebug.tick.intValue
-    val debugSkip = GlassDebug.skips
-    fun skipped(name: String) = name in debugSkip
-
     return tracked
         .drawBackdrop(
             backdrop = backdrop,
             shape = { shape },
             effects = {
-                if (!skipped("blur")) blur(blurPx)
-                if (!skipped("color")) colorControls(saturation = saturation, brightness = 1.04f, contrast = 1.02f)
+                blur(blurPx)
+                colorControls(saturation = saturation, brightness = brightness, contrast = contrast)
                 if (useShader) {
-                    if (!skipped("reflective")) {
-                        reflectiveGlass(
-                            reflectionStrength,
-                            distortion,
-                            if (style == GlassStyle.LIQUID) 0.03f else 0f,
-                            vignette,
-                        )
-                    }
+                    reflectiveGlass(
+                        reflectionStrength,
+                        distortion,
+                        if (style == GlassStyle.LIQUID) 0.03f else 0f,
+                        vignette,
+                    )
                     // Edge-only lens refraction on surfaces with enough room for it to read.
-                    if (!skipped("lens") && size.minDimension > with(density) { 96.dp.toPx() }) {
+                    if (size.minDimension > with(density) { 96.dp.toPx() }) {
                         lens(refractionHeight, refractionAmount, true)
                     }
                 }
             },
-            highlight = if (skipped("highlight")) null else {
-                {
-                    Highlight(
-                        width = 1.dp,
-                        blurRadius = 4.dp,
-                        alpha = highlightAlpha,
-                        style = HighlightStyle.Ambient(intensity = 0.9f),
-                    )
-                }
+            highlight = {
+                Highlight(
+                    width = 1.dp,
+                    blurRadius = 4.dp,
+                    alpha = highlightAlpha,
+                    style = HighlightStyle.Ambient(intensity = 0.9f),
+                )
             },
             onDrawSurface = {
-                if (!skipped("tint")) drawRect(surfaceTint)
-                if (!skipped("sheen")) {
-                    // Top-edge specular sheen: brighter while hovered/pressed.
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.10f + 0.14f * interactionTarget),
-                                Color.White.copy(alpha = 0.02f),
-                                Color.Transparent,
-                            ),
-                            startY = 0f,
-                            endY = size.height * 0.62f,
+                drawRect(surfaceTint)
+                // Top-edge specular sheen: brighter while hovered/pressed.
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.025f + 0.035f * interactionTarget),
+                            Color.White.copy(alpha = 0.005f),
+                            Color.Transparent,
                         ),
-                    )
-                }
-                if (!skipped("shade")) {
-                    // Bottom shade gives the material thickness.
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.16f)),
-                            startY = size.height * 0.55f,
-                            endY = size.height,
-                        ),
-                    )
-                }
+                        startY = 0f,
+                        endY = size.height * 0.62f,
+                    ),
+                )
+                // Bottom shade gives the material thickness.
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.08f)),
+                        startY = size.height * 0.55f,
+                        endY = size.height,
+                    ),
+                )
                 // Pointer-localised light, the part that makes the glass feel alive.
                 val p = pointer.value
                 if (p != Offset.Unspecified && p.x.isFinite() && p.y.isFinite()) {

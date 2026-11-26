@@ -112,7 +112,7 @@ fun AnimeRow(
                 contentPadding = PaddingValues(horizontal = 32.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                items(8) { PosterSkeleton() }
+                items(8, key = { it }) { PosterSkeleton() }
             }
         } else {
             LazyRow(

@@ -521,6 +521,8 @@ fun defaultPlayerOptions(): List<Pair<String, String>> = listOf(
     "cache-secs" to "120",
     "demuxer-max-bytes" to "150MiB",
     "demuxer-max-back-bytes" to "50MiB",
+    "demuxer-lavf-o" to "seg_max_retry=8,reconnect=1,reconnect_streamed=1,reconnect_delay_max=6",
+    "stream-lavf-o" to "reconnect=1,reconnect_streamed=1,reconnect_delay_max=6",
     "network-timeout" to "30",
     "sub-ass-force-margins" to "yes",
     "sub-use-margins" to "yes",

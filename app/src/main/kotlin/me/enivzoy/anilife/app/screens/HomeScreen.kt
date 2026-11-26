@@ -507,7 +507,7 @@ private fun HomeSkeleton() {
                 )
             }
             item { Spacer(Modifier.height(36.dp)) }
-            items(3) { SkeletonShelf() }
+            items(3, key = { it }) { SkeletonShelf() }
         }
         PageScrollbar(rememberScrollbarAdapter(listState), Modifier.align(Alignment.CenterEnd))
     }
@@ -531,7 +531,7 @@ private fun SkeletonShelf() {
             contentPadding = PaddingValues(horizontal = 32.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(8) { PosterSkeleton() }
+            items(8, key = { it }) { PosterSkeleton() }
         }
         Spacer(Modifier.height(26.dp))
     }

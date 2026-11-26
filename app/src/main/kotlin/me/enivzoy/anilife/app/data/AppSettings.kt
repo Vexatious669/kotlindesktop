@@ -8,6 +8,7 @@ import java.nio.file.Path
 import java.util.Properties
 
 const val DEFAULT_DISCORD_APPLICATION_ID = "1567301811604553728"
+val gpuAccelerationModes = setOf("auto", "off")
 
 enum class HomeSection(val label: String) {
     CONTINUE_WATCHING("Continue watching"),
@@ -64,8 +65,8 @@ data class AppSettings(
     val subtitlesByDefault: Boolean = true,
     val autoplayNextEpisode: Boolean = true,
     val resumePlayback: Boolean = true,
-    val hardwareDecoding: Boolean = true,
     val playbackBufferSize: String = "auto",
+    val gpuAcceleration: String = "auto",
     val contentScale: String = "fit",
     val showSkipButton: Boolean = true,
     val skipButtonSeconds: Int = 85,
@@ -98,7 +99,7 @@ data class AppSettings(
     val titleLanguage: String = "english",
     val discordPresenceEnabled: Boolean = true,
     val highRefreshRateUi: Boolean = false,
-    val themeMode: String = "LIQUID_GLASS",
+    val themeMode: String = "DEFAULT",
     val smoothScrolling: Boolean = true,
     val scrollbarVisibility: String = "AUTOMATIC",
     val scrollAnimationDuration: String = "NORMAL",
@@ -119,6 +120,15 @@ data class AppSettings(
     val captionAlignment: String = "center",
     val captionPreset: String = "classic",
     val keyBindings: Map<PlayerAction, Key> = DefaultPlayerKeyBindings,
+    val expDebouncedSearch: Boolean = true,
+    val expImageCaching: Boolean = true,
+    val expAsyncFetching: Boolean = false,
+    val expPagination: Boolean = false,
+    val expFadeTransitions: Boolean = true,
+    val expHardwareScrolling: Boolean = true,
+    val expMpvBuffering: Boolean = true,
+    val expSmartDownloads: Boolean = false,
+    val expSmartDownloadsStartAfter: Int = 2,
 ) {
     val subtitleAppearance: SubtitleAppearance
         get() = SubtitleAppearance(
@@ -160,8 +170,9 @@ class AppSettingsStore(private val file: File = settingsFile()) {
                 .toIntOrNull()?.coerceIn(1, 100) ?: 80,
             syncSavedToAccount = properties.getProperty("syncSavedToAccount", "true").toBooleanStrictOrNull() ?: true,
             resumePlayback = properties.getProperty("resumePlayback", "true").toBooleanStrictOrNull() ?: true,
-            hardwareDecoding = properties.getProperty("hardwareDecoding", "true").toBooleanStrictOrNull() ?: true,
             playbackBufferSize = properties.getProperty("playbackBufferSize", "auto"),
+            gpuAcceleration = properties.getProperty("gpuAcceleration")
+                ?: if (properties.getProperty("hardwareDecoding") == "false") "off" else "auto",
             contentScale = properties.getProperty("contentScale", "fit"),
             showSkipButton = properties.getProperty("showSkipButton", "true").toBooleanStrictOrNull() ?: true,
             skipButtonSeconds = properties.getProperty("skipButtonSeconds", "85").toIntOrNull() ?: 85,
@@ -191,7 +202,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             titleLanguage = properties.getProperty("titleLanguage") ?: if (properties.getProperty("preferEnglishTitles", "true").toBooleanStrictOrNull() ?: true) "english" else "romaji",
             discordPresenceEnabled = properties.getProperty("discordPresenceEnabled", "true").toBooleanStrictOrNull() ?: true,
             highRefreshRateUi = properties.getProperty("highRefreshRateUi", "false").toBooleanStrictOrNull() ?: false,
-            themeMode = properties.getProperty("themeMode", "LIQUID_GLASS"),
+            themeMode = properties.getProperty("themeMode", "DEFAULT"),
             smoothScrolling = properties.getProperty("smoothScrolling", "true").toBooleanStrictOrNull() ?: true,
             scrollbarVisibility = properties.getProperty("scrollbarVisibility", "AUTOMATIC"),
             scrollAnimationDuration = properties.getProperty("scrollAnimationDuration", "NORMAL"),
@@ -212,6 +223,16 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             captionAlignment = properties.getProperty("captionAlignment", "center"),
             captionPreset = properties.getProperty("captionPreset", "classic"),
             keyBindings = parsePlayerKeyBindings(properties.getProperty("playerKeyBindings")),
+            expDebouncedSearch = properties.getProperty("expDebouncedSearch", "true").toBooleanStrictOrNull() ?: true,
+            expImageCaching = properties.getProperty("expImageCaching", "true").toBooleanStrictOrNull() ?: true,
+            expAsyncFetching = properties.getProperty("expAsyncFetching", "false").toBooleanStrictOrNull() ?: false,
+            expPagination = properties.getProperty("expPagination", "false").toBooleanStrictOrNull() ?: false,
+            expFadeTransitions = properties.getProperty("expFadeTransitions", "true").toBooleanStrictOrNull() ?: true,
+            expHardwareScrolling = properties.getProperty("expHardwareScrolling", "true").toBooleanStrictOrNull() ?: true,
+            expMpvBuffering = properties.getProperty("expMpvBuffering", "true").toBooleanStrictOrNull() ?: true,
+            expSmartDownloads = properties.getProperty("expSmartDownloads", "false").toBooleanStrictOrNull() ?: false,
+            expSmartDownloadsStartAfter = properties.getProperty("expSmartDownloadsStartAfter", "2")
+                .toIntOrNull()?.coerceIn(0, 3) ?: 2,
         ).validated()
     }
 
@@ -225,8 +246,8 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("aniListSubmitPercent", settings.aniListSubmitPercent.toString())
             setProperty("syncSavedToAccount", settings.syncSavedToAccount.toString())
             setProperty("resumePlayback", settings.resumePlayback.toString())
-            setProperty("hardwareDecoding", settings.hardwareDecoding.toString())
             setProperty("playbackBufferSize", settings.playbackBufferSize)
+            setProperty("gpuAcceleration", settings.gpuAcceleration)
             setProperty("contentScale", settings.contentScale)
             setProperty("showSkipButton", settings.showSkipButton.toString())
             setProperty("skipButtonSeconds", settings.skipButtonSeconds.toString())
@@ -277,6 +298,15 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("captionAlignment", settings.captionAlignment)
             setProperty("captionPreset", settings.captionPreset)
             setProperty("playerKeyBindings", serializePlayerKeyBindings(settings.keyBindings))
+            setProperty("expDebouncedSearch", settings.expDebouncedSearch.toString())
+            setProperty("expImageCaching", settings.expImageCaching.toString())
+            setProperty("expAsyncFetching", settings.expAsyncFetching.toString())
+            setProperty("expPagination", settings.expPagination.toString())
+            setProperty("expFadeTransitions", settings.expFadeTransitions.toString())
+            setProperty("expHardwareScrolling", settings.expHardwareScrolling.toString())
+            setProperty("expMpvBuffering", settings.expMpvBuffering.toString())
+            setProperty("expSmartDownloads", settings.expSmartDownloads.toString())
+            setProperty("expSmartDownloadsStartAfter", settings.expSmartDownloadsStartAfter.toString())
         }
         file.outputStream().use { properties.store(it, null) }
     }
@@ -285,6 +315,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         audio = if (audio == "dub") "dub" else "sub",
         subtitleLanguage = subtitleLanguage.takeIf { it in supportedSubtitleLanguages } ?: "en",
         playbackBufferSize = playbackBufferSize.takeIf { it in bufferSizes } ?: "auto",
+        gpuAcceleration = gpuAcceleration.takeIf { it in gpuAccelerationModes } ?: "auto",
         contentScale = contentScale.takeIf { it in contentScales } ?: "fit",
         skipButtonSeconds = skipButtonSeconds.coerceIn(10, 300),
         volume = volume.coerceIn(0, 100),
@@ -301,11 +332,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         themeCss = themeCss.take(20_000),
         sidebarIconShape = sidebarIconShape.takeIf { it in sidebarShapes } ?: "rounded",
         appFont = appFont.takeIf { it in fontFamilies } ?: "SansSerif",
-        themeMode = when {
-            themeMode == "DEFAULT" -> "LEGACY"
-            themeMode in themeModes -> themeMode
-            else -> "LIQUID_GLASS"
-        },
+        themeMode = themeMode.takeIf { it in themeModes } ?: "DEFAULT",
         scrollbarVisibility = scrollbarVisibility.takeIf { it in scrollbarVisibilities } ?: "AUTOMATIC",
         scrollAnimationDuration = scrollAnimationDuration.takeIf { it in scrollAnimationDurations } ?: "NORMAL",
         glassBlurIntensity = glassBlurIntensity.takeIf(Float::isFinite)?.coerceIn(0.5f, 2f) ?: 1f,
@@ -327,6 +354,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         captionAlignment = captionAlignment.takeIf { it in captionAlignments } ?: "center",
         captionPreset = captionPreset.takeIf { it in captionPresets } ?: "custom",
         keyBindings = keyBindings.withPlayerDefaults(),
+        expSmartDownloadsStartAfter = expSmartDownloadsStartAfter.coerceIn(0, 3),
     )
 
     companion object {
@@ -334,7 +362,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         val contentScales = listOf("fit", "crop", "fill")
         val supportedSubtitleLanguages = listOf("en", "ja", "es", "pt", "fr", "de", "it", "ru", "ar", "zh", "none")
         val fontFamilies = listOf("SansSerif", "Serif", "Monospaced", "Cursive")
-        val themeModes = setOf("LEGACY", "FROSTED_GLASS", "LIQUID_GLASS")
+        val themeModes = setOf("DEFAULT", "FROSTED_GLASS", "LIQUID_GLASS")
         val scrollbarVisibilities = setOf("AUTOMATIC", "ALWAYS", "HIDDEN")
         val scrollAnimationDurations = setOf("SHORT", "NORMAL", "LONG")
         val captionEdgeStyles = setOf("none", "outline", "shadow")

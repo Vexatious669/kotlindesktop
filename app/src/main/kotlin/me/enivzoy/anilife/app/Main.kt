@@ -1,12 +1,14 @@
 ﻿package me.enivzoy.anilife.app
 
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -30,17 +32,25 @@ import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.ui.GlassHost
 import me.enivzoy.anilife.app.ui.GlassShowcase
 import me.enivzoy.anilife.app.ui.ProvideHighRefresh
+import me.enivzoy.anilife.app.ui.FrameProbe
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DependencyManager
+import me.enivzoy.anilife.app.data.SavedWindow
+import me.enivzoy.anilife.app.data.SingleInstance
+import me.enivzoy.anilife.app.data.WindowStateStore
 import me.enivzoy.anilife.app.data.dependencyDirectory
+import me.enivzoy.anilife.app.data.restoreWindowBounds
 import me.enivzoy.anilife.app.screens.SetupScreen
 import java.awt.Color
 import java.io.File
 import java.awt.Dimension
+import java.awt.EventQueue
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.geom.AffineTransform
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import java.util.Properties
 
 private val logger = KotlinLogging.logger {}
@@ -58,10 +68,21 @@ private fun showcaseRequested(): Boolean =
     System.getProperty("anilife.glassShowcase") == "true" ||
         System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
 
+/** Skip the first-run dependency setup (for development when deps are already on PATH). */
+private fun skipSetup(): Boolean =
+    System.getProperty("anilife.skipSetup") == "true" ||
+        System.getenv("ANILIFE_SKIP_SETUP") == "1"
+
 fun main() {
     runCatching { DiagnosticsPaths.ensure() }
     installFatalExceptionHandler()
     if (relaunchWithSetupJre()) return
+    val instance = if (System.getenv("ANILIFE_ALLOW_MULTIPLE") == "1") {
+        null
+    } else {
+        SingleInstance.acquire(appDataDirectory()) { activateMainWindow() } ?: return
+    }
+    instance?.let { acquired -> Runtime.getRuntime().addShutdownHook(Thread { acquired.close() }) }
     application {
     val setupScope = rememberCoroutineScope()
     val dependencyManager = remember { DependencyManager(setupScope, dependencyDirectory()) }
@@ -69,9 +90,17 @@ fun main() {
     val appSettings by settingsStore.settings.collectAsState()
      
      
+    val windowStateStore = remember { WindowStateStore() }
+    val savedWindow = remember { windowStateStore.read() }
+    val restoredBounds = remember { restoreWindowBounds(savedWindow, screenBounds()) }
     val state = rememberWindowState(
-        size = initialWindowSize(),
-        position = WindowPosition(Alignment.Center),
+        placement = if (savedWindow?.maximized == true && restoredBounds != null) {
+            WindowPlacement.Maximized
+        } else {
+            WindowPlacement.Floating
+        },
+        size = restoredBounds?.let { DpSize(it.width.dp, it.height.dp) } ?: initialWindowSize(),
+        position = restoredBounds?.let { WindowPosition(it.x.dp, it.y.dp) } ?: WindowPosition(Alignment.Center),
     )
     val previousPlacement = remember { androidx.compose.runtime.mutableStateOf(state.placement) }
     val windowedBounds = remember { androidx.compose.runtime.mutableStateOf<Rectangle?>(null) }
@@ -86,6 +115,32 @@ fun main() {
         state = state,
         icon = icon,
     ) {
+        FrameProbe()
+        DisposableEffect(window) {
+            mainWindow = window
+            onDispose { if (mainWindow === window) mainWindow = null }
+        }
+        LaunchedEffect(state) {
+            snapshotFlow { Triple(state.placement, state.size, state.isMinimized) }
+                .collectLatest {
+                    if (state.isMinimized || windowedStyle.value != null) return@collectLatest
+                    if (state.placement == WindowPlacement.Fullscreen) return@collectLatest
+                    delay(500)
+                    if (state.isMinimized || windowedStyle.value != null) return@collectLatest
+                    if (state.placement == WindowPlacement.Fullscreen) return@collectLatest
+                    val bounds = window.bounds
+                    if (bounds.width <= 0 || bounds.height <= 0) return@collectLatest
+                    windowStateStore.write(
+                        SavedWindow(
+                            x = bounds.x,
+                            y = bounds.y,
+                            width = bounds.width,
+                            height = bounds.height,
+                            maximized = state.placement == WindowPlacement.Maximized,
+                        ),
+                    )
+                }
+        }
         LaunchedEffect(appSettings) {
             window.minimumSize = Dimension(800, 480)
             AniLifeColors.update(appSettings)
@@ -103,7 +158,7 @@ fun main() {
                 ) {
                     LaunchedEffect(dependencyManager) { dependencyManager.configurePaths() }
                     var setupComplete by remember { mutableStateOf(dependencyManager.isSetupComplete()) }
-                    if (!setupComplete) {
+                    if (!setupComplete && !skipSetup()) {
                         SetupScreen(
                             manager = dependencyManager,
                             onContinue = {
@@ -234,6 +289,30 @@ private fun relaunchWithSetupJre(): Boolean {
     ProcessBuilder(command).inheritIO().start()
     return true
 }
+
+@Volatile
+private var mainWindow: java.awt.Window? = null
+
+private fun activateMainWindow() {
+    EventQueue.invokeLater {
+        val window = mainWindow ?: return@invokeLater
+        if (window is javax.swing.JFrame && window.state == javax.swing.JFrame.ICONIFIED) {
+            window.state = javax.swing.JFrame.NORMAL
+        }
+        window.isVisible = true
+        window.toFront()
+        window.requestFocus()
+    }
+}
+
+private fun appDataDirectory(): File {
+    val base = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)?.let(::File)
+        ?: File(System.getProperty("user.home"), ".local/share")
+    return File(base, "AniLife")
+}
+
+private fun screenBounds(): List<Rectangle> =
+    GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { it.defaultConfiguration.bounds }
 
 private fun usableScreenBounds(configuration: java.awt.GraphicsConfiguration): Rectangle {
     val bounds = configuration.bounds

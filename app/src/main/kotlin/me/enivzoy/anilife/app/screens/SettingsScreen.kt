@@ -288,7 +288,7 @@ private enum class SettingsPage(
     val icon: ImageVector,
     val keywords: String,
 ) {
-    Player("Player", "Playback, skipping, and how the player looks", Icons.Rounded.PlayCircle, "audio dubbed sub resume autoplay skip volume picture"),
+    Player("Player", "Playback, skipping, and how the player looks", Icons.Rounded.PlayCircle, "audio dubbed sub resume autoplay skip volume picture gpu hardware decoding performance"),
     Subtitles("Subtitles", "Captions, language, and text size", Icons.Rounded.Subtitles, "captions subtitles language text size"),
     Downloads("Downloads", "Where episodes are saved", Icons.Rounded.Download, "folder directory storage path"),
     Servers("Servers", "The video providers AniLife plays through", Icons.Rounded.Dns, "providers streaming wasm servers extensions"),
@@ -297,7 +297,7 @@ private enum class SettingsPage(
     Content("Content", "Titles and what the app opens with", Icons.Rounded.VideoLibrary, "title language romaji english native"),
     Appearance("Appearance", "Theme and type", Icons.Rounded.Palette, "css theme colors palette font typeface editor"),
     Data("Data", "Backups, MyAnimeList files, and storage", Icons.Rounded.Storage, "buffer memory cache storage backup restore export import xml json"),
-    App("App", "Updates, decoding, performance, and startup", Icons.Rounded.Apps, "updates version release hardware decoding gpu startup intro splash"),
+    App("App", "Updates and startup", Icons.Rounded.Apps, "updates version release startup intro splash"),
     About("About", "Version, keyboard shortcuts, and the people behind it", Icons.Rounded.Info, "app version metadata player providers credits links website discord shortcuts repository"),
 }
 
@@ -317,7 +317,8 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Skip outro automatically", SettingsPage.Player, "intro outro recap ending skip auto"),
     SettingSearchEntry("Screen size", SettingsPage.Player, "fit crop fill scaling display"),
     SettingSearchEntry("Player volume", SettingsPage.Player, "audio sound volume"),
-    SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebind shortcuts pause seek volume fullscreen"),
+SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebind shortcuts pause seek volume fullscreen"),
+    SettingSearchEntry("GPU acceleration", SettingsPage.Player, "hardware decoding gpu graphics card cpu decoder performance"),
     SettingSearchEntry("Show captions by default", SettingsPage.Subtitles, "captions subtitles text default"),
     SettingSearchEntry("Preferred caption language", SettingsPage.Subtitles, "captions subtitles language"),
     SettingSearchEntry("Caption size", SettingsPage.Subtitles, "captions subtitles text scale size"),
@@ -341,7 +342,6 @@ private val settingSearchEntries = listOf(
     SettingSearchEntry("Export MyAnimeList XML", SettingsPage.Data, "mal export xml list"),
     SettingSearchEntry("Import MyAnimeList XML", SettingsPage.Data, "mal import xml list"),
     SettingSearchEntry("Play startup intro", SettingsPage.App, "animation splash opening startup"),
-    SettingSearchEntry("Hardware decoding", SettingsPage.App, "gpu acceleration decoder cpu"),
     SettingSearchEntry("Check for updates on launch", SettingsPage.App, "automatic updates release startup"),
     SettingSearchEntry("Check for updates now", SettingsPage.App, "update version release check"),
     SettingSearchEntry("About AniLife", SettingsPage.About, "app version metadata player credits links website discord shortcuts repository"),
@@ -589,13 +589,25 @@ private fun PlayerSettings(
             )
         }
     }
-    KeyboardShortcutsSection(
+KeyboardShortcutsSection(
         bindings = settings.keyBindings,
         listeningForAction = listeningForAction,
         onListen = onListen,
         message = shortcutMessage,
         onBindingsChange = { bindings -> onSettingsChange { it.copy(keyBindings = bindings) } },
     )
+    SettingsSection("Performance") {
+        SettingsRow(
+            "GPU acceleration",
+            "Decode video on your graphics card to cut CPU use. Takes effect the next time a video starts. Turn it off if you see glitches or green frames.",
+        ) {
+            SettingsSegmented(
+                choices = listOf("auto" to "Auto", "off" to "Off"),
+                selected = settings.gpuAcceleration,
+                onSelect = { value -> onSettingsChange { it.copy(gpuAcceleration = value) } },
+            )
+        }
+    }
 }
 
 @Composable
@@ -1323,16 +1335,17 @@ private fun ContentSettings(settings: AppSettings, onSettingsChange: ((AppSettin
 private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
     val themeMode = ThemeMode.fromStorage(settings.themeMode)
 
-    SettingsSection("Window material") {
-        SettingsRow(
-            "UI style",
-            "Liquid is the default. Your selection applies immediately and is saved in app settings.",
-        ) {
-            SettingsSegmented(
-                choices = ThemeMode.entries.map { it.storageKey to it.label },
-                selected = themeMode.storageKey,
-                onSelect = { value -> onSettingsChange { it.copy(themeMode = value) } },
-            )
+    SettingsSection("Theme") {
+        SettingsNote("Default keeps the original AniLife look. Glass themes apply instantly and are remembered in your app settings.")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ThemeMode.entries.forEach { mode ->
+                ThemePreviewCard(
+                    mode = mode,
+                    selected = mode == themeMode,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSettingsChange { it.copy(themeMode = mode.storageKey) } },
+                )
+            }
         }
     }
 
@@ -1383,7 +1396,7 @@ private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSet
         }
     }
 
-    if (themeMode != ThemeMode.LEGACY) {
+    if (themeMode != ThemeMode.DEFAULT) {
         SettingsSection("Glass customization") {
             SettingsNote("Conservative adjustments keep legibility and performance intact. Themes with limited blur support fall back to tinted surfaces.")
             SettingsRow("Blur strength", "Strength of the backdrop blur on glass surfaces.") {
@@ -1453,6 +1466,53 @@ private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSet
         ThemeEditor(
             css = settings.themeCss,
             onChange = { css -> onSettingsChange { it.copy(themeCss = css) } },
+        )
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(
+    mode: ThemeMode,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val borderColor = if (selected) AniLifeColors.Primary else AniLifeColors.Border
+    Column(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(if (selected) 2.dp else 1.dp, borderColor, RoundedCornerShape(12.dp))
+            .background(AniLifeColors.Card)
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        val appearance = LocalAppearance.current
+        CompositionLocalProvider(LocalAppearance provides appearance.copy(themeMode = mode)) {
+            Box(
+                Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(8.dp)).background(AniLifeColors.Background),
+            ) {
+                Box(
+                    Modifier.padding(5.dp).size(width = 11.dp, height = 38.dp)
+                        .clip(RoundedCornerShape(4.dp)).background(AniLifeColors.Sidebar),
+                )
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(7.dp).size(width = 34.dp, height = 6.dp)
+                        .clip(RoundedCornerShape(3.dp)).background(AniLifeColors.Muted),
+                )
+                Box(
+                    Modifier.align(Alignment.BottomEnd).padding(7.dp)
+                        .size(width = 52.dp, height = 18.dp)
+                        .glassSurface(shape = RoundedCornerShape(5.dp), alpha = 0.4f),
+                )
+            }
+        }
+        Text(
+            mode.label,
+            color = if (selected) AniLifeColors.Primary else AniLifeColors.Foreground,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
         )
     }
 }
@@ -1711,12 +1771,94 @@ private fun AppSettingsPage(
         ) {
             SettingsSwitch(settings.playIntro) { enabled -> onSettingsChange { it.copy(playIntro = enabled) } }
         }
+    }
+
+    Spacer(Modifier.height(18.dp))
+    Text(
+        "Experimental",
+        color = AniLifeColors.Destructive,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    Box(
+        Modifier.fillMaxWidth()
+            .padding(top = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AniLifeColors.Destructive.copy(alpha = 0.10f))
+            .border(1.dp, AniLifeColors.Destructive.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+    ) {
+        Text(
+            "These features are unfinished and may change or break between releases. Turn them off if the app misbehaves.",
+            color = AniLifeColors.Destructive,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+        )
+    }
+    ExperimentalRow(
+        title = "Debounced search",
+        description = "Wait for a pause in typing before asking AniList, instead of searching on every keystroke.",
+        checked = settings.expDebouncedSearch,
+    ) { enabled -> onSettingsChange { it.copy(expDebouncedSearch = enabled) } }
+    ExperimentalRow(
+        title = "Disk image cache",
+        description = "Keep downloaded posters on disk so they reappear instantly on the next launch.",
+        checked = settings.expImageCaching,
+    ) { enabled -> onSettingsChange { it.copy(expImageCaching = enabled) } }
+    ExperimentalRow(
+        title = "Async fetching",
+        description = "Keep the previous results on screen while the next request is loading.",
+        checked = settings.expAsyncFetching,
+    ) { enabled -> onSettingsChange { it.copy(expAsyncFetching = enabled) } }
+    ExperimentalRow(
+        title = "Infinite pagination",
+        description = "Load additional search pages as you scroll toward the bottom.",
+        checked = settings.expPagination,
+    ) { enabled -> onSettingsChange { it.copy(expPagination = enabled) } }
+    ExperimentalRow(
+        title = "Screen fade transitions",
+        description = "Animate screen changes. Turn off for instant cuts and less GPU work.",
+        checked = settings.expFadeTransitions,
+    ) { enabled -> onSettingsChange { it.copy(expFadeTransitions = enabled) } }
+    ExperimentalRow(
+        title = "Stable scroll keys",
+        description = "Reuse list items by anime id while scrolling for smoother poster grids.",
+        checked = settings.expHardwareScrolling,
+    ) { enabled -> onSettingsChange { it.copy(expHardwareScrolling = enabled) } }
+    ExperimentalRow(
+        title = "Extended mpv buffering",
+        description = "Use a larger stream cache and automatic reconnect. Turn off on low-memory machines.",
+        checked = settings.expMpvBuffering,
+    ) { enabled -> onSettingsChange { it.copy(expMpvBuffering = enabled) } }
+    ExperimentalRow(
+        title = "Smart downloads",
+        description = "Queue the next episode at the halfway point and clean up older downloads as you move through a series.",
+        checked = settings.expSmartDownloads,
+    ) { enabled -> onSettingsChange { it.copy(expSmartDownloads = enabled) } }
+    if (settings.expSmartDownloads) {
         SettingsRow(
-            "Hardware decoding",
-            "Reduce CPU use. Turn it off if playback has visual artifacts.",
+            "Delete old downloads after",
+            "How many episode changes pass before the episode you just left is removed. Set to 0 to keep every download.",
         ) {
-            SettingsSwitch(settings.hardwareDecoding) { enabled -> onSettingsChange { it.copy(hardwareDecoding = enabled) } }
+            SettingsStepper(
+                value = settings.expSmartDownloadsStartAfter,
+                valueLabel = if (settings.expSmartDownloadsStartAfter == 0) "Never" else "${settings.expSmartDownloadsStartAfter} episodes",
+                range = 0..3,
+                step = 1,
+            ) { value -> onSettingsChange { it.copy(expSmartDownloadsStartAfter = value) } }
         }
+    }
+}
+
+@Composable
+private fun ExperimentalRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    SettingsRow(title, description) {
+        SettingsSwitch(checked, onChange)
     }
 }
 

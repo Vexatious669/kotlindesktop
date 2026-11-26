@@ -63,6 +63,26 @@ internal fun subtitleLanguageMatches(code: String?, wanted: String): Boolean {
     return actual == target || actual.take(2) == target.take(2)
 }
 
+internal fun hwdecFor(gpuAcceleration: String): String = if (gpuAcceleration == "auto") "auto-copy-safe" else "no"
+
+internal fun withHwdec(options: List<Pair<String, String>>, hwdec: String): List<Pair<String, String>> =
+    options.filterNot { it.first == "hwdec" } + ("hwdec" to hwdec)
+
+internal val lightweightBufferKeys = setOf(
+    "cache-secs",
+    "demuxer-max-bytes",
+    "demuxer-max-back-bytes",
+    "demuxer-lavf-o",
+    "stream-lavf-o",
+)
+
+internal fun bufferedPlayerOptions(experimental: Boolean): List<Pair<String, String>> =
+    if (experimental) {
+        defaultPlayerOptions()
+    } else {
+        defaultPlayerOptions().filterNot { (name, _) -> name in lightweightBufferKeys } + ("cache" to "no")
+    }
+
 /**
  * Drives libmpv for the player screen.
  *
@@ -83,7 +103,9 @@ class MpvPlaybackEngine(
     private val renderWidth: Int = 1280,
     private val renderHeight: Int = 720,
     private val renderFormat: String = "bgra",
-    private val playbackBufferSize: String = "auto",
+private val playbackBufferSize: String = "auto",
+    private val gpuAcceleration: String = "off",
+    private val experimentalBuffering: Boolean = true,
     /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
     private var presenceInfo: DiscordPlaybackInfo? = null,
     private val onPresence: (Presence?) -> Unit = {},
@@ -116,10 +138,9 @@ class MpvPlaybackEngine(
     @Volatile private var worker: Thread? = null
     @Volatile private var activeSubtitleAppearance = subtitleAppearance
     @Volatile private var lastPresenceReportAt = 0L
-    @Volatile private var lastMpvPosition = 0.0
-    @Volatile private var lastMpvPositionAt = 0L
     @Volatile private var lastFrameAt = 0L
     @Volatile private var state = "idle"
+    private val positionClock = PositionClock()
 
     fun start() {
         if (worker != null || closed.get()) return
@@ -135,7 +156,8 @@ class MpvPlaybackEngine(
 
     private fun runPlayback() {
         try {
-            val mpv = Mpv(initialOptions = playbackOptions(headers))
+            val hwdec = hwdecFor(gpuAcceleration)
+            val mpv = createMpvWithFallback(headers, hwdec)
             player = mpv
             applySubtitleAppearanceTo(mpv, activeSubtitleAppearance)
             mpv.observeDouble("time-pos")
@@ -148,14 +170,6 @@ class MpvPlaybackEngine(
             mpv.loadfile(url)
 
             while (!closed.get()) {
-                // Smooth position tracking: advance positionSeconds between mpv's time-pos reports.
-                if (isPlaying && lastMpvPositionAt > 0L) {
-                    val elapsed = (System.currentTimeMillis() - lastMpvPositionAt) / 1000.0
-                    val interpolated = (lastMpvPosition + elapsed).coerceAtMost(durationSeconds.takeIf { it > 0.0 } ?: Double.MAX_VALUE)
-                    if (interpolated > positionSeconds) {
-                        positionSeconds = interpolated
-                    }
-                }
                 if (target.needsRender()) {
                     // Limit frame rate to ~30fps to reduce memory pressure from ImageBitmap allocation.
                     val now = System.currentTimeMillis()
@@ -191,10 +205,8 @@ class MpvPlaybackEngine(
         when (event) {
             is Event.PropertyChange -> when (event.name) {
                 "time-pos" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
-                    lastMpvPosition = it.coerceAtLeast(0.0)
-                    lastMpvPositionAt = System.currentTimeMillis()
-                    positionSeconds = lastMpvPosition
-                    // Position-only updates are throttled; transport changes report immediately.
+                    val position = it.coerceAtLeast(0.0)
+                    if (positionClock.offer(position)) positionSeconds = position
                     reportPresence()
                 }
                 "duration" -> (event.value as? PropertyValue.DoubleValue)?.value?.let {
@@ -204,22 +216,15 @@ class MpvPlaybackEngine(
                     }
                 }
                 "pause" -> (event.value as? PropertyValue.Flag)?.value?.let {
+                    positionClock.flush()
                     isPlaying = !it
                     transition(if (it) "idle" else "playing")
-                    if (it) {
-                        // Paused: sync position to last mpv report.
-                        lastMpvPosition = positionSeconds
-                        lastMpvPositionAt = System.currentTimeMillis()
-                    } else {
-                        // Resumed: reset tracking.
-                        lastMpvPosition = positionSeconds
-                        lastMpvPositionAt = System.currentTimeMillis()
-                    }
                     reportPresence(force = true)
                 }
                 "mute" -> (event.value as? PropertyValue.Flag)?.value?.let { isMuted = it }
             }
             Event.FileLoaded -> {
+                positionClock.reset()
                 isLoading = false
                 transition("playing")
                 ActionBreadcrumbs.record("Started playback")
@@ -242,6 +247,7 @@ class MpvPlaybackEngine(
                 reportPresence(force = true)
             }
             is Event.EndFile -> {
+                positionClock.reset()
                 if (event.reason == EndReason.EOF) {
                     isPlaying = false
                     positionSeconds = durationSeconds
@@ -456,24 +462,33 @@ class MpvPlaybackEngine(
         player = null
     }
 
-    private fun playbackOptions(headers: Map<String, String>): List<Pair<String, String>> {
-        val options = defaultPlayerOptions()
-            .filterNot { it.first == "hwdec" }
-            .toMutableList()
-        // The software renderer needs decoded frames in system memory.
-        options += "hwdec" to "no"
-        // Captions are drawn into the rendered frame, so they follow these options too.
-        options += "sub-visibility" to "yes"
-        options += subtitleAppearanceOptions(activeSubtitleAppearance)
-        options += "sub-ass-override" to "no"
-        subtitleLanguage.trim().lowercase()
-            .takeIf { it.isNotEmpty() && it != "none" }
-            ?.let { options += "slang" to it }
-        val fields = headers.entries
-            .filter { it.key.isNotBlank() && it.value.isNotBlank() }
-            .map { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }
-        if (fields.isNotEmpty()) options += "http-header-fields" to fields.joinToString(",")
-        return options
+    private fun playbackOptions(headers: Map<String, String>, hwdec: String): List<Pair<String, String>> {
+        val options = bufferedPlayerOptions(experimentalBuffering)
+        return withHwdec(options, hwdec).toMutableList().apply {
+            // Captions are drawn into the rendered frame, so they follow these options too.
+            add("sub-visibility" to "yes")
+            addAll(subtitleAppearanceOptions(activeSubtitleAppearance))
+            add("sub-ass-override" to "no")
+            subtitleLanguage.trim().lowercase()
+                .takeIf { it.isNotEmpty() && it != "none" }
+                ?.let { add("slang" to it) }
+            val fields = headers.entries
+                .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+                .map { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }
+            if (fields.isNotEmpty()) add("http-header-fields" to fields.joinToString(","))
+        }
+    }
+
+    private fun createMpvWithFallback(headers: Map<String, String>, hwdec: String): Mpv {
+        try {
+            return Mpv(initialOptions = playbackOptions(headers, hwdec))
+        } catch (e: Exception) {
+            if (hwdec != "no") {
+                System.err.println("mpv[warn]: GPU decoding was disabled for this video: ${e.message}. Falling back to CPU decoding.")
+                return Mpv(initialOptions = playbackOptions(headers, "no"))
+            }
+            throw e
+        }
     }
 }
 

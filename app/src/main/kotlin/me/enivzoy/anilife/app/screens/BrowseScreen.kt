@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,7 +39,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AniListRepository
+import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.AnimePosterCard
 import me.enivzoy.anilife.app.ui.EmptyPanel
@@ -57,9 +63,12 @@ import me.enivzoy.anilife.app.ui.LoadState
 import me.enivzoy.anilife.app.ui.PageScrollbar
 import me.enivzoy.anilife.app.ui.PosterSkeleton
 import me.enivzoy.anilife.app.ui.loadState
+import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.GENRES
 import me.enivzoy.anilife.core.model.SearchPage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
  
 
@@ -69,16 +78,55 @@ import kotlinx.coroutines.delay
 fun BrowseScreen(
     repository: AniListRepository,
     onOpen: (Long) -> Unit,
+    settings: AppSettings = AppSettings(),
 ) {
     var query by remember { mutableStateOf("") }
     var genre by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<LoadState<SearchPage>>(LoadState.Loading) }
+    var loadedPage by remember { mutableIntStateOf(1) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(query, genre, reload) {
-        if (query.isNotBlank()) delay(350)
-        state = LoadState.Loading
-        state = loadState { repository.search(query = query.trim(), genre = genre) }
+        // 300 ms is the floor so a burst of keystrokes still collapses into one request.
+        if (query.isNotBlank()) delay(if (settings.expDebouncedSearch) 350 else 300)
+        loadedPage = 1
+        loadingMore = false
+        if (!settings.expAsyncFetching) state = LoadState.Loading
+        val previous = (state as? LoadState.Ready)?.value
+        val result = loadState { repository.search(query = query.trim(), genre = genre) }
+        state = if (settings.expAsyncFetching && result is LoadState.Failed && previous != null) {
+            LoadState.Ready(previous)
+        } else {
+            result
+        }
+    }
+
+    fun loadMore() {
+        if (!settings.expPagination || loadingMore) return
+        val current = state as? LoadState.Ready ?: return
+        if (!current.value.hasNext) return
+        val targetQuery = query.trim()
+        val targetGenre = genre
+        val nextPage = loadedPage + 1
+        loadingMore = true
+        scope.launch {
+            val result = loadState { repository.search(targetQuery, targetGenre, nextPage) }
+            if (result is LoadState.Ready && targetQuery == query.trim() && targetGenre == genre) {
+                val shown = (state as? LoadState.Ready)?.value
+                if (shown != null) {
+                    state = LoadState.Ready(
+                        shown.copy(
+                            results = (shown.results + result.value.results).distinctBy { it.id },
+                            hasNext = result.value.hasNext,
+                        ),
+                    )
+                    loadedPage = nextPage
+                }
+            }
+            loadingMore = false
+        }
     }
 
     val label = when {
@@ -127,7 +175,7 @@ fun BrowseScreen(
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (val current = state) {
-                LoadState.Loading -> BrowseSkeleton()
+                LoadState.Loading -> BrowseSkeleton(useKeys = settings.expHardwareScrolling)
                 is LoadState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     ErrorPanel(current.message, onRetry = { reload++ })
                 }
@@ -141,7 +189,13 @@ fun BrowseScreen(
                             )
                         }
                     } else {
-                        ResultsGrid(current.value, onOpen)
+                        ResultsGrid(
+                            page = current.value,
+                            onOpen = onOpen,
+                            onLoadMore = if (settings.expPagination && current.value.hasNext) ::loadMore else null,
+                            loadingMore = loadingMore,
+                            useKeys = settings.expHardwareScrolling,
+                        )
                     }
                 }
             }
@@ -150,8 +204,27 @@ fun BrowseScreen(
 }
 
 @Composable
-private fun ResultsGrid(page: SearchPage, onOpen: (Long) -> Unit) {
+private fun ResultsGrid(
+    page: SearchPage,
+    onOpen: (Long) -> Unit,
+    onLoadMore: (() -> Unit)?,
+    loadingMore: Boolean,
+    useKeys: Boolean,
+) {
     val gridState = rememberLazyGridState()
+    val canLoadMore by rememberUpdatedState(onLoadMore != null)
+    val loadMore by rememberUpdatedState(onLoadMore)
+    val itemCount by rememberUpdatedState(page.results.size)
+    val hasNext by rememberUpdatedState(page.hasNext)
+
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .distinctUntilChanged()
+            .collect { last ->
+                if (canLoadMore && hasNext && last >= itemCount - 5) loadMore?.invoke()
+            }
+    }
+
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 168.dp),
@@ -161,13 +234,27 @@ private fun ResultsGrid(page: SearchPage, onOpen: (Long) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalArrangement = Arrangement.spacedBy(26.dp),
         ) {
-            items(items = page.results, key = { it.id }) { anime ->
-                AnimePosterCard(
-                    anime = anime,
-                    onClick = { onOpen(anime.id) },
-                    modifier = Modifier.fillMaxWidth(),
-                    width = null,
-                )
+            if (useKeys) {
+                items(items = page.results, key = { it.id }, contentType = { "poster" }) { anime ->
+                    PosterItem(anime, onOpen)
+                }
+            } else {
+                items(items = page.results, contentType = { "poster" }) { anime ->
+                    PosterItem(anime, onOpen)
+                }
+            }
+            if (onLoadMore != null) {
+                item(key = "page-loader", span = { GridItemSpan(maxLineSpan) }) {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                        if (loadingMore) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(26.dp),
+                                color = AniLifeColors.Primary,
+                                strokeWidth = 2.dp,
+                            )
+                        }
+                    }
+                }
             }
         }
         PageScrollbar(rememberScrollbarAdapter(gridState), Modifier.align(Alignment.CenterEnd))
@@ -175,7 +262,17 @@ private fun ResultsGrid(page: SearchPage, onOpen: (Long) -> Unit) {
 }
 
 @Composable
-private fun BrowseSkeleton() {
+private fun PosterItem(anime: AnimeCard, onOpen: (Long) -> Unit) {
+    AnimePosterCard(
+        anime = anime,
+        onClick = { onOpen(anime.id) },
+        modifier = Modifier.fillMaxWidth(),
+        width = null,
+    )
+}
+
+@Composable
+private fun BrowseSkeleton(useKeys: Boolean = true) {
     val gridState = rememberLazyGridState()
     Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
@@ -186,8 +283,14 @@ private fun BrowseSkeleton() {
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalArrangement = Arrangement.spacedBy(26.dp),
         ) {
-            items(15) {
-                PosterSkeleton(modifier = Modifier.fillMaxWidth(), width = null)
+            if (useKeys) {
+                items(15, key = { it }) {
+                    PosterSkeleton(modifier = Modifier.fillMaxWidth(), width = null)
+                }
+            } else {
+                items(15) {
+                    PosterSkeleton(modifier = Modifier.fillMaxWidth(), width = null)
+                }
             }
         }
         PageScrollbar(rememberScrollbarAdapter(gridState), Modifier.align(Alignment.CenterEnd))

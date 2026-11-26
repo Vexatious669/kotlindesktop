@@ -36,6 +36,9 @@ import java.time.Duration
 
 
 object RemoteImages {
+    @Volatile
+    var diskCacheEnabled: Boolean = true
+
     private val client: HttpClient by lazy {
         HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
@@ -60,7 +63,11 @@ object RemoteImages {
         cached(url)?.let { return it }
         return withContext(Dispatchers.IO) {
             cached(url)?.let { return@withContext it }
-            val bytes = readDisk(url) ?: download(url)?.also { writeDisk(url, it) }
+            val bytes = if (diskCacheEnabled) {
+                readDisk(url) ?: download(url)?.also { writeDisk(url, it) }
+            } else {
+                download(url)
+            }
             if (bytes == null || bytes.isEmpty()) return@withContext null
             val bitmap = runCatching { SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()
                 ?: return@withContext null

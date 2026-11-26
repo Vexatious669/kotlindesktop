@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -119,6 +120,8 @@ fun PlayerScreen(
     onSourceSelect: (AnimeVideoSource) -> Unit = {},
     onAudioChange: (String) -> Unit = {},
     onEpisodeChange: (Double) -> Unit = {},
+    onSmartDownload: (Double) -> Unit = {},
+    onSmartDelete: (Double) -> Unit = {},
     onPresence: (Presence?) -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -162,7 +165,7 @@ fun PlayerScreen(
     val presenceReporter = rememberUpdatedState(onPresence)
     val reportPresence = remember { { p: Presence? -> presenceReporter.value(p) } }
 
-    val engine = remember(url, headers, selectedSource?.subtitles, resumePosition) {
+    val engine = remember(url, headers, selectedSource?.subtitles, resumePosition, settings.expMpvBuffering) {
         url?.takeIf(String::isNotBlank)?.let { stream ->
             MpvPlaybackEngine(
                 url = stream,
@@ -173,7 +176,9 @@ fun PlayerScreen(
                 subtitlesByDefault = settings.subtitlesByDefault,
                 subtitleLanguage = settings.subtitleLanguage,
                 subtitleAppearance = settings.subtitleAppearance,
-                playbackBufferSize = settings.playbackBufferSize,
+playbackBufferSize = settings.playbackBufferSize,
+                gpuAcceleration = settings.gpuAcceleration,
+                experimentalBuffering = settings.expMpvBuffering,
                 presenceInfo = playbackInfo,
                 onPresence = reportPresence,
             )
@@ -340,6 +345,39 @@ fun PlayerScreen(
 
     LaunchedEffect(engine, engine?.hasEnded, settings.autoplayNextEpisode) {
         if (engine?.hasEnded == true && settings.autoplayNextEpisode) next?.let(onEpisodeChange)
+    }
+
+    val smartDownloader by rememberUpdatedState(onSmartDownload)
+    val smartDeleter by rememberUpdatedState(onSmartDelete)
+    var smartTriggered by remember(title, episode, url) { mutableStateOf(false) }
+    LaunchedEffect(engine, settings.expSmartDownloads, episode, next) {
+        if (!settings.expSmartDownloads) return@LaunchedEffect
+        val nextEpisode = next ?: return@LaunchedEffect
+        while (!smartTriggered) {
+            delay(1_000L)
+            val player = engine ?: return@LaunchedEffect
+            val duration = player.durationSeconds
+            if (duration > 0.0 && player.positionSeconds / duration >= 0.5) {
+                smartTriggered = true
+                smartDownloader(nextEpisode)
+            }
+        }
+    }
+    // Counting visited episodes, not episode numbers, keeps the rule identical for seasonal splits.
+    val smartHistory = remember(detail?.id) { mutableStateListOf<Double>() }
+    LaunchedEffect(settings.expSmartDownloads, settings.expSmartDownloadsStartAfter, episode, detail?.id) {
+        val current = episode ?: return@LaunchedEffect
+        if (!settings.expSmartDownloads) {
+            smartHistory.clear()
+            return@LaunchedEffect
+        }
+        if (smartHistory.lastOrNull() == current) return@LaunchedEffect
+        smartHistory += current
+        // zero means keep everything; otherwise the oldest visited episode is removed.
+        val keep = settings.expSmartDownloadsStartAfter
+        if (keep > 0) {
+            while (smartHistory.size > keep) smartDeleter(smartHistory.removeAt(0))
+        }
     }
 
     // The next episode is offered in the file's last half-minute, with a countdown that plays it

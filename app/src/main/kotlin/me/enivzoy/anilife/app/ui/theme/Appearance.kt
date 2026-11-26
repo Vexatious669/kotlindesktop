@@ -7,7 +7,7 @@ import androidx.compose.runtime.remember
 import me.enivzoy.anilife.app.data.AppSettings
 
 data class AppearanceConfig(
-    val themeMode: ThemeMode = ThemeMode.LIQUID_GLASS,
+    val themeMode: ThemeMode = ThemeMode.DEFAULT,
     val smoothScrolling: Boolean = true,
     val scrollbarVisibility: ScrollbarVisibility = ScrollbarVisibility.AUTOMATIC,
     val scrollDuration: ScrollAnimationDuration = ScrollAnimationDuration.NORMAL,
