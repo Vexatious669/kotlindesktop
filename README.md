@@ -31,7 +31,7 @@ The latest release is the stable build. The latest beta is the newest successful
 
 ## First launch
 
-AniLife installs its JRE and media dependencies under `%APPDATA%\AniLife\runtime`. It migrates dependencies from the previous `%APPDATA%\bin` location when present. To use your own libmpv copy, start the app with `-DAniLife.mpv.library=<path to libmpv>`. Settings, then About, shows which library is loaded.
+AniLife installs its JRE and media dependencies under `%APPDATA%\AniLife\runtime`. It migrates dependencies from the previous `%APPDATA%\bin` location when present. A full uninstall removes the managed runtime, updater staging files, and `%LOCALAPPDATA%\AniLife` data (including settings, credentials, caches, and downloaded media). It keeps diagnostic logs under `%APPDATA%\AniLife\logs`; MSI upgrades retain the runtime and local data. To use your own libmpv copy, start the app with `-DAniLife.mpv.library=<path to libmpv>`. Settings, then About, shows which library is loaded.
 
 ## MyAnimeList sign-in
 
