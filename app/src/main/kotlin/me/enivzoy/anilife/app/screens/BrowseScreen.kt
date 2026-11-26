@@ -70,10 +70,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
- 
-
-
-
 @Composable
 fun BrowseScreen(
     repository: AniListRepository,
@@ -89,8 +85,8 @@ fun BrowseScreen(
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(query, genre, reload) {
-        // 300 ms is the floor so a burst of keystrokes still collapses into one request.
-        if (query.isNotBlank()) delay(if (settings.expDebouncedSearch) 350 else 300)
+        // every change waits at least 300 ms, so a burst of keystrokes collapses into one request.
+        delay(if (settings.expDebouncedSearch) 350 else 300)
         loadedPage = 1
         loadingMore = false
         if (!settings.expAsyncFetching) state = LoadState.Loading
@@ -239,7 +235,8 @@ private fun ResultsGrid(
                     PosterItem(anime, onOpen)
                 }
             } else {
-                items(items = page.results, contentType = { "poster" }) { anime ->
+                // index keys reproduce the old identity: same layout, but rows jump when a page is appended.
+                items(items = page.results, key = { index -> index }, contentType = { "poster" }) { anime ->
                     PosterItem(anime, onOpen)
                 }
             }
@@ -284,11 +281,11 @@ private fun BrowseSkeleton(useKeys: Boolean = true) {
             verticalArrangement = Arrangement.spacedBy(26.dp),
         ) {
             if (useKeys) {
-                items(15, key = { it }) {
+                items(15, key = { it }, contentType = { "skeleton" }) {
                     PosterSkeleton(modifier = Modifier.fillMaxWidth(), width = null)
                 }
             } else {
-                items(15) {
+                items(15, key = { it }) {
                     PosterSkeleton(modifier = Modifier.fillMaxWidth(), width = null)
                 }
             }

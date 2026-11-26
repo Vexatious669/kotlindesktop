@@ -176,7 +176,7 @@ fun PlayerScreen(
                 subtitlesByDefault = settings.subtitlesByDefault,
                 subtitleLanguage = settings.subtitleLanguage,
                 subtitleAppearance = settings.subtitleAppearance,
-playbackBufferSize = settings.playbackBufferSize,
+                playbackBufferSize = settings.playbackBufferSize,
                 gpuAcceleration = settings.gpuAcceleration,
                 experimentalBuffering = settings.expMpvBuffering,
                 presenceInfo = playbackInfo,
@@ -356,14 +356,15 @@ playbackBufferSize = settings.playbackBufferSize,
         while (!smartTriggered) {
             delay(1_000L)
             val player = engine ?: return@LaunchedEffect
+            if (player.hasEnded) return@LaunchedEffect
             val duration = player.durationSeconds
-            if (duration > 0.0 && player.positionSeconds / duration >= 0.5) {
+            if (smartDownloadDue(player.positionSeconds, duration)) {
                 smartTriggered = true
                 smartDownloader(nextEpisode)
             }
         }
     }
-    // Counting visited episodes, not episode numbers, keeps the rule identical for seasonal splits.
+    // counting visited episodes, not episode numbers, keeps the rule identical for seasonal splits.
     val smartHistory = remember(detail?.id) { mutableStateListOf<Double>() }
     LaunchedEffect(settings.expSmartDownloads, settings.expSmartDownloadsStartAfter, episode, detail?.id) {
         val current = episode ?: return@LaunchedEffect
@@ -373,10 +374,10 @@ playbackBufferSize = settings.playbackBufferSize,
         }
         if (smartHistory.lastOrNull() == current) return@LaunchedEffect
         smartHistory += current
-        // zero means keep everything; otherwise the oldest visited episode is removed.
-        val keep = settings.expSmartDownloadsStartAfter
-        if (keep > 0) {
-            while (smartHistory.size > keep) smartDeleter(smartHistory.removeAt(0))
+        val dropped = droppableSmartEpisodes(smartHistory, settings.expSmartDownloadsStartAfter)
+        if (dropped.isNotEmpty()) {
+            smartHistory.removeAll(dropped)
+            dropped.forEach(smartDeleter)
         }
     }
 
@@ -768,6 +769,13 @@ internal fun nextEpisodeNumber(episodes: List<Double>, current: Double?): Double
         .filter { it.isFinite() && it > current }
         .minOrNull()
 }
+
+// zero keeps everything; otherwise everything older than the newest [keep] visits is returned.
+internal fun droppableSmartEpisodes(visited: List<Double>, keep: Int): List<Double> =
+    if (keep <= 0 || visited.size <= keep) emptyList() else visited.dropLast(keep)
+
+internal fun smartDownloadDue(position: Double, duration: Double): Boolean =
+    duration > 0.0 && position.isFinite() && position / duration >= 0.5
 
 internal fun formatEpisodeNumber(number: Double): String =
     if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()

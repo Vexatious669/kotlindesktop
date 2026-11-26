@@ -37,6 +37,22 @@ class PlayerScreenTest {
     }
 
     @Test
+    fun smartDownloadsOnlyDropEpisodesOlderThanTheKeepWindow() {
+        assertEquals(emptyList(), droppableSmartEpisodes(listOf(1.0, 2.0), 0))
+        assertEquals(emptyList(), droppableSmartEpisodes(listOf(1.0, 2.0), 2))
+        assertEquals(listOf(1.0), droppableSmartEpisodes(listOf(1.0, 2.0, 3.0), 2))
+        assertEquals(listOf(1.0, 2.0), droppableSmartEpisodes(listOf(1.0, 2.0, 3.0, 4.0), 2))
+    }
+
+    @Test
+    fun smartDownloadsTriggerAtTheHalfwayPointOnly() {
+        assertFalse(smartDownloadDue(position = 0.0, duration = 0.0))
+        assertFalse(smartDownloadDue(position = 700.0, duration = 1440.0))
+        assertTrue(smartDownloadDue(position = 720.0, duration = 1440.0))
+        assertTrue(smartDownloadDue(position = 1300.0, duration = 1440.0))
+    }
+
+    @Test
     fun theRecapWinsOverTheOpeningWhenTheyTouch() {
         val skip = SkipTimes(
             intro = Window(62.0, 152.0),

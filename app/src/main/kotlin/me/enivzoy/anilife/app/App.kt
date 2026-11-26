@@ -431,12 +431,16 @@ fun AniLifeApp(
     fun deleteSmartDownload(anime: AnimeDetail?, episode: Double) {
         if (!settings.expSmartDownloads || anime == null) return
         if ("${anime.id}:$episode" !in smartDownloaded) return
+        val queued = downloadQueue.jobs.value.filter { job ->
+            job.anime?.id == anime.id && job.episode == episode
+        }
+        queued.forEach { downloadQueue.remove(it.id) }
         val entry = repository.localEpisodes.value
-            .firstOrNull { it.anime.id == anime.id && it.episode == episode } ?: return
-        downloadQueue.jobs.value.firstOrNull { it.localEpisode?.path == entry.path }
-            ?.let { downloadQueue.remove(it.id) }
-        runCatching { Files.deleteIfExists(entry.path) }
-        repository.removeLocalEpisode(entry)
+            .firstOrNull { it.anime.id == anime.id && it.episode == episode }
+        if (entry != null) {
+            runCatching { Files.deleteIfExists(entry.path) }
+            repository.removeLocalEpisode(entry)
+        }
         smartDownloaded -= "${anime.id}:$episode"
     }
 
