@@ -22,7 +22,7 @@ import kotlinx.coroutines.sync.withLock
 data class CardLookup(val cards: List<AnimeCard>, val failedBatches: Int)
 
 class AniListRepository(
-    private val client: AniListClient = AniListClient(),
+    private val client: AniListClient = AniListClient(cache = FileResponseCache()),
     titleLanguage: String = "english",
     private val videoProviders: AnimeVideoProviders = AnimeVideoProviders(),
     val library: LocalLibraryStore = LocalLibraryStore(),

@@ -23,18 +23,24 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.put
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.security.MessageDigest
 import java.time.Duration
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
+
+private val logger = KotlinLogging.logger {}
 
 private const val ENDPOINT = "https://graphql.anilist.co"
 private const val USER_AGENT = "AniLife/1.0 (+https://github.com/sAniLife)"
 
  
 private const val NEWEST_AIRED_BUFFER_SECONDS = 15 * 60L
+private const val HOME_BUCKET_SECONDS = 15 * 60L
 
 /** AniList caps a page at 50 items, which is also the most a by-id lookup can carry. */
 const val MAX_LOOKUP_BATCH = 50
@@ -59,6 +65,8 @@ class AniListException(override val message: String) : RuntimeException(message)
 class AniListClient(
     private val http: HttpClient = defaultHttpClient(),
     private val endpoint: String = ENDPOINT,
+    private val cache: ResponseCache? = null,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     @Volatile
     var titleLanguage: String = "english"
@@ -81,13 +89,16 @@ class AniListClient(
             }
         """.trimIndent()
 
+        val airedBefore = nowSeconds() - NEWEST_AIRED_BUFFER_SECONDS
         val data = execute(
             query,
             buildJsonObject {
                 put("season", season)
                 put("year", year)
-                put("airedBefore", nowSeconds() - NEWEST_AIRED_BUFFER_SECONDS)
+                // bucketing keeps the cache key stable for repeated home loads within the window
+                put("airedBefore", airedBefore - airedBefore % HOME_BUCKET_SECONDS)
             },
+            maxAgeSeconds = 600,
         )
 
         fun pageCards(key: String): List<AnimeCard> =
@@ -159,6 +170,7 @@ class AniListClient(
                 put("sort", buildJsonArray { add(JsonPrimitive(sort)) })
                 put("isAdult", JsonPrimitive(showAdult))
             },
+            maxAgeSeconds = 300,
         )
 
         val pageObj = data["Page"] as? JsonObject
@@ -196,7 +208,7 @@ class AniListClient(
             }
         """.trimIndent()
 
-        val data = execute(query, buildJsonObject { put("id", id) })
+        val data = execute(query, buildJsonObject { put("id", id) }, maxAgeSeconds = 1_800)
         val media = data["Media"] as? JsonObject ?: throw AniListException("AniList has no title $id")
         val card = parseCard(media, titleLanguage) ?: throw AniListException("AniList returned a title without an id")
 
@@ -304,7 +316,7 @@ class AniListClient(
               }
             }
         """.trimIndent()
-        val media = execute(query, buildJsonObject { put("id", id) })["Media"] as? JsonObject
+        val media = execute(query, buildJsonObject { put("id", id) }, maxAgeSeconds = 1_800)["Media"] as? JsonObject
             ?: return emptyMap()
         val episodeTitlePattern = Regex("""(?:episode|ep\.?)\s*#?\s*(\d+)\s*[:\-–.]?\s*(.*)""", RegexOption.IGNORE_CASE)
         return media["streamingEpisodes"].asArray()?.mapNotNull { item ->
@@ -325,8 +337,8 @@ class AniListClient(
      * caller can ask what has already aired in the last hours.
      */
     suspend fun schedule(days: Int = 7, showAdult: Boolean = false, since: Long? = null): List<AiringEntry> {
-        val from = since ?: nowSeconds()
-        val to = nowSeconds() + days * 86_400L
+        val from = since ?: (nowSeconds() / HOME_BUCKET_SECONDS) * HOME_BUCKET_SECONDS
+        val to = if (since == null) from + days * 86_400L else nowSeconds() + days * 86_400L
         val query = """
             query (${'$'}page: Int, ${'$'}from: Int, ${'$'}to: Int) {
               Page(page: ${'$'}page, perPage: 50) {
@@ -347,6 +359,7 @@ class AniListClient(
                     put("from", from)
                     put("to", to)
                 },
+                maxAgeSeconds = if (since == null) 900 else 0,
             )
             val pageObj = data["Page"] as? JsonObject ?: break
             pageObj["airingSchedules"].asArray()?.forEach { element ->
@@ -408,6 +421,7 @@ class AniListClient(
         val data = execute(
             query,
             buildJsonObject { put("ids", JsonArray(batch.map { JsonPrimitive(it) })) },
+            maxAgeSeconds = 600,
         )
         return (data["Page"] as? JsonObject)
             ?.get("media")
@@ -416,7 +430,39 @@ class AniListClient(
             .orEmpty()
     }
 
-    private suspend fun execute(query: String, variables: JsonObject = buildJsonObject { }): JsonObject {
+    private suspend fun execute(
+        query: String,
+        variables: JsonObject = buildJsonObject { },
+        maxAgeSeconds: Long = 0,
+    ): JsonObject {
+        val key = cacheKey(query, variables)
+        val cached = cache?.get(key)
+        if (cached != null && maxAgeSeconds > 0 && clock() - cached.savedAtMillis <= maxAgeSeconds * 1_000L) {
+            return cached.data
+        }
+
+        val data = try {
+            fetch(query, variables)
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            if (cached != null) {
+                logger.warn { "anilist request failed; serving stale cache: ${failure.message}" }
+                return cached.data
+            }
+            throw failure
+        }
+
+        cache?.put(key, data)
+        return data
+    }
+
+    private fun cacheKey(query: String, variables: JsonObject): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("$endpoint$query$variables".toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun fetch(query: String, variables: JsonObject): JsonObject {
         val payload = buildJsonObject {
             put("query", query)
             put("variables", variables)
