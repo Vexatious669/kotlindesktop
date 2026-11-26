@@ -403,7 +403,10 @@ fun AniLifeApp(
                     episode = episode,
                     dub = audio.equals("Dub", ignoreCase = true),
                 )
-                val source = sources.firstOrNull()
+                val source = me.enivzoy.anilife.app.data.pickDownloadSource(
+                    sources,
+                    me.enivzoy.anilife.app.data.DownloadTarget(resolution = 1080, server = "Auto"),
+                )
                 if (source == null) {
                     smartDownloaded -= key
                     return@launch
@@ -418,6 +421,21 @@ fun AniLifeApp(
                     downloadRoot = root,
                     anime = anime.toCard(),
                     headers = source.headers,
+                    maxHeight = 1080,
+                    resolve = { avoid ->
+                        val fresh = animeVideoProviders.sources(
+                            anilistId = anime.id,
+                            malId = anime.malId,
+                            titles = titles,
+                            episode = episode,
+                            dub = audio.equals("Dub", ignoreCase = true),
+                        )
+                        me.enivzoy.anilife.app.data.pickDownloadSource(
+                            fresh,
+                            me.enivzoy.anilife.app.data.DownloadTarget(resolution = 1080, server = "Auto"),
+                            avoid,
+                        )
+                    },
                 )
             } catch (cancelled: CancellationException) {
                 smartDownloaded -= key

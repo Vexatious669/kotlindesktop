@@ -184,6 +184,7 @@ class AniListRepository(
         audio: String,
         downloadRoot: java.nio.file.Path? = null,
         headers: Map<String, String> = emptyMap(),
+        maxHeight: Int = Int.MAX_VALUE,
         onProgress: ((Long, Long?) -> Unit)? = null,
     ): LocalEpisode {
         val matchedAnime = try {
@@ -206,6 +207,7 @@ class AniListRepository(
             anime = matchedAnime,
             episodeTitle = episodeTitle,
             headers = headers,
+            maxHeight = maxHeight,
             onProgress = onProgress,
         ).also { downloads.addAll(listOf(it)) }
     }

@@ -417,6 +417,7 @@ object DirectMediaDownloader {
         anime: AnimeCard? = null,
         episodeTitle: String? = null,
         headers: Map<String, String> = emptyMap(),
+        maxHeight: Int = Int.MAX_VALUE,
         onProgress: ((Long, Long?) -> Unit)? = null,
     ): LocalEpisode =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
@@ -432,11 +433,13 @@ object DirectMediaDownloader {
             val extension = remoteName.substringAfterLast('.', "")
                 .takeIf { remoteName.contains('.') }
                 ?.let { ".$it" }?.lowercase().orEmpty()
-            if (extension !in videoExtensions) {
+            if (extension.isNotEmpty() && extension !in videoExtensions) {
                 require(isStreamUrl(trimmedUrl)) {
                     "The URL must point to a video file (.mp4, .mkv, .webm, .ts) or an HLS/DASH playlist."
                 }
-                return@withContext downloadStream(trimmedUrl, headers, animeTitle, episode, audio, downloadRoot, anime, episodeTitle, onProgress)
+            }
+            if (extension.isEmpty() || extension !in videoExtensions) {
+                return@withContext downloadStream(trimmedUrl, headers, animeTitle, episode, audio, downloadRoot, anime, episodeTitle, maxHeight, onProgress)
             }
 
             val directory = downloadRoot.resolve(safeName(animeTitle)).toFile()
@@ -508,15 +511,21 @@ object DirectMediaDownloader {
         // hls needs the network protocols whitelisted or ffmpeg exits with -22
         add("-protocol_whitelist")
         add("file,http,https,tcp,tls,crypto")
+        // mirrors mpv: a dropped connection must resume instead of failing the whole episode
+        add("-reconnect")
+        add("1")
+        add("-reconnect_streamed")
+        add("1")
+        add("-reconnect_delay_max")
+        add("6")
         val userAgent = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
         val referer = headers.entries.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
         val otherHeaders = headers.filterKeys { key ->
             !key.equals("User-Agent", ignoreCase = true) && !key.equals("Referer", ignoreCase = true)
         }
-        if (userAgent != null) {
-            add("-user_agent")
-            add(userAgent)
-        }
+        // ffmpeg would announce itself as Lavf and some cdns reject that
+        add("-user_agent")
+        add(userAgent ?: "AniLife/1.0")
         if (referer != null) {
             add("-referer")
             add(referer)
@@ -549,21 +558,28 @@ object DirectMediaDownloader {
         downloadRoot: Path,
         anime: AnimeCard?,
         episodeTitle: String?,
+        maxHeight: Int,
         onProgress: ((Long, Long?) -> Unit)?,
     ): LocalEpisode {
-        val ffmpeg = findFfmpeg() ?: error("FFmpeg wasn't found. Run setup or add ffmpeg to PATH.")
+        // check the source before ffmpeg touches it, so an expired token is not reported as bad media
+        val validated = HlsSource.validate(url, headers, maxHeight)
         val directory = downloadRoot.resolve(safeName(animeTitle)).toFile()
         Files.createDirectories(directory.toPath())
         val episodeLabel = if (episode % 1.0 == 0.0) episode.toInt().toString() else episode.toString()
         val safeEpisodeTitle = episodeTitle?.takeIf(String::isNotBlank)?.let { " - ${safeName(it)}" }.orEmpty()
         val destination = File(directory, "${safeName(animeTitle)} - E$episodeLabel$safeEpisodeTitle.mkv")
         val temporary = File(directory, "${destination.name}.${java.util.UUID.randomUUID()}.part")
-        val container = if (destination.extension.equals("mp4", ignoreCase = true)) "mp4" else "matroska"
-        val command = buildList {
-            add(ffmpeg)
-            addAll(streamArguments(url, headers, temporary.absolutePath, container))
+
+        if (validated.kind == SourceKind.HlsMedia) {
+            return downloadHls(validated, headers, temporary, destination, downloadRoot, animeTitle, episode, audio, anime, episodeTitle, onProgress)
         }
-        logger.info { "ffmpeg command: ${command.joinToString(" ")}" }
+        val container = "matroska"
+        val command = buildList {
+            add(findFfmpeg() ?: error("FFmpeg wasn't found. Run setup or add ffmpeg to PATH."))
+            addAll(streamArguments(validated.url, validated.headers, temporary.absolutePath, container))
+        }
+        // the url is tokenized; never write the query string to the log
+        logger.info { "ffmpeg stream: ${redactUrl(validated.url)} kind=${validated.kind} (${validated.detail})" }
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         try {
             var lastSize = -1L
@@ -594,9 +610,9 @@ object DirectMediaDownloader {
             }
             val exit = process.waitFor()
             if (!coroutineContext.isActive) throw CancellationException("Download cancelled.")
-            logger.info { "ffmpeg stream finished host=${URI(url).host} reportedBytes=$lastSize drops=$drops exit=$exit" }
+            logger.info { "ffmpeg stream finished host=${URI(validated.url).host} reportedBytes=$lastSize drops=$drops exit=$exit" }
             require(exit == 0) {
-                "FFmpeg exited with code $exit. ${diagnostics.takeLast(3).joinToString(" ").take(240)}"
+                "The provider stopped sending video data (ffmpeg exit $exit). ${diagnostics.takeLast(3).joinToString(" ").take(240)}"
             }
             val bytes = if (Files.isRegularFile(temporary.toPath())) Files.size(temporary.toPath()) else 0L
             logger.info { "stream download bytes=$bytes" }
@@ -614,6 +630,68 @@ object DirectMediaDownloader {
             throw error
         } finally {
             if (process.isAlive) process.destroyForcibly()
+        }
+    }
+
+    // ffmpeg skips a failed hls segment and reports invalid data; fetching segments here keeps the episode whole
+    private suspend fun downloadHls(
+        source: ValidatedSource,
+        headers: Map<String, String>,
+        temporary: File,
+        destination: File,
+        downloadRoot: Path,
+        animeTitle: String,
+        episode: Double,
+        audio: String,
+        anime: AnimeCard?,
+        episodeTitle: String?,
+        onProgress: ((Long, Long?) -> Unit)?,
+    ): LocalEpisode {
+        val playlist = source.playlist ?: throw SourceException(SourceFailure.EmptyPlaylist)
+        val raw = File(
+            destination.parentFile,
+            "${destination.name}.${java.util.UUID.randomUUID()}.part." + if (playlist.isFragmented) "mp4" else "ts",
+        )
+        try {
+            logger.info { "hls download: ${redactUrl(source.url)} segments=${playlist.segments.size} fragmented=${playlist.isFragmented}" }
+            val bytes = HlsSource.downloadMediaPlaylist(playlist, source.headers, raw.toPath()) { written ->
+                onProgress?.invoke(written, null)
+            }
+            require(bytes > 0L) { "The provider sent a playlist without any segments." }
+            val ffmpeg = findFfmpeg()
+            if (ffmpeg == null) {
+                // no remux available: a raw ts/fmp4 is still playable, so keep it rather than fail
+                val target = File(destination.parentFile, destination.name.removeSuffix(".mkv") + raw.extension)
+                try {
+                    Files.move(raw.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(raw.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+                return finalizeDownload(target, downloadRoot, animeTitle, episode, audio, anime, episodeTitle)
+            }
+            val remux = ProcessBuilder(
+                ffmpeg, "-nostdin", "-y", "-loglevel", "error",
+                "-i", raw.absolutePath, "-c", "copy", "-f", "matroska", temporary.absolutePath,
+            ).redirectErrorStream(true).start()
+            val log = remux.inputStream.bufferedReader().use { it.readText() }
+            val exit = remux.waitFor()
+            if (exit != 0) {
+                throw SourceException(
+                    SourceFailure.NotPlaylist,
+                    cause = IOException("ffmpeg remux failed ($exit): ${log.takeLast(240)}"),
+                )
+            }
+            require(temporary.isFile && temporary.length() > 0L) { "The stream download produced an empty file." }
+            try {
+                Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            return finalizeDownload(destination, downloadRoot, animeTitle, episode, audio, anime, episodeTitle)
+        } finally {
+            Files.deleteIfExists(raw.toPath())
+            File(temporary.absolutePath).delete()
+            File("${temporary.absolutePath}.part").delete()
         }
     }
 
