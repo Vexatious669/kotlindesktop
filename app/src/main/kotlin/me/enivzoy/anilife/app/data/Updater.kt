@@ -74,14 +74,17 @@ internal fun redactForLog(value: String): String {
     }
 }
 
-internal fun installCommand(installer: Path, msiLog: Path): List<String> =
+internal fun installCommand(installer: Path, msiLog: Path): String =
     if (installer.fileName.toString().endsWith(".msi", ignoreCase = true)) {
-        listOf("msiexec.exe", "/i", installer.toString(), "/qn", "/norestart", "/L*v", msiLog.toString())
+        "msiexec.exe /i ${cmdQuote(installer.toString())} /qn /norestart /L*V ${cmdQuote(msiLog.toString())}"
     } else {
-        listOf(installer.toString(), "/quiet", "/norestart")
+        "${cmdQuote(installer.toString())} /quiet /norestart"
     }
 
 private fun cmdQuote(value: String): String = "\"${value.replace("\"", "\"\"")}\""
+
+internal fun restartCommand(executable: String, arguments: List<String>): String =
+    (listOf(executable) + arguments).joinToString(" ") { cmdQuote(it) }
 
 private fun rateLimitMessage(reset: String?): String {
     val retryAt = reset?.toLongOrNull()
@@ -227,22 +230,26 @@ class Updater(
         val msiLog = logs.resolve("updater-msi.log")
         val marker = logs.resolve("updater-result.txt")
         val command = installCommand(installer, msiLog)
-        val appPath = ProcessHandle.current().info().command().orElse(null)
+        val processInfo = ProcessHandle.current().info()
+        val appPath = processInfo.command().orElse(null)
+        val appCommand = appPath?.let {
+            restartCommand(it, processInfo.arguments().orElse(emptyArray()).toList())
+        }
         val helper = updatesDirectory().resolve("run-updater.cmd")
         val lines = buildList {
             add("@echo off")
             add("setlocal")
-            add(command.joinToString(" ") { cmdQuote(it) })
+            add(command)
             add("set CODE=%ERRORLEVEL%")
             add("echo %CODE%>${cmdQuote(marker.toString())}")
-            if (appPath != null) {
-                add("if \"%CODE%\"==\"$INSTALL_SUCCESS\" start \"\" ${cmdQuote(appPath)}")
-                add("if \"%CODE%\"==\"$INSTALL_RESTART_REQUIRED\" start \"\" ${cmdQuote(appPath)}")
+            if (appCommand != null) {
+                add("if \"%CODE%\"==\"$INSTALL_SUCCESS\" start \"\" $appCommand")
+                add("if \"%CODE%\"==\"$INSTALL_RESTART_REQUIRED\" start \"\" $appCommand")
             }
             add("endlocal")
         }
         Files.write(helper, lines, StandardCharsets.UTF_8)
-        logger.info { "install command=${command.joinToString(" ") { redactForLog(it) }}" }
+        logger.info { "install command=${redactForLog(command)}" }
         logger.info {
             "install helper launched path=${redactForLog(helper.toString())} " +
                 "app=${appPath?.let(::redactForLog) ?: "n/a"}"

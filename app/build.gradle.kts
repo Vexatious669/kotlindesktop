@@ -97,11 +97,7 @@ tasks.processResources {
 compose.desktop {
     application {
         mainClass = "me.enivzoy.anilife.app.MainKt"
-        jvmArgs += listOf(
-            "-XX:+HeapDumpOnOutOfMemoryError",
-            "-XX:HeapDumpPath=${System.getProperty("user.home")}/AppData/Roaming/AniLife/heapdumps/",
-            "-Xlog:gc*:file=${System.getProperty("user.home")}/AppData/Roaming/AniLife/logs/gc.log:time,uptime,level,tags",
-        )
+        jvmArgs += "-XX:+HeapDumpOnOutOfMemoryError"
         nativeDistributions {
             if (isLinux) {
                 targetFormats(TargetFormat.Deb)
@@ -110,6 +106,7 @@ compose.desktop {
             }
             packageName = "AniLife"
             packageVersion = appVersion
+            vendor = "github.com/anilifecommunity"
             appResourcesRootDir = file("src/main/appResources")
             includeAllModules = false
             modules(
