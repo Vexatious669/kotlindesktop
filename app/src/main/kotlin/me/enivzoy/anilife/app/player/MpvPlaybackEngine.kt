@@ -68,6 +68,21 @@ internal fun hwdecFor(gpuAcceleration: String): String = if (gpuAcceleration == 
 internal fun withHwdec(options: List<Pair<String, String>>, hwdec: String): List<Pair<String, String>> =
     options.filterNot { it.first == "hwdec" } + ("hwdec" to hwdec)
 
+internal val lightweightBufferKeys = setOf(
+    "cache-secs",
+    "demuxer-max-bytes",
+    "demuxer-max-back-bytes",
+    "demuxer-lavf-o",
+    "stream-lavf-o",
+)
+
+internal fun bufferedPlayerOptions(experimental: Boolean): List<Pair<String, String>> =
+    if (experimental) {
+        defaultPlayerOptions()
+    } else {
+        defaultPlayerOptions().filterNot { (name, _) -> name in lightweightBufferKeys } + ("cache" to "no")
+    }
+
 /**
  * Drives libmpv for the player screen.
  *
@@ -90,6 +105,7 @@ class MpvPlaybackEngine(
     private val renderFormat: String = "bgra",
 private val playbackBufferSize: String = "auto",
     private val gpuAcceleration: String = "off",
+    private val experimentalBuffering: Boolean = true,
     /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
     private var presenceInfo: DiscordPlaybackInfo? = null,
     private val onPresence: (Presence?) -> Unit = {},
@@ -447,7 +463,7 @@ private val playbackBufferSize: String = "auto",
     }
 
     private fun playbackOptions(headers: Map<String, String>, hwdec: String): List<Pair<String, String>> {
-        val options = defaultPlayerOptions()
+        val options = bufferedPlayerOptions(experimentalBuffering)
         return withHwdec(options, hwdec).toMutableList().apply {
             // Captions are drawn into the rendered frame, so they follow these options too.
             add("sub-visibility" to "yes")

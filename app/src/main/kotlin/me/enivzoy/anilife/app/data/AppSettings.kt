@@ -120,6 +120,15 @@ data class AppSettings(
     val captionAlignment: String = "center",
     val captionPreset: String = "classic",
     val keyBindings: Map<PlayerAction, Key> = DefaultPlayerKeyBindings,
+    val expDebouncedSearch: Boolean = true,
+    val expImageCaching: Boolean = true,
+    val expAsyncFetching: Boolean = false,
+    val expPagination: Boolean = false,
+    val expFadeTransitions: Boolean = true,
+    val expHardwareScrolling: Boolean = true,
+    val expMpvBuffering: Boolean = true,
+    val expSmartDownloads: Boolean = false,
+    val expSmartDownloadsStartAfter: Int = 2,
 ) {
     val subtitleAppearance: SubtitleAppearance
         get() = SubtitleAppearance(
@@ -214,6 +223,16 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             captionAlignment = properties.getProperty("captionAlignment", "center"),
             captionPreset = properties.getProperty("captionPreset", "classic"),
             keyBindings = parsePlayerKeyBindings(properties.getProperty("playerKeyBindings")),
+            expDebouncedSearch = properties.getProperty("expDebouncedSearch", "true").toBooleanStrictOrNull() ?: true,
+            expImageCaching = properties.getProperty("expImageCaching", "true").toBooleanStrictOrNull() ?: true,
+            expAsyncFetching = properties.getProperty("expAsyncFetching", "false").toBooleanStrictOrNull() ?: false,
+            expPagination = properties.getProperty("expPagination", "false").toBooleanStrictOrNull() ?: false,
+            expFadeTransitions = properties.getProperty("expFadeTransitions", "true").toBooleanStrictOrNull() ?: true,
+            expHardwareScrolling = properties.getProperty("expHardwareScrolling", "true").toBooleanStrictOrNull() ?: true,
+            expMpvBuffering = properties.getProperty("expMpvBuffering", "true").toBooleanStrictOrNull() ?: true,
+            expSmartDownloads = properties.getProperty("expSmartDownloads", "false").toBooleanStrictOrNull() ?: false,
+            expSmartDownloadsStartAfter = properties.getProperty("expSmartDownloadsStartAfter", "2")
+                .toIntOrNull()?.coerceIn(0, 3) ?: 2,
         ).validated()
     }
 
@@ -279,6 +298,15 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("captionAlignment", settings.captionAlignment)
             setProperty("captionPreset", settings.captionPreset)
             setProperty("playerKeyBindings", serializePlayerKeyBindings(settings.keyBindings))
+            setProperty("expDebouncedSearch", settings.expDebouncedSearch.toString())
+            setProperty("expImageCaching", settings.expImageCaching.toString())
+            setProperty("expAsyncFetching", settings.expAsyncFetching.toString())
+            setProperty("expPagination", settings.expPagination.toString())
+            setProperty("expFadeTransitions", settings.expFadeTransitions.toString())
+            setProperty("expHardwareScrolling", settings.expHardwareScrolling.toString())
+            setProperty("expMpvBuffering", settings.expMpvBuffering.toString())
+            setProperty("expSmartDownloads", settings.expSmartDownloads.toString())
+            setProperty("expSmartDownloadsStartAfter", settings.expSmartDownloadsStartAfter.toString())
         }
         file.outputStream().use { properties.store(it, null) }
     }
@@ -326,6 +354,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         captionAlignment = captionAlignment.takeIf { it in captionAlignments } ?: "center",
         captionPreset = captionPreset.takeIf { it in captionPresets } ?: "custom",
         keyBindings = keyBindings.withPlayerDefaults(),
+        expSmartDownloadsStartAfter = expSmartDownloadsStartAfter.coerceIn(0, 3),
     )
 
     companion object {

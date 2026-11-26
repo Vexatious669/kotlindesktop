@@ -1772,6 +1772,94 @@ private fun AppSettingsPage(
             SettingsSwitch(settings.playIntro) { enabled -> onSettingsChange { it.copy(playIntro = enabled) } }
         }
     }
+
+    Spacer(Modifier.height(18.dp))
+    Text(
+        "Experimental",
+        color = AniLifeColors.Destructive,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    Box(
+        Modifier.fillMaxWidth()
+            .padding(top = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AniLifeColors.Destructive.copy(alpha = 0.10f))
+            .border(1.dp, AniLifeColors.Destructive.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+    ) {
+        Text(
+            "These features are unfinished and may change or break between releases. Turn them off if the app misbehaves.",
+            color = AniLifeColors.Destructive,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+        )
+    }
+    ExperimentalRow(
+        title = "Debounced search",
+        description = "Wait for a pause in typing before asking AniList, instead of searching on every keystroke.",
+        checked = settings.expDebouncedSearch,
+    ) { enabled -> onSettingsChange { it.copy(expDebouncedSearch = enabled) } }
+    ExperimentalRow(
+        title = "Disk image cache",
+        description = "Keep downloaded posters on disk so they reappear instantly on the next launch.",
+        checked = settings.expImageCaching,
+    ) { enabled -> onSettingsChange { it.copy(expImageCaching = enabled) } }
+    ExperimentalRow(
+        title = "Async fetching",
+        description = "Keep the previous results on screen while the next request is loading.",
+        checked = settings.expAsyncFetching,
+    ) { enabled -> onSettingsChange { it.copy(expAsyncFetching = enabled) } }
+    ExperimentalRow(
+        title = "Infinite pagination",
+        description = "Load additional search pages as you scroll toward the bottom.",
+        checked = settings.expPagination,
+    ) { enabled -> onSettingsChange { it.copy(expPagination = enabled) } }
+    ExperimentalRow(
+        title = "Screen fade transitions",
+        description = "Animate screen changes. Turn off for instant cuts and less GPU work.",
+        checked = settings.expFadeTransitions,
+    ) { enabled -> onSettingsChange { it.copy(expFadeTransitions = enabled) } }
+    ExperimentalRow(
+        title = "Stable scroll keys",
+        description = "Reuse list items by anime id while scrolling for smoother poster grids.",
+        checked = settings.expHardwareScrolling,
+    ) { enabled -> onSettingsChange { it.copy(expHardwareScrolling = enabled) } }
+    ExperimentalRow(
+        title = "Extended mpv buffering",
+        description = "Use a larger stream cache and automatic reconnect. Turn off on low-memory machines.",
+        checked = settings.expMpvBuffering,
+    ) { enabled -> onSettingsChange { it.copy(expMpvBuffering = enabled) } }
+    ExperimentalRow(
+        title = "Smart downloads",
+        description = "Queue the next episode at the halfway point and clean up older downloads as you move through a series.",
+        checked = settings.expSmartDownloads,
+    ) { enabled -> onSettingsChange { it.copy(expSmartDownloads = enabled) } }
+    if (settings.expSmartDownloads) {
+        SettingsRow(
+            "Delete old downloads after",
+            "How many episode changes pass before the episode you just left is removed. Set to 0 to keep every download.",
+        ) {
+            SettingsStepper(
+                value = settings.expSmartDownloadsStartAfter,
+                valueLabel = if (settings.expSmartDownloadsStartAfter == 0) "Never" else "${settings.expSmartDownloadsStartAfter} episodes",
+                range = 0..3,
+                step = 1,
+            ) { value -> onSettingsChange { it.copy(expSmartDownloadsStartAfter = value) } }
+        }
+    }
+}
+
+@Composable
+private fun ExperimentalRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    SettingsRow(title, description) {
+        SettingsSwitch(checked, onChange)
+    }
 }
 
 @Composable

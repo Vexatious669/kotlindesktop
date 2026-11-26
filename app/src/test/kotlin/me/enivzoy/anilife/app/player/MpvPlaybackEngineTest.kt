@@ -11,6 +11,17 @@ import kotlin.test.assertTrue
 class MpvPlaybackEngineTest {
 
     @Test
+    fun extendedBufferingCanBeTurnedOffWithoutLosingTheCacheOption() {
+        val extended = bufferedPlayerOptions(experimental = true).toMap()
+        assertEquals("120", extended["cache-secs"])
+        assertEquals("yes", extended["cache"])
+
+        val lightweight = bufferedPlayerOptions(experimental = false).toMap()
+        assertEquals("no", lightweight["cache"])
+        assertTrue(lightweight.keys.none { it in lightweightBufferKeys })
+    }
+
+    @Test
     fun subtitleAppearanceMapsToMpvOptions() {
         val fontFile = File("custom-fonts/Anime Font.ttf").absoluteFile
         val options = subtitleAppearanceOptions(

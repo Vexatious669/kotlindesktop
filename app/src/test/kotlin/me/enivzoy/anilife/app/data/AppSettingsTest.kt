@@ -309,5 +309,52 @@ class AppSettingsTest {
             root.toFile().deleteRecursively()
         }
     }
+
+    @Test
+    fun experimentalTogglesPersistAndTransitionsAreClamped() {
+        val root = Files.createTempDirectory("AniLife-settings-experimental")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val store = AppSettingsStore(file)
+            store.update {
+                it.copy(
+                    expDebouncedSearch = false,
+                    expImageCaching = false,
+                    expAsyncFetching = true,
+                    expPagination = true,
+                    expFadeTransitions = false,
+                    expHardwareScrolling = false,
+                    expMpvBuffering = false,
+                    expSmartDownloads = true,
+                    expSmartDownloadsStartAfter = 9,
+                )
+            }
+
+            val persisted = AppSettingsStore(file).settings.value
+            assertEquals(false, persisted.expDebouncedSearch)
+            assertEquals(false, persisted.expImageCaching)
+            assertEquals(true, persisted.expAsyncFetching)
+            assertEquals(true, persisted.expPagination)
+            assertEquals(false, persisted.expFadeTransitions)
+            assertEquals(false, persisted.expHardwareScrolling)
+            assertEquals(false, persisted.expMpvBuffering)
+            assertEquals(true, persisted.expSmartDownloads)
+            assertEquals(3, persisted.expSmartDownloadsStartAfter)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun experimentalDefaultsKeepTheExistingBehaviourEnabled() {
+        val settings = AppSettings()
+        assertTrue(settings.expDebouncedSearch)
+        assertTrue(settings.expImageCaching)
+        assertTrue(settings.expFadeTransitions)
+        assertTrue(settings.expHardwareScrolling)
+        assertTrue(settings.expMpvBuffering)
+        assertFalse(settings.expPagination)
+        assertFalse(settings.expSmartDownloads)
+    }
 }
 

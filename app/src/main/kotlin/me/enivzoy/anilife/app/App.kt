@@ -1,6 +1,9 @@
 package me.enivzoy.anilife.app
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,6 +56,8 @@ import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
 import me.enivzoy.anilife.app.data.DiscordPresenceManager
 import me.enivzoy.anilife.app.data.DownloadQueueManager
+import me.enivzoy.anilife.app.data.DirectMediaDownloader
+import me.enivzoy.anilife.app.data.DownloadStatus
 import me.enivzoy.anilife.app.data.ProviderCatalog
 import me.enivzoy.anilife.app.screens.BrowseScreen
 import me.enivzoy.anilife.app.screens.AnimeWatchScreen
@@ -81,11 +86,14 @@ import me.enivzoy.anilife.app.data.MpvBootstrap
 import me.enivzoy.anilife.app.data.NoticeStoreInstance
 import me.enivzoy.anilife.app.data.ReleaseNotifier
 import me.enivzoy.anilife.core.model.Update
+import me.enivzoy.anilife.core.model.AnimeCard
+import me.enivzoy.anilife.core.model.AnimeDetail
 import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
 import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
 import me.enivzoy.anilife.core.diagnostics.MemoryProfiler
 import io.github.oshai.kotlinlogging.KotlinLogging
 import me.enivzoy.anilife.app.ui.AniLifeColors
+import me.enivzoy.anilife.app.ui.RemoteImages
 import me.enivzoy.anilife.app.ui.AppSidebar
 import me.enivzoy.anilife.app.ui.appEnter
 import me.enivzoy.anilife.app.ui.liquidGlass
@@ -125,6 +133,10 @@ fun AniLifeApp(
     val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 4) }
     val settings by settingsStore.settings.collectAsState()
     val discordState by discordPresence.state.collectAsState()
+    val smartDownloaded = remember(repository) { mutableSetOf<String>() }
+    LaunchedEffect(settings.expImageCaching) {
+        RemoteImages.diskCacheEnabled = settings.expImageCaching
+    }
     val backStack = remember { mutableStateListOf<Screen>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var homeLoaded by remember { mutableStateOf(false) }
@@ -370,6 +382,64 @@ fun AniLifeApp(
         )
     }
 
+    fun smartDownloadNext(anime: AnimeDetail?, episode: Double, audio: String) {
+        if (!settings.expSmartDownloads || anime == null) return
+        val key = "${anime.id}:$episode"
+        if (key in smartDownloaded) return
+        val alreadyDownloaded = repository.localEpisodes.value.any { it.anime.id == anime.id && it.episode == episode }
+        val alreadyQueued = downloadQueue.jobs.value.any { job ->
+            job.anime?.id == anime.id && job.episode == episode &&
+                job.status != DownloadStatus.Failed && job.status != DownloadStatus.Cancelled
+        }
+        if (alreadyDownloaded || alreadyQueued) return
+        smartDownloaded += key
+        scope.launch {
+            try {
+                val titles = listOfNotNull(anime.title, anime.titleRomaji, anime.titleNative) + anime.synonyms
+                val sources = animeVideoProviders.sources(
+                    anilistId = anime.id,
+                    malId = anime.malId,
+                    titles = titles,
+                    episode = episode,
+                    dub = audio.equals("Dub", ignoreCase = true),
+                )
+                val source = sources.firstOrNull()
+                if (source == null) {
+                    smartDownloaded -= key
+                    return@launch
+                }
+                val root = settings.downloadDirectory?.takeIf(String::isNotBlank)?.let(java.nio.file.Path::of)
+                    ?: DirectMediaDownloader.defaultDownloadDirectory()
+                downloadQueue.enqueue(
+                    title = anime.title,
+                    episode = episode,
+                    url = source.url,
+                    audio = source.audio.lowercase(),
+                    downloadRoot = root,
+                    anime = anime.toCard(),
+                    headers = source.headers,
+                )
+            } catch (cancelled: CancellationException) {
+                smartDownloaded -= key
+                throw cancelled
+            } catch (_: Throwable) {
+                smartDownloaded -= key
+            }
+        }
+    }
+
+    fun deleteSmartDownload(anime: AnimeDetail?, episode: Double) {
+        if (!settings.expSmartDownloads || anime == null) return
+        if ("${anime.id}:$episode" !in smartDownloaded) return
+        val entry = repository.localEpisodes.value
+            .firstOrNull { it.anime.id == anime.id && it.episode == episode } ?: return
+        downloadQueue.jobs.value.firstOrNull { it.localEpisode?.path == entry.path }
+            ?.let { downloadQueue.remove(it.id) }
+        runCatching { Files.deleteIfExists(entry.path) }
+        repository.removeLocalEpisode(entry)
+        smartDownloaded -= "${anime.id}:$episode"
+    }
+
     var paletteOpen by remember { mutableStateOf(false) }
 
     Box(
@@ -415,7 +485,10 @@ fun AniLifeApp(
             val screenTransition = rememberAppScreenTransition()
             AnimatedContent(
                 targetState = screen,
-                transitionSpec = { screenTransition },
+                transitionSpec = {
+                    if (settings.expFadeTransitions) screenTransition
+                    else EnterTransition.None togetherWith ExitTransition.None
+                },
                 label = "screen",
             ) { target ->
                 Box(Modifier.fillMaxSize().appEnter()) {
@@ -438,7 +511,11 @@ fun AniLifeApp(
                         },
                         onContentReady = { homeLoaded = true },
                     )
-                    Screen.Browse -> BrowseScreen(repository = repository, onOpen = { navigateTo(Screen.Detail(it)) })
+                    Screen.Browse -> BrowseScreen(
+                        repository = repository,
+                        settings = settings,
+                        onOpen = { navigateTo(Screen.Detail(it)) },
+                    )
                     Screen.Schedule -> ScheduleScreen(repository = repository, onOpen = { navigateTo(Screen.Detail(it)) })
                     Screen.Library -> LibraryScreen(
                         repository = repository,
@@ -544,6 +621,10 @@ fun AniLifeApp(
                             val activeEpisode = target.episode
                             if (activeEpisode != null) scope.launch { resolvePlayerEpisode(target, activeEpisode, audio) }
                         },
+                        onSmartDownload = { nextEpisode ->
+                            smartDownloadNext(target.detail, nextEpisode, target.audioTrack)
+                        },
+                        onSmartDelete = { oldEpisode -> deleteSmartDownload(target.detail, oldEpisode) },
                         onEpisodeChange = { episode ->
                             if (target.detail != null) scope.launch { resolvePlayerEpisode(target, episode, target.audioTrack) }
                             else screen = target.copy(episode = episode, episodeTitle = target.episodeTitles[episode])
@@ -655,5 +736,26 @@ private fun shortUpdateFailureMessage(failure: Exception): String = when (failur
 
 private fun formatPlayerEpisode(number: Double): String =
     if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()
+
+private fun AnimeDetail.toCard() = AnimeCard(
+    id = id,
+    title = title,
+    titleRomaji = titleRomaji,
+    titleEnglish = titleEnglish,
+    titleNative = titleNative,
+    malId = malId,
+    cover = cover,
+    color = color,
+    banner = banner,
+    format = format,
+    status = status,
+    episodes = episodes,
+    score = score,
+    year = year,
+    season = season,
+    genres = genres,
+    nextAiring = nextAiring,
+    isAdult = isAdult,
+)
 
     
