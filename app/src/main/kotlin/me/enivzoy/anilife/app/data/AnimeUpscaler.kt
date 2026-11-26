@@ -50,6 +50,7 @@ class AnimeUpscaler {
                         tools.upscaler, "-i", frames.toString(), "-o", upscaled.toString(),
                         "-n", MODEL, "-s", MODEL_SCALE.toString(), "-f", "png",
                     ),
+                    workingDirectory = File(tools.upscaler).absoluteFile.parentFile,
                 ) {
                     val current = countFrames(upscaled)
                     report(0.15f + 0.75f * (current.toFloat() / total).coerceIn(0f, 1f))
@@ -188,12 +189,17 @@ class AnimeUpscaler {
         return rate.toString()
     }
 
-    private suspend fun run(command: List<String>, tick: (suspend () -> Unit)? = null) {
+    private suspend fun run(
+        command: List<String>,
+        workingDirectory: File? = null,
+        tick: (suspend () -> Unit)? = null,
+    ) {
         checkActive()
-        val process = ProcessBuilder(command)
+        val processBuilder = ProcessBuilder(command)
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .start()
+        workingDirectory?.let(processBuilder::directory)
+        val process = processBuilder.start()
         try {
             while (process.isAlive) {
                 checkActive()

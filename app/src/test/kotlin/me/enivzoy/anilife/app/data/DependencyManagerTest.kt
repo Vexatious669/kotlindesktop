@@ -57,6 +57,48 @@ class DependencyManagerTest {
     }
 
     @Test
+    fun librarySearchReturnsNullWhenDependencyDirectoryDoesNotExist() {
+        val root = Files.createTempDirectory("anilife-missing-mpv-")
+        try {
+            assertEquals(null, findLibrary(root.resolve("runtime/mpv"), "libmpv-2.dll"))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun discoversPathExecutablesAndRequiresCompleteFfmpegAndUpscalerFiles() {
+        val root = Files.createTempDirectory("anilife-external-dependencies-")
+        try {
+            val ffmpeg = Files.createDirectory(root.resolve("ffmpeg"))
+            Files.writeString(ffmpeg.resolve("ffmpeg.exe"), "ffmpeg")
+            assertEquals(null, findFfmpegDirectory(ffmpeg.toString()))
+            Files.writeString(ffmpeg.resolve("ffprobe.exe"), "ffprobe")
+            assertEquals(ffmpeg, findFfmpegDirectory(ffmpeg.toString()))
+
+            val upscaler = Files.createDirectory(root.resolve("upscaler"))
+            Files.writeString(upscaler.resolve("realesrgan-ncnn-vulkan.exe"), "upscaler")
+            assertEquals(null, findUpscalerDirectory(upscaler.toString()))
+            val models = Files.createDirectory(upscaler.resolve("models"))
+            Files.writeString(models.resolve("realesr-animevideov3-x4.param"), "param")
+            Files.writeString(models.resolve("realesr-animevideov3-x4.bin"), "model")
+            assertEquals(upscaler, findUpscalerDirectory(upscaler.toString()))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun acceptsOnlySupportedJavaVersionAndArchitecture() {
+        assertTrue(supportsJavaRuntime("""java.specification.version = 21
+os.arch = amd64"""))
+        assertTrue(!supportsJavaRuntime("""java.specification.version = 17
+os.arch = amd64"""))
+        assertTrue(!supportsJavaRuntime("""java.specification.version = 25
+os.arch = x86"""))
+    }
+
+    @Test
     fun usesOfficialDependencyEndpoints() {
         assertEquals(
             "https://api.adoptium.net/v3/assets/latest/25/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse",

@@ -39,6 +39,7 @@ import me.enivzoy.anilife.app.data.SavedWindow
 import me.enivzoy.anilife.app.data.SingleInstance
 import me.enivzoy.anilife.app.data.WindowStateStore
 import me.enivzoy.anilife.app.data.dependencyDirectory
+import me.enivzoy.anilife.app.data.findJavaRuntime
 import me.enivzoy.anilife.app.data.legacyDependencyDirectory
 import me.enivzoy.anilife.app.data.migrateLegacyDependencyDirectory
 import me.enivzoy.anilife.app.data.restoreWindowBounds
@@ -280,9 +281,7 @@ private fun installFatalExceptionHandler() {
 private fun relaunchWithSetupJre(): Boolean {
     if (System.getProperty("AniLife.usingSetupJre") == "true") return false
     val launcher = System.getProperty("jpackage.app-path") ?: return false
-    val directory = dependencyDirectory()
-    val java = File(directory, "jre/bin/java.exe")
-    if (!File(directory, "use-jre").isFile || !java.isFile) return false
+    val java = findJavaRuntime(dependencyDirectory())?.toFile() ?: return false
     val classpath = System.getProperty("java.class.path")?.takeIf(String::isNotBlank) ?: return false
     val appDir = File(launcher).parentFile.resolve("app")
     val forwarded = forwardedJvmProperties(System.getProperties())

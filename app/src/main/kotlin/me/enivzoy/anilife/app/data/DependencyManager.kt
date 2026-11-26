@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import me.enivzoy.anilife.mpv.Mpv
 import net.sf.sevenzipjbinding.ExtractOperationResult
 import net.sf.sevenzipjbinding.SevenZip
 import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
@@ -27,6 +28,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.DigestInputStream
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 import kotlin.coroutines.coroutineContext
 
@@ -52,6 +54,7 @@ data class DependencyState(
     val totalBytes: Long = 0L,
     val speedBps: Long = 0L,
     val error: String? = null,
+    val source: String? = null,
 )
 
 internal data class DependencySource(
@@ -94,6 +97,77 @@ internal fun migrateLegacyDependencyDirectory(legacyDirectory: File, runtimeDire
         val source = File(legacyDirectory, name).toPath()
         val target = File(runtimeDirectory, name).toPath()
         if (Files.exists(source) && !Files.exists(target)) Files.move(source, target)
+    }
+}
+
+internal fun findLibrary(root: Path, name: String): Path? {
+    if (!Files.isDirectory(root)) return null
+    return Files.walk(root).use { paths ->
+        paths.filter { it.fileName.toString().equals(name, ignoreCase = true) }.findFirst().orElse(null)
+    }
+}
+
+internal fun findExecutableOnPath(name: String, pathValue: String?): Path? {
+    val executableNames = if (name.endsWith(".exe", ignoreCase = true)) listOf(name) else listOf("$name.exe", name)
+    return pathValue.orEmpty().split(File.pathSeparator)
+        .asSequence()
+        .filter(String::isNotBlank)
+        .flatMap { directory -> executableNames.asSequence().map { File(directory, it).toPath().toAbsolutePath() } }
+        .firstOrNull(Files::isRegularFile)
+}
+
+internal fun findJavaRuntime(localDirectory: File): Path? {
+    val managed = localDirectory.toPath().resolve("jre/bin/java.exe")
+    if (isCompatibleJavaRuntime(managed)) return managed
+
+    val javaHome = System.getenv("JAVA_HOME")?.takeIf(String::isNotBlank)?.let { File(it, "bin/java.exe").toPath() }
+    val candidates = listOfNotNull(javaHome, findExecutableOnPath("java.exe", System.getenv("PATH")))
+    return candidates.firstOrNull(::isCompatibleJavaRuntime)
+}
+
+internal fun isCompatibleJavaRuntime(executable: Path): Boolean {
+    if (!Files.isRegularFile(executable)) return false
+    val output = kotlin.runCatching {
+        val temporary = Files.createTempFile("anilife-java-check-", ".txt")
+        try {
+            val process = ProcessBuilder(executable.toString(), "-XshowSettings:properties", "-version")
+                .redirectErrorStream(true)
+                .redirectOutput(temporary.toFile())
+                .start()
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                return false
+            }
+            if (process.exitValue() != 0) return false
+            Files.readString(temporary)
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }.getOrNull() ?: return false
+    return supportsJavaRuntime(output)
+}
+
+internal fun supportsJavaRuntime(output: String): Boolean {
+    val version = Regex("(?m)^\\s*java.specification.version\\s*=\\s*(\\d+)").find(output)
+        ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return false
+    val architecture = Regex("(?m)^\\s*os.arch\\s*=\\s*([^\\s]+)").find(output)
+        ?.groupValues?.getOrNull(1).orEmpty()
+    return version >= 21 && architecture in setOf("amd64", "x86_64")
+}
+
+internal fun findFfmpegDirectory(pathValue: String?): Path? {
+    val ffmpeg = findExecutableOnPath("ffmpeg", pathValue) ?: return null
+    val directory = ffmpeg.parent ?: return null
+    return directory.takeIf { Files.isRegularFile(it.resolve("ffprobe.exe")) }
+}
+
+internal fun findUpscalerDirectory(pathValue: String?): Path? {
+    val executable = findExecutableOnPath("realesrgan-ncnn-vulkan", pathValue) ?: return null
+    val directory = executable.parent ?: return null
+    val models = directory.resolve("models")
+    return directory.takeIf {
+        Files.isRegularFile(models.resolve("realesr-animevideov3-x4.param")) &&
+            Files.isRegularFile(models.resolve("realesr-animevideov3-x4.bin"))
     }
 }
 
@@ -150,6 +224,8 @@ class DependencyManager(
 
     private var installJob: Job? = null
     private val jobs = mutableMapOf<Dependency, Job>()
+    private val selectedLocations = mutableMapOf<Dependency, Path>()
+    private val externalSources = mutableMapOf<Dependency, String>()
     private var callback: (Dependency, Float) -> Unit = { _, _ -> }
 
     val installDir: Path = localDir.toPath()
@@ -179,9 +255,24 @@ class DependencyManager(
     fun retry(dependency: Dependency) {
         if (jobs[dependency]?.isActive == true) return
         jobs[dependency] = scope.launch {
-            runCatching { install(dependency, callback) }
-                .onSuccess { configurePaths() }
-                .onFailure { error -> fail(dependency, error) }
+            runCatching {
+                val location = resolveExisting(dependency)
+                if (location == null) {
+                    install(dependency, callback)
+                    selectedLocations[dependency] = managedDirectory(dependency)
+                } else {
+                    selectedLocations[dependency] = location
+                    state(dependency) {
+                        copy(
+                            status = DependencyStatus.Installed,
+                            progress = 1f,
+                            error = null,
+                            source = externalSources[dependency],
+                        )
+                    }
+                }
+                configurePaths()
+            }.onFailure { error -> fail(dependency, error) }
         }
     }
 
@@ -196,10 +287,16 @@ class DependencyManager(
         }
         return runCatching {
             Dependency.entries.forEach { dependency ->
-                if (isInstalled(dependency)) {
-                    state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f, error = null) }
+                val location = resolveExisting(dependency)
+                if (location != null) {
+                    selectedLocations[dependency] = location
+                    val source = externalSources[dependency]
+                    state(dependency) {
+                        copy(status = DependencyStatus.Installed, progress = 1f, error = null, source = source)
+                    }
                 } else {
                     install(dependency, onProgress)
+                    selectedLocations[dependency] = managedDirectory(dependency)
                 }
             }
             configurePaths()
@@ -207,13 +304,55 @@ class DependencyManager(
     }
 
     fun configurePaths() {
-        System.setProperty("AniLife.ffmpeg.dir", ffmpegDir.toString())
-        System.setProperty("AniLife.jre.home", jreDir.toString())
-        System.setProperty("AniLife.upscaler.dir", upscalerDir.toString())
-        findLibrary(mpvDir, "libmpv-2.dll")?.let { System.setProperty("AniLife.mpv.library", it.toString()) }
-        if (isWindows && isInstalled(Dependency.JRE)) {
+        val jre = selectedLocations[Dependency.JRE] ?: jreDir
+        System.setProperty("AniLife.jre.home", jre.toString())
+        System.setProperty("AniLife.jre.java", jre.resolve("bin/java.exe").toString())
+        System.setProperty("AniLife.ffmpeg.dir", selectedLocations[Dependency.FFMPEG]?.toString() ?: ffmpegDir.toString())
+        System.setProperty("AniLife.upscaler.dir", selectedLocations[Dependency.UPSCALER]?.toString() ?: upscalerDir.toString())
+        selectedLocations[Dependency.MPV]?.resolve("libmpv-2.dll")?.takeIf(Files::isRegularFile)?.let {
+            System.setProperty("AniLife.mpv.library", it.toString())
+        } ?: findLibrary(mpvDir, "libmpv-2.dll")?.let { System.setProperty("AniLife.mpv.library", it.toString()) }
+        if (isWindows && selectedLocations[Dependency.JRE] == jreDir && isInstalled(Dependency.JRE)) {
             installDir.resolve("use-jre").toFile().writeText("1")
         }
+    }
+
+    private fun resolveExisting(dependency: Dependency): Path? {
+        if (isInstalled(dependency)) {
+            externalSources.remove(dependency)
+            return managedDirectory(dependency)
+        }
+        externalSources.remove(dependency)
+        val external = findExternal(dependency) ?: return null
+        externalSources[dependency] = external.second
+        return external.first
+    }
+
+    private fun findExternal(dependency: Dependency): Pair<Path, String>? {
+        if (!isWindows) return null
+        val path = System.getenv("PATH")
+        return when (dependency) {
+            Dependency.JRE -> findJavaRuntime(localDir)?.let { it.parent.parent to "Using existing Java runtime" }
+            Dependency.MPV -> {
+                val explicit = System.getProperty("AniLife.mpv.library")
+                    ?: System.getenv("ANILIFE_MPV_LIBRARY")
+                val candidates = listOfNotNull(
+                    explicit?.takeIf(String::isNotBlank)?.let { Path.of(it) },
+                    findExecutableOnPath("libmpv-2.dll", path),
+                    Mpv.defaultLibraryPath()?.let { Path.of(it) },
+                )
+                candidates.firstOrNull(Files::isRegularFile)?.let { it.toAbsolutePath().parent to "Using existing libmpv" }
+            }
+            Dependency.FFMPEG -> findFfmpegDirectory(path)?.let { it to "Using ffmpeg and ffprobe from PATH" }
+            Dependency.UPSCALER -> findUpscalerDirectory(path)?.let { it to "Using Real-ESRGAN and its models from PATH" }
+        }
+    }
+
+    private fun managedDirectory(dependency: Dependency): Path = when (dependency) {
+        Dependency.JRE -> jreDir
+        Dependency.MPV -> mpvDir
+        Dependency.FFMPEG -> ffmpegDir
+        Dependency.UPSCALER -> upscalerDir
     }
 
     private fun isInstalled(dependency: Dependency): Boolean {
@@ -234,7 +373,7 @@ class DependencyManager(
 
     private suspend fun install(dependency: Dependency, onProgress: (Dependency, Float) -> Unit) {
         state(dependency) {
-            copy(status = DependencyStatus.Downloading, progress = 0f, error = null, bytes = 0L, totalBytes = 0L)
+            copy(status = DependencyStatus.Downloading, progress = 0f, error = null, source = null, bytes = 0L, totalBytes = 0L)
         }
         val source = resolveSource(dependency)
         val archive = Files.createTempFile("anilife-${dependency.name.lowercase()}-", archiveSuffix(source.url))
@@ -251,7 +390,7 @@ class DependencyManager(
             extract(archive, target, dependency)
             installDir.resolve("${dependency.name.lowercase()}.installed").toFile()
                 .writeText("${source.version}|${source.sha256}")
-            state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f) }
+            state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f, source = null) }
         } catch (error: Throwable) {
             fail(dependency, error)
             throw error
@@ -353,10 +492,6 @@ class DependencyManager(
         val name = url.substringBefore('?').substringAfterLast('/')
         val extension = name.substringAfterLast('.', "").lowercase()
         return if (extension == "7z" || extension == "zip") ".$extension" else ".zip"
-    }
-
-    private fun findLibrary(root: Path, name: String): Path? = Files.walk(root).use { paths ->
-        paths.filter { it.fileName.toString().equals(name, ignoreCase = true) }.findFirst().orElse(null)
     }
 
     private fun update(dependency: Dependency, change: DependencyState.() -> DependencyState) {

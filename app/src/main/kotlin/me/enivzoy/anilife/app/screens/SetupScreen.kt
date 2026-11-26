@@ -141,7 +141,7 @@ private fun DependencyCard(state: DependencyState, onRetry: () -> Unit) {
         ).joinToString(" · ").ifBlank { "Downloading…" }
         DependencyStatus.Verifying -> "Verifying checksum"
         DependencyStatus.Extracting -> "Installing"
-        DependencyStatus.Installed -> "Ready"
+        DependencyStatus.Installed -> state.source ?: "Ready"
         DependencyStatus.Failed -> state.error ?: "Setup failed"
     }
 
