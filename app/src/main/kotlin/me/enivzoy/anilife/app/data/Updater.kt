@@ -74,14 +74,35 @@ internal fun redactForLog(value: String): String {
     }
 }
 
-internal fun installCommand(installer: Path, msiLog: Path): List<String> =
+internal fun installCommand(installer: Path, msiLog: Path): String =
     if (installer.fileName.toString().endsWith(".msi", ignoreCase = true)) {
-        listOf("msiexec.exe", "/i", installer.toString(), "/qn", "/norestart", "/L*v", msiLog.toString())
+        "msiexec.exe /i ${cmdQuote(installer.toString())} /passive /norestart /L*V ${cmdQuote(msiLog.toString())}"
     } else {
-        listOf(installer.toString(), "/quiet", "/norestart")
+        "${cmdQuote(installer.toString())} /quiet /norestart"
     }
 
 private fun cmdQuote(value: String): String = "\"${value.replace("\"", "\"\"")}\""
+
+internal fun restartCommand(executable: String, arguments: List<String>): String =
+    (listOf(executable) + arguments).joinToString(" ") { cmdQuote(it) }
+
+internal fun windowsInstallScript(
+    appPid: Long,
+    installer: Path,
+    msiLog: Path,
+    marker: Path,
+    appCommand: String,
+): List<String> = buildList {
+    add("@echo off")
+    add("setlocal")
+    add("powershell.exe -NoProfile -WindowStyle Hidden -Command \"Wait-Process -Id $appPid -ErrorAction SilentlyContinue\"")
+    add(installCommand(installer, msiLog))
+    add("set CODE=%ERRORLEVEL%")
+    add("echo %CODE%>${cmdQuote(marker.toString())}")
+    add("if \"%CODE%\"==\"$INSTALL_SUCCESS\" start \"\" $appCommand")
+    add("if \"%CODE%\"==\"$INSTALL_RESTART_REQUIRED\" start \"\" $appCommand")
+    add("endlocal")
+}
 
 private fun rateLimitMessage(reset: String?): String {
     val retryAt = reset?.toLongOrNull()
@@ -224,28 +245,26 @@ class Updater(
         val logs = DiagnosticsPaths.logs
         Files.createDirectories(logs)
         Files.createDirectories(updatesDirectory())
+        val stagedInstaller = installer.toAbsolutePath()
+        if (!Files.isRegularFile(stagedInstaller)) {
+            throw UpdateException("downloaded installer is missing: ${redactForLog(stagedInstaller.toString())}")
+        }
         val msiLog = logs.resolve("updater-msi.log")
         val marker = logs.resolve("updater-result.txt")
-        val command = installCommand(installer, msiLog)
-        val appPath = ProcessHandle.current().info().command().orElse(null)
-        val helper = updatesDirectory().resolve("run-updater.cmd")
-        val lines = buildList {
-            add("@echo off")
-            add("setlocal")
-            add(command.joinToString(" ") { cmdQuote(it) })
-            add("set CODE=%ERRORLEVEL%")
-            add("echo %CODE%>${cmdQuote(marker.toString())}")
-            if (appPath != null) {
-                add("if \"%CODE%\"==\"$INSTALL_SUCCESS\" start \"\" ${cmdQuote(appPath)}")
-                add("if \"%CODE%\"==\"$INSTALL_RESTART_REQUIRED\" start \"\" ${cmdQuote(appPath)}")
-            }
-            add("endlocal")
+        val command = installCommand(stagedInstaller, msiLog)
+        val processInfo = ProcessHandle.current().info()
+        val appPath = processInfo.command().orElseThrow {
+            UpdateException("could not determine the AniLife executable to restart")
         }
+        val appCommand = restartCommand(appPath, processInfo.arguments().orElse(emptyArray()).toList())
+        val appPid = ProcessHandle.current().pid()
+        val helper = updatesDirectory().resolve("run-updater.cmd")
+        val lines = windowsInstallScript(appPid, stagedInstaller, msiLog, marker, appCommand)
         Files.write(helper, lines, StandardCharsets.UTF_8)
-        logger.info { "install command=${command.joinToString(" ") { redactForLog(it) }}" }
+        logger.info { "install command=${redactForLog(command)}" }
         logger.info {
             "install helper launched path=${redactForLog(helper.toString())} " +
-                "app=${appPath?.let(::redactForLog) ?: "n/a"}"
+                "app=${redactForLog(appPath)} pid=$appPid"
         }
         ProcessBuilder("cmd.exe", "/c", "start", "\"\"", "/b", helper.toString()).start()
     }
@@ -338,7 +357,7 @@ class Updater(
             val base = System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }
                 ?.let { Path.of(it) }
                 ?: Path.of(System.getProperty("user.home"), ".local", "share")
-            return base.resolve("AniLife").resolve(UPDATES_DIRECTORY)
+            return base.resolve("AniLifeUpdater").resolve(UPDATES_DIRECTORY)
         }
 
         fun parseVersion(version: String): List<Int> =
