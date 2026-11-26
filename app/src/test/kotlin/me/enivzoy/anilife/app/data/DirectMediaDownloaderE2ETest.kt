@@ -26,7 +26,7 @@ class DirectMediaDownloaderE2ETest {
 
     @BeforeTest
     fun start() {
-        val ffmpeg = locateFfmpeg() ?: return
+        val ffmpeg = locateFfmpeg()
         assumeTrue(ffmpeg != null, "ffmpeg is required for the end-to-end download test")
         System.setProperty("AniLife.ffmpeg.dir", ffmpeg!!.parentFile.absolutePath)
 

@@ -51,6 +51,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
+import me.enivzoy.anilife.app.data.AutoDetectService
+import me.enivzoy.anilife.app.data.asAutoDetectLibrary
 import me.enivzoy.anilife.app.data.DiscordOAuth
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
@@ -131,6 +133,12 @@ fun AniLifeApp(
     val availableUpdate by updater.update.collectAsState()
     val downloadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 4) }
+    val autoDetect = remember(repository) {
+        AutoDetectService(library = repository.asAutoDetectLibrary(), scope = downloadScope)
+    }
+    val autoDetectScan by autoDetect.scan.collectAsState()
+    val autoDetectRunning by autoDetect.running.collectAsState()
+    val autoDetectStatus by autoDetect.status.collectAsState()
     val settings by settingsStore.settings.collectAsState()
     val discordState by discordPresence.state.collectAsState()
     val smartDownloaded = remember(repository) { mutableSetOf<String>() }
@@ -280,6 +288,24 @@ fun AniLifeApp(
     }
     DisposableEffect(discordPresence) {
         onDispose { discordPresence.close() }
+    }
+
+    LaunchedEffect(
+        settings.autoDetectEnabled,
+        settings.autoDetectDirectories,
+        settings.autoDetectSettleSeconds,
+        settings.audio,
+    ) {
+        autoDetect.configure(
+            directories = settings.autoDetectDirectories,
+            settleSeconds = settings.autoDetectSettleSeconds,
+            audio = settings.audio,
+            autoImport = true,
+        )
+        if (settings.autoDetectEnabled) autoDetect.start() else autoDetect.stop()
+    }
+    DisposableEffect(autoDetect) {
+        onDispose { autoDetect.stop() }
     }
 
     fun updateSettings(transform: (me.enivzoy.anilife.app.data.AppSettings) -> me.enivzoy.anilife.app.data.AppSettings) {
@@ -550,6 +576,10 @@ fun AniLifeApp(
                         discordState = discordState,
                         onSettingsChange = ::updateSettings,
                         onDiscordConnect = ::connectDiscord,
+                        autoDetect = autoDetect,
+                        autoDetectScan = autoDetectScan,
+                        autoDetectRunning = autoDetectRunning,
+                        autoDetectStatus = autoDetectStatus,
                         currentVersion = Updater.currentVersion(),
                         updateCheckStatus = updateCheckStatus,
                         checkingForUpdates = checkingForUpdates,

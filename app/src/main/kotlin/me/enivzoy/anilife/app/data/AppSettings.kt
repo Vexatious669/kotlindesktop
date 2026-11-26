@@ -129,6 +129,9 @@ data class AppSettings(
     val expMpvBuffering: Boolean = true,
     val expSmartDownloads: Boolean = false,
     val expSmartDownloadsStartAfter: Int = 2,
+    val autoDetectEnabled: Boolean = false,
+    val autoDetectDirectories: List<String> = emptyList(),
+    val autoDetectSettleSeconds: Int = 45,
 ) {
     val subtitleAppearance: SubtitleAppearance
         get() = SubtitleAppearance(
@@ -233,6 +236,10 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             expSmartDownloads = properties.getProperty("expSmartDownloads", "false").toBooleanStrictOrNull() ?: false,
             expSmartDownloadsStartAfter = properties.getProperty("expSmartDownloadsStartAfter", "2")
                 .toIntOrNull()?.coerceIn(0, 3) ?: 2,
+            autoDetectEnabled = properties.getProperty("autoDetectEnabled", "false").toBooleanStrictOrNull() ?: false,
+            autoDetectDirectories = parseDirectories(properties.getProperty("autoDetectDirectories")),
+            autoDetectSettleSeconds = properties.getProperty("autoDetectSettleSeconds", "45")
+                .toIntOrNull()?.coerceIn(10, 600) ?: 45,
         ).validated()
     }
 
@@ -307,6 +314,9 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("expMpvBuffering", settings.expMpvBuffering.toString())
             setProperty("expSmartDownloads", settings.expSmartDownloads.toString())
             setProperty("expSmartDownloadsStartAfter", settings.expSmartDownloadsStartAfter.toString())
+            setProperty("autoDetectEnabled", settings.autoDetectEnabled.toString())
+            setProperty("autoDetectDirectories", settings.autoDetectDirectories.joinToString("\n"))
+            setProperty("autoDetectSettleSeconds", settings.autoDetectSettleSeconds.toString())
         }
         file.outputStream().use { properties.store(it, null) }
     }
@@ -355,6 +365,12 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         captionPreset = captionPreset.takeIf { it in captionPresets } ?: "custom",
         keyBindings = keyBindings.withPlayerDefaults(),
         expSmartDownloadsStartAfter = expSmartDownloadsStartAfter.coerceIn(0, 3),
+        autoDetectDirectories = autoDetectDirectories
+            .map { it.trim() }
+            .filter(String::isNotBlank)
+            .mapNotNull { runCatching { Path.of(it).toAbsolutePath().normalize().toString() }.getOrNull() }
+            .distinct(),
+        autoDetectSettleSeconds = autoDetectSettleSeconds.coerceIn(10, 600),
     )
 
     companion object {
@@ -372,6 +388,11 @@ class AppSettingsStore(private val file: File = settingsFile()) {
         val sidebarShapes = listOf("rounded", "circle", "rectangular")
         private fun validColor(value: String, fallback: String): String =
             value.trim().uppercase().takeIf { it.matches(Regex("#[0-9A-F]{6}([0-9A-F]{2})?")) } ?: fallback
+
+        private fun parseDirectories(value: String?): List<String> =
+            value.orEmpty().split('\n')
+                .map(String::trim)
+                .filter(String::isNotBlank)
 
         private fun settingsFile(): File {
             val base = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)?.let(::File)

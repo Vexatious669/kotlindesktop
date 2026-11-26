@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Notifications
@@ -65,6 +66,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -105,6 +107,9 @@ import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AppBackup
 import me.enivzoy.anilife.app.data.AppSettingsStore
+import me.enivzoy.anilife.app.data.AutoDetectCandidate
+import me.enivzoy.anilife.app.data.AutoDetectScan
+import me.enivzoy.anilife.app.data.AutoDetectService
 import me.enivzoy.anilife.app.data.BackupDocument
 import me.enivzoy.anilife.app.data.DataTransfer
 import me.enivzoy.anilife.app.data.DirectMediaDownloader
@@ -140,7 +145,7 @@ import javax.swing.filechooser.FileNameExtensionFilter
  * real [AppSettings] field; rows for engines that are not ported yet stay out of the list.
  */
 @Composable
-fun SettingsScreen(
+internal fun SettingsScreen(
     settings: AppSettings,
     repository: AniListRepository,
     discordState: DiscordPresenceState,
@@ -150,6 +155,10 @@ fun SettingsScreen(
     updateCheckStatus: String? = null,
     checkingForUpdates: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
+    autoDetect: AutoDetectService? = null,
+    autoDetectScan: AutoDetectScan? = null,
+    autoDetectRunning: Boolean = false,
+    autoDetectStatus: String? = null,
     modifier: Modifier = Modifier,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Player) }
@@ -231,7 +240,14 @@ fun SettingsScreen(
                             shortcutMessage = shortcutMessage,
                         )
                         SettingsPage.Subtitles -> SubtitleSettings(settings, onSettingsChange)
-                        SettingsPage.Downloads -> DownloadSettings(settings, onSettingsChange)
+                        SettingsPage.Downloads -> DownloadSettings(
+                            settings = settings,
+                            onSettingsChange = onSettingsChange,
+                            autoDetect = autoDetect,
+                            autoDetectScan = autoDetectScan,
+                            autoDetectRunning = autoDetectRunning,
+                            autoDetectStatus = autoDetectStatus,
+                        )
                         SettingsPage.Servers -> ServerSettings()
                         SettingsPage.Accounts -> AccountSettings(
                             settings = settings,
@@ -323,6 +339,9 @@ SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebi
     SettingSearchEntry("Preferred caption language", SettingsPage.Subtitles, "captions subtitles language"),
     SettingSearchEntry("Caption size", SettingsPage.Subtitles, "captions subtitles text scale size"),
     SettingSearchEntry("Download folder", SettingsPage.Downloads, "directory location path storage"),
+    SettingSearchEntry("Auto-detect downloads", SettingsPage.Downloads, "watch folder monitor auto import scan detect library"),
+    SettingSearchEntry("Watched folders", SettingsPage.Downloads, "auto detect watch directory downloads inbox"),
+    SettingSearchEntry("Wait before importing", SettingsPage.Downloads, "settle delay finish complete quiet auto detect"),
     SettingSearchEntry("Video providers", SettingsPage.Servers, "providers servers streaming wasm extensions"),
     SettingSearchEntry("Discord Rich Presence", SettingsPage.Accounts, "discord activity status watching idle connect"),
     SettingSearchEntry("Discord Application ID", SettingsPage.Accounts, "discord developer application id"),
@@ -1165,7 +1184,14 @@ private fun captionColor(hex: String, opacity: Float): Color {
 }
 
 @Composable
-private fun DownloadSettings(settings: AppSettings, onSettingsChange: ((AppSettings) -> AppSettings) -> Unit) {
+private fun DownloadSettings(
+    settings: AppSettings,
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
+    autoDetect: AutoDetectService?,
+    autoDetectScan: AutoDetectScan?,
+    autoDetectRunning: Boolean,
+    autoDetectStatus: String?,
+) {
     val defaultDirectory = DirectMediaDownloader.defaultDownloadDirectory().toFile()
     val selectedDirectory = settings.downloadDirectory?.let(::File) ?: defaultDirectory
     SettingsRow(
@@ -1192,7 +1218,258 @@ private fun DownloadSettings(settings: AppSettings, onSettingsChange: ((AppSetti
             }
         }
     }
-    SettingsNote("Direct video URLs can be downloaded.")
+    SettingsNote("Direct video URLs can be downloaded to this folder.")
+    Spacer(Modifier.height(6.dp))
+    AutoDetectSettings(
+        settings = settings,
+        onSettingsChange = onSettingsChange,
+        autoDetect = autoDetect,
+        autoDetectScan = autoDetectScan,
+        autoDetectRunning = autoDetectRunning,
+        autoDetectStatus = autoDetectStatus,
+    )
+}
+
+@Composable
+private fun AutoDetectSettings(
+    settings: AppSettings,
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit,
+    autoDetect: AutoDetectService?,
+    autoDetectScan: AutoDetectScan?,
+    autoDetectRunning: Boolean,
+    autoDetectStatus: String?,
+) {
+    val scope = rememberCoroutineScope()
+    var message by remember { mutableStateOf<String?>(null) }
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(AniLifeColors.Card)
+            .border(1.dp, AniLifeColors.Border, RoundedCornerShape(16.dp))
+            .padding(horizontal = 18.dp, vertical = 6.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = AniLifeColors.Primary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "Auto-detect downloads",
+                    color = AniLifeColors.Foreground,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Watches your download folders and adds finished anime to your library. " +
+                        "Separate from the download folder above.",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+            }
+            SettingsSwitch(settings.autoDetectEnabled) { enabled ->
+                onSettingsChange { it.copy(autoDetectEnabled = enabled) }
+            }
+        }
+        settings.autoDetectDirectories.forEach { directory ->
+            SettingsRow("Watched folder", directory) {
+                SettingsButton("Remove") {
+                    onSettingsChange { current ->
+                        current.copy(autoDetectDirectories = current.autoDetectDirectories - directory)
+                    }
+                }
+            }
+        }
+        SettingsRow(
+            if (settings.autoDetectDirectories.isEmpty()) "No folders yet" else "Add another folder",
+            if (settings.autoDetectDirectories.isEmpty()) {
+                "Pick the folder your downloads land in, or the parent of your anime folders."
+            } else {
+                null
+            },
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsButton("Choose folder") {
+                    val chooser = javax.swing.JFileChooser().apply {
+                        fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY
+                        dialogTitle = "Choose a folder to watch for downloads"
+                    }
+                    if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                        val selected = chooser.selectedFile
+                        if (selected != null) {
+                            val path = selected.toPath().toAbsolutePath().normalize().toString()
+                            onSettingsChange { current ->
+                                current.copy(autoDetectDirectories = (current.autoDetectDirectories + path).distinct())
+                            }
+                        }
+                    }
+                }
+                if (settings.autoDetectEnabled && autoDetect != null) {
+                    SettingsButton("Scan now") {
+                        scope.launch {
+                            val result = runCatching { autoDetect.scanOnce() }
+                                .getOrElse { failure ->
+                                    message = failure.message?.takeIf(String::isNotBlank)
+                                        ?: "Couldn't scan the watched folders."
+                                    return@launch
+                                }
+                            message = if (result.detected.isEmpty()) {
+                                "No finished downloads found yet."
+                            } else {
+                                "${result.ready.size} added, ${result.needsConfirmation.size} need a choice."
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        SettingsRow(
+            "Wait before importing",
+            "A folder is only imported once its files stop changing.",
+        ) {
+            SettingsStepper(
+                value = settings.autoDetectSettleSeconds,
+                valueLabel = "${settings.autoDetectSettleSeconds}s",
+                range = 10..600,
+                step = 15,
+            ) { onSettingsChange { current -> current.copy(autoDetectSettleSeconds = it) } }
+        }
+        val status = when {
+            autoDetectStatus != null -> autoDetectStatus
+            autoDetectRunning -> "Watching for new downloads."
+            settings.autoDetectEnabled -> "Add a folder to start watching."
+            else -> "Off. Turn it on to watch folders in the background."
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                Modifier.size(8.dp).clip(CircleShape).background(
+                    when {
+                        autoDetectRunning -> AniLifeColors.Success
+                        settings.autoDetectEnabled -> AniLifeColors.Warning
+                        else -> AniLifeColors.MutedForeground
+                    },
+                ),
+            )
+            Text(status, color = AniLifeColors.MutedForeground, fontSize = 12.sp, lineHeight = 17.sp)
+        }
+        message?.let { text ->
+            Text(text, color = AniLifeColors.Primary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 10.dp))
+        }
+        val folders = autoDetectScan?.folders.orEmpty()
+        if (folders.isNotEmpty() && autoDetect != null) {
+            Text(
+                "Detected",
+                color = AniLifeColors.Foreground,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 6.dp, bottom = 6.dp),
+            )
+            folders.forEach { folder ->
+                AutoDetectRow(
+                    folder = folder,
+                    onImport = { index ->
+                        scope.launch {
+                            val outcome = runCatching { autoDetect.importChosen(folder, index) }.getOrNull()
+                            message = if (outcome != null && outcome.importedEpisodes > 0) {
+                                "Added ${outcome.importedEpisodes} episode(s) of ${folder.matches.getOrNull(index)?.anime?.title ?: folder.folderName}."
+                            } else {
+                                "Nothing to add for ${folder.folderName}."
+                            }
+                        }
+                    },
+                    onIgnore = { autoDetect.ignore(folder.path) },
+                )
+            }
+        }
+        val skipped = autoDetectScan?.skipped.orEmpty()
+        if (skipped.isNotEmpty()) {
+            Text(
+                skipped.take(3).joinToString("\n"),
+                color = AniLifeColors.MutedForeground,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+        }
+        val ignored = autoDetectScan?.ignored.orEmpty()
+        if (ignored.isNotEmpty() && autoDetect != null) {
+            SettingsRow(
+                "Ignored folders",
+                "${ignored.size} folder${if (ignored.size == 1) "" else "s"} will never be imported.",
+            ) {
+                SettingsButton("Restore all") { ignored.forEach(autoDetect::unignore) }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
+private fun AutoDetectRow(
+    folder: AutoDetectCandidate,
+    onImport: (Int) -> Unit,
+    onIgnore: () -> Unit,
+) {
+    var expanded by remember(folder.path) { mutableStateOf(false) }
+    var choice by remember(folder.path) { mutableIntStateOf(0) }
+    val selected = folder.matches.getOrNull(choice) ?: folder.bestMatch
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(AniLifeColors.SurfaceVariant)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                folder.folderName,
+                color = AniLifeColors.MutedForeground,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                selected?.anime?.title ?: "No match yet",
+                color = AniLifeColors.Foreground,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val detail = buildString {
+                append("${folder.episodes.size} episode${if (folder.episodes.size == 1) "" else "s"}")
+                if (selected != null) append(" · ${"%.0f".format(selected.score * 100)}% match")
+                if (!folder.settled) append(" · still downloading")
+                if (folder.needsConfirmation && folder.matches.size > 1) append(" · pick the right title")
+            }
+            Text(detail, color = AniLifeColors.MutedForeground, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (folder.matches.size > 1) {
+            Box {
+                SettingsButton("Choose") { expanded = true }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    folder.matches.forEachIndexed { index, match ->
+                        DropdownMenuItem(
+                            text = { Text("${match.anime.title} · ${"%.0f".format(match.score * 100)}%", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onClick = {
+                                choice = index
+                                expanded = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        SettingsButton("Add", enabled = folder.settled && selected != null) { onImport(choice) }
+        SettingsButton("Ignore") { onIgnore() }
+    }
 }
 
 @Composable
