@@ -35,7 +35,7 @@ internal class FrameStats {
     }
 }
 
-/** opt-in frame budget probe; inert unless ANILIFE_PERF=1 */
+// opt-in frame budget probe; inert unless ANILIFE_PERF=1
 @Composable
 fun FrameProbe() {
     if (System.getenv("ANILIFE_PERF") != "1") return
