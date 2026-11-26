@@ -16,7 +16,7 @@ object DiscordPresenceLog {
 
     private val formatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private val file: File by lazy {
-        val base = System.getProperty("localappdata")
+        val base = (System.getenv("LOCALAPPDATA") ?: System.getProperty("localappdata"))
             ?.takeIf(String::isNotBlank)
             ?.let { File(it, "AniLife") }
             ?: File(System.getProperty("user.home"), ".anilife")

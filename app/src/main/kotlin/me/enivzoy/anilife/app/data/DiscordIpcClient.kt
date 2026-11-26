@@ -264,15 +264,17 @@ class DiscordIpcClient(
 
     @Throws(IOException::class)
     private fun openPipe(): RandomAccessFile {
+        var last: IOException? = null
         for (index in 0..9) {
-            val path = "\\\\?\\pipe\\discord-ipc-$index"
+            // java.io rejects the \\?\ extended-length prefix for named pipes; \\.\ is the form it accepts.
+            val path = "\\\\.\\pipe\\discord-ipc-$index"
             try {
                 return RandomAccessFile(path, "rw")
-            } catch (ignored: IOException) {
-                // Try the next pipe index.
+            } catch (denied: IOException) {
+                last = denied
             }
         }
-        throw IOException("No Discord IPC pipe found")
+        throw IOException("No Discord IPC pipe found", last)
     }
 
     @Throws(IOException::class)
