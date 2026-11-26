@@ -376,14 +376,11 @@ internal object HlsSource {
 
     // a direct media url can still be a hidden manifest, so the first bytes are returned to decide
     private suspend fun probeDirect(url: String, headers: Map<String, String>): String {
-        val request = request(URI(url), headers)
-            .header("Range", "bytes=0-2047")
-            .GET()
-            .build()
-        val response = try {
-            client.send(request, HttpResponse.BodyHandlers.ofInputStream())
-        } catch (failure: Exception) {
-            throw SourceException(SourceFailure.Unreachable, cause = failure)
+        var response = sendRangeProbe(url, headers, ranged = true)
+        // a ranged request on a playlist is meaningless to some cdns, so retry plainly
+        if (response.statusCode() == 416) {
+            response.body().close()
+            response = sendRangeProbe(url, headers, ranged = false)
         }
         val type = response.headers().firstValue("Content-Type").orElse(null)
         val body = response.body().use { stream -> runCatching { readLimited(stream, 2048) }.getOrDefault(ByteArray(0)) }
@@ -399,6 +396,20 @@ internal object HlsSource {
             }
         }
         return body.toString(Charsets.UTF_8)
+    }
+
+    private suspend fun sendRangeProbe(
+        url: String,
+        headers: Map<String, String>,
+        ranged: Boolean,
+    ): HttpResponse<InputStream> {
+        val builder = request(URI(url), headers).GET()
+        if (ranged) builder.header("Range", "bytes=0-2047")
+        return try {
+            client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream())
+        } catch (failure: Exception) {
+            throw SourceException(SourceFailure.Unreachable, cause = failure)
+        }
     }
 
     private suspend fun fetchText(uri: URI, headers: Map<String, String>): Fetched {
