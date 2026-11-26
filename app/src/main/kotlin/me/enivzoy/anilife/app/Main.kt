@@ -30,6 +30,7 @@ import me.enivzoy.anilife.app.ui.AniLifeTheme
 import me.enivzoy.anilife.app.ui.GlassHost
 import me.enivzoy.anilife.app.ui.GlassShowcase
 import me.enivzoy.anilife.app.ui.ProvideHighRefresh
+import me.enivzoy.anilife.app.ui.FrameProbe
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DependencyManager
 import me.enivzoy.anilife.app.data.dependencyDirectory
@@ -82,6 +83,7 @@ fun main() {
         state = state,
         icon = icon,
     ) {
+        FrameProbe()
         LaunchedEffect(appSettings) {
             window.minimumSize = Dimension(800, 480)
             AniLifeColors.update(appSettings)
