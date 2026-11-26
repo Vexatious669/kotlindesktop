@@ -20,17 +20,58 @@ class UpdaterLoggingTest {
     fun installCommandUsesVerboseMsiLogAndQuietExe() {
         val root = Files.createTempDirectory("updater-command-test")
         try {
-            val msi = root.resolve("anilife.msi")
-            val exe = root.resolve("anilife.exe")
+            val msi = root.resolve("folder with spaces").resolve("anilife.msi")
+            val exe = root.resolve("folder with spaces").resolve("anilife.exe")
             val log = root.resolve("updater-msi.log")
             assertEquals(
-                listOf("msiexec.exe", "/i", msi.toString(), "/qn", "/norestart", "/L*v", log.toString()),
+                "msiexec.exe /i \"${msi}\" /passive /norestart /L*V \"${log}\"",
                 installCommand(msi, log),
             )
-            assertEquals(listOf(exe.toString(), "/quiet", "/norestart"), installCommand(exe, log))
+            assertEquals("\"${exe}\" /quiet /norestart", installCommand(exe, log))
         } finally {
             root.toFile().deleteRecursively()
         }
+    }
+
+    @Test
+    fun updateStagingDirectoryIsOutsideTheInstalledAppTree() {
+        val updates = Updater.updatesDirectory().normalize()
+        assertEquals("AniLifeUpdater", updates.parent.fileName.toString())
+        assertEquals("updates", updates.fileName.toString())
+    }
+
+    @Test
+    fun installScriptWaitsForAppBeforeShowingMsiProgressAndRestarting() {
+        val installer = Path.of("C:\\Users\\test\\AppData\\Local\\AniLifeUpdater\\updates\\anilife.msi")
+        val log = Path.of("C:\\Users\\test\\AppData\\Roaming\\AniLife\\logs\\updater-msi.log")
+        val marker = Path.of("C:\\Users\\test\\AppData\\Roaming\\AniLife\\logs\\updater-result.txt")
+        val script = windowsInstallScript(
+            appPid = 1234,
+            installer = installer,
+            msiLog = log,
+            marker = marker,
+            appCommand = restartCommand("C:\\Program Files\\AniLife\\AniLife.exe", emptyList()),
+        )
+
+        val waitIndex = script.indexOfFirst { it.contains("Wait-Process -Id 1234") }
+        val installIndex = script.indexOf(installCommand(installer, log))
+        val restartIndex = script.indexOfFirst { it.contains("start \"\" \"C:\\Program Files\\AniLife\\AniLife.exe\"") }
+
+        assertTrue(waitIndex in script.indices)
+        assertTrue(installIndex > waitIndex)
+        assertTrue(installCommand(installer, log).contains("/passive"))
+        assertTrue(restartIndex > installIndex)
+    }
+
+    @Test
+    fun restartCommandPreservesJavaArgumentsAndQuotesPaths() {
+        assertEquals(
+            "\"C:\\Program Files\\Java\\bin\\java.exe\" \"-Xmx2g\" \"-cp\" \"app classes\" \"me.enivzoy.anilife.app.MainKt\"",
+            restartCommand(
+                "C:\\Program Files\\Java\\bin\\java.exe",
+                listOf("-Xmx2g", "-cp", "app classes", "me.enivzoy.anilife.app.MainKt"),
+            ),
+        )
     }
 
     @Test

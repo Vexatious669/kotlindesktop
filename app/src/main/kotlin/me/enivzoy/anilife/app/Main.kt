@@ -41,8 +41,17 @@ import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.geom.AffineTransform
+import java.util.Properties
 
 private val logger = KotlinLogging.logger {}
+
+internal fun forwardedJvmProperties(properties: Properties): List<String> =
+    properties.stringPropertyNames()
+        .filter {
+            it.startsWith("compose.") || it.startsWith("jpackage.") ||
+                it == "file.encoding" || it == "skiko.library.path"
+        }
+        .map { "-D$it=${properties.getProperty(it)}" }
 
 /** Temporary hook for the development glass showcase; never enabled in normal runs. */
 private fun showcaseRequested(): Boolean =
@@ -212,9 +221,7 @@ private fun relaunchWithSetupJre(): Boolean {
     if (!File(directory, "use-jre").isFile || !java.isFile) return false
     val classpath = System.getProperty("java.class.path")?.takeIf(String::isNotBlank) ?: return false
     val appDir = File(launcher).parentFile.resolve("app")
-    val forwarded = System.getProperties().stringPropertyNames()
-        .filter { it.startsWith("compose.") || it.startsWith("jpackage.") || it == "file.encoding" }
-        .flatMap { listOf("-D$it=${System.getProperty(it)}") }
+    val forwarded = forwardedJvmProperties(System.getProperties())
     val command = buildList {
         add(java.absolutePath)
         add("-DAniLife.usingSetupJre=true")

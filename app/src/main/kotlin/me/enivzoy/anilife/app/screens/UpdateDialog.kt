@@ -97,7 +97,7 @@ fun UpdateDialog(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Installing update…",
+                            text = "AniLife will close. Windows will show installation progress and reopen the app when finished.",
                             color = AniLifeColors.MutedForeground,
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
