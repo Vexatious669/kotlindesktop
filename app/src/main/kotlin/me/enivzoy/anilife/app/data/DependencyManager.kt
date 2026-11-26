@@ -60,10 +60,41 @@ internal data class DependencySource(
     val version: String,
 )
 
-fun dependencyDirectory(): File {
-    val base = System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(::File)
-        ?: File(System.getProperty("user.home"), ".anilife")
+fun dependencyDirectory(): File = dependencyDirectory(
+    appDataDirectory = System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(::File),
+    userHome = File(System.getProperty("user.home")),
+)
+
+internal fun dependencyDirectory(appDataDirectory: File?, userHome: File): File =
+    if (appDataDirectory != null) {
+        File(File(appDataDirectory, "AniLife"), "runtime")
+    } else {
+        File(File(userHome, ".anilife"), "runtime")
+    }
+
+internal fun legacyDependencyDirectory(appDataDirectory: File?, userHome: File): File {
+    val base = appDataDirectory ?: File(userHome, ".anilife")
     return File(base, "bin")
+}
+
+internal fun migrateLegacyDependencyDirectory(legacyDirectory: File, runtimeDirectory: File) {
+    val dependencyNames = Dependency.entries.map { it.name.lowercase() }
+    val markerNames = dependencyNames.map { "$it.installed" } + "use-jre"
+    val hasLegacyData = dependencyNames.any { File(legacyDirectory, it).exists() } ||
+        markerNames.any { File(legacyDirectory, it).exists() }
+    if (!hasLegacyData) return
+
+    Files.createDirectories(runtimeDirectory.toPath())
+    dependencyNames.forEach { name ->
+        val source = File(legacyDirectory, name).toPath()
+        val target = File(runtimeDirectory, name).toPath()
+        if (Files.exists(source) && !Files.exists(target)) Files.move(source, target)
+    }
+    markerNames.forEach { name ->
+        val source = File(legacyDirectory, name).toPath()
+        val target = File(runtimeDirectory, name).toPath()
+        if (Files.exists(source) && !Files.exists(target)) Files.move(source, target)
+    }
 }
 
 internal fun releaseAssetPattern(dependency: Dependency): Regex = when (dependency) {

@@ -39,6 +39,8 @@ import me.enivzoy.anilife.app.data.SavedWindow
 import me.enivzoy.anilife.app.data.SingleInstance
 import me.enivzoy.anilife.app.data.WindowStateStore
 import me.enivzoy.anilife.app.data.dependencyDirectory
+import me.enivzoy.anilife.app.data.legacyDependencyDirectory
+import me.enivzoy.anilife.app.data.migrateLegacyDependencyDirectory
 import me.enivzoy.anilife.app.data.restoreWindowBounds
 import me.enivzoy.anilife.app.screens.SetupScreen
 import java.awt.Color
@@ -76,6 +78,13 @@ private fun skipSetup(): Boolean =
 fun main() {
     runCatching { DiagnosticsPaths.ensure() }
     installFatalExceptionHandler()
+    migrateLegacyDependencyDirectory(
+        legacyDependencyDirectory(
+            System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(::File),
+            File(System.getProperty("user.home")),
+        ),
+        dependencyDirectory(),
+    )
     if (relaunchWithSetupJre()) return
     val instance = if (System.getenv("ANILIFE_ALLOW_MULTIPLE") == "1") {
         null

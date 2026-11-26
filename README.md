@@ -31,7 +31,7 @@ The latest release is the stable build. The latest beta is the newest successful
 
 ## First launch
 
-AniLife needs libmpv. If it cannot find one, it downloads the latest 64-bit LGPL build of `libmpv-2.dll` from the mpv releases into `%USERPROFILE%\.anilife`. To use your own copy, start the app with `-DAniLife.mpv.library=<path to libmpv>`. Settings, then About, shows which library is loaded.
+AniLife installs its JRE and media dependencies under `%APPDATA%\AniLife\runtime`. It migrates dependencies from the previous `%APPDATA%\bin` location when present. To use your own libmpv copy, start the app with `-DAniLife.mpv.library=<path to libmpv>`. Settings, then About, shows which library is loaded.
 
 ## MyAnimeList sign-in
 
