@@ -109,6 +109,23 @@ os.arch = x86"""))
     }
 
     @Test
+    fun fetchTextUsesStandardJsonAcceptHeaderForNonGitHubMetadataApis() {
+        var acceptHeader: String? = null
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/metadata") { exchange ->
+            acceptHeader = exchange.requestHeaders.getFirst("Accept")
+            respond(exchange, 200, "{}")
+        }
+        server.start()
+        try {
+            fetchText("http://127.0.0.1:${server.address.port}/metadata")
+            assertEquals("application/json", acceptHeader)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun fetchTextFollowsRedirects() {
         val body = """{"tag_name":"latest","assets":[]}"""
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

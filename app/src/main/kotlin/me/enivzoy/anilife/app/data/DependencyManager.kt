@@ -201,8 +201,16 @@ internal fun openConnection(
     connectTimeout = connectMs
     readTimeout = readMs
     setRequestProperty("User-Agent", USER_AGENT)
-    setRequestProperty("Accept", if (api) "application/vnd.github+json" else "application/octet-stream")
-    if (api) setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+    val githubApi = api && URI(url).host.equals("api.github.com", ignoreCase = true)
+    setRequestProperty(
+        "Accept",
+        when {
+            !api -> "application/octet-stream"
+            githubApi -> "application/vnd.github+json"
+            else -> "application/json"
+        },
+    )
+    if (githubApi) setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
 }
 
 internal fun requireSuccess(connection: HttpURLConnection) {
