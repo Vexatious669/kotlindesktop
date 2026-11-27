@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import kotlin.test.Test
@@ -28,6 +29,42 @@ class DependencyManagerTest {
             System.clearProperty("AniLife.jre.home")
             System.clearProperty("AniLife.upscaler.dir")
             dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun storesDependenciesInAniLifeRuntimeDirectory() {
+        val root = Files.createTempDirectory("anilife-appdata-").toFile()
+        try {
+            val appData = File(root, "Roaming")
+            val userHome = File(root, "Home")
+
+            assertEquals(File(appData, "AniLife/runtime"), dependencyDirectory(appData, userHome))
+            assertEquals(File(userHome, ".anilife/runtime"), dependencyDirectory(null, userHome))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migratesOnlyKnownDependenciesFromLegacyBinDirectory() {
+        val root = Files.createTempDirectory("anilife-runtime-migration-")
+        try {
+            val legacy = root.resolve("bin")
+            val runtime = root.resolve("AniLife/runtime")
+            Files.createDirectories(legacy.resolve("mpv"))
+            Files.writeString(legacy.resolve("mpv/libmpv-2.dll"), "mpv")
+            Files.writeString(legacy.resolve("mpv.installed"), "version|sha256")
+            Files.writeString(legacy.resolve("unrelated.txt"), "leave in place")
+
+            migrateLegacyDependencyDirectory(legacy.toFile(), runtime.toFile())
+
+            assertTrue(Files.isRegularFile(runtime.resolve("mpv/libmpv-2.dll")))
+            assertTrue(Files.isRegularFile(runtime.resolve("mpv.installed")))
+            assertTrue(Files.isRegularFile(legacy.resolve("unrelated.txt")))
+            assertTrue(!Files.exists(legacy.resolve("mpv")))
+        } finally {
+            root.toFile().deleteRecursively()
         }
     }
 
