@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.data
 
 import me.enivzoy.anilife.core.diagnostics.ResourceTracker
+import me.enivzoy.anilife.mpv.Mpv
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -13,7 +14,21 @@ import java.time.Duration
 
 object MpvBootstrap {
     suspend fun ensure(onStatus: (String) -> Unit = {}): String? {
-        System.clearProperty("AniLife.mpv.library")
+        val override = System.getProperty("AniLife.mpv.library")?.takeIf(String::isNotBlank)
+        if (override != null) {
+            // A user-supplied -DAniLife.mpv.library must survive setup untouched.
+            if (File(override).isFile) {
+                onStatus("mpv ready")
+                return override
+            }
+            // Stale override from an uninstalled copy: drop it and keep looking.
+            System.clearProperty("AniLife.mpv.library")
+        }
+        Mpv.defaultLibraryPath()?.let { found ->
+            System.setProperty("AniLife.mpv.library", found)
+            onStatus("mpv ready")
+            return found
+        }
         if (!System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
             onStatus("libmpv not found")
             return null
