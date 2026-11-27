@@ -39,7 +39,6 @@ import me.enivzoy.anilife.app.data.SavedWindow
 import me.enivzoy.anilife.app.data.SingleInstance
 import me.enivzoy.anilife.app.data.WindowStateStore
 import me.enivzoy.anilife.app.data.dependencyDirectory
-import me.enivzoy.anilife.app.data.findJavaRuntime
 import me.enivzoy.anilife.app.data.legacyDependencyDirectory
 import me.enivzoy.anilife.app.data.migrateLegacyDependencyDirectory
 import me.enivzoy.anilife.app.data.restoreWindowBounds
@@ -62,7 +61,7 @@ internal fun forwardedJvmProperties(properties: Properties): List<String> =
     properties.stringPropertyNames()
         .filter {
             it.startsWith("compose.") || it.startsWith("jpackage.") ||
-                it == "file.encoding" || it == "skiko.library.path"
+                it == "file.encoding" || it == "skiko.library.path" || it == "AniLife.mpv.library"
         }
         .map { "-D$it=${properties.getProperty(it)}" }
 
@@ -71,7 +70,7 @@ private fun showcaseRequested(): Boolean =
     System.getProperty("anilife.glassShowcase") == "true" ||
         System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
 
-/** Skip the first-run dependency setup (for development when deps are already on PATH). */
+/** Skip dependency setup for development when the managed runtimes are already installed. */
 private fun skipSetup(): Boolean =
     System.getProperty("anilife.skipSetup") == "true" ||
         System.getenv("ANILIFE_SKIP_SETUP") == "1"
@@ -86,6 +85,9 @@ fun main() {
         ),
         dependencyDirectory(),
     )
+    File(dependencyDirectory(), "mpv/libmpv-2.dll").takeIf(File::isFile)?.let {
+        System.setProperty("AniLife.mpv.library", it.absolutePath)
+    }
     if (relaunchWithSetupJre()) return
     val instance = if (System.getenv("ANILIFE_ALLOW_MULTIPLE") == "1") {
         null
@@ -281,7 +283,9 @@ private fun installFatalExceptionHandler() {
 private fun relaunchWithSetupJre(): Boolean {
     if (System.getProperty("AniLife.usingSetupJre") == "true") return false
     val launcher = System.getProperty("jpackage.app-path") ?: return false
-    val java = findJavaRuntime(dependencyDirectory())?.toFile() ?: return false
+    val directory = dependencyDirectory()
+    val java = File(directory, "jre/bin/java.exe")
+    if (!File(directory, "use-jre").isFile || !java.isFile) return false
     val classpath = System.getProperty("java.class.path")?.takeIf(String::isNotBlank) ?: return false
     val appDir = File(launcher).parentFile.resolve("app")
     val forwarded = forwardedJvmProperties(System.getProperties())

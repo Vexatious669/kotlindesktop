@@ -29,7 +29,7 @@ class DependencyManagerTest {
     }
 
     @Test
-    fun migratesOnlyKnownDependenciesFromLegacyBinDirectory() {
+    fun migratesOnlyKnownDependenciesFromLegacyBinIntoManagedRuntime() {
         val root = Files.createTempDirectory("anilife-runtime-migration-")
         try {
             val legacy = root.resolve("bin")
@@ -45,6 +45,26 @@ class DependencyManagerTest {
             assertTrue(Files.isRegularFile(runtime.resolve("mpv.installed")))
             assertTrue(Files.isRegularFile(legacy.resolve("unrelated.txt")))
             assertTrue(!Files.exists(legacy.resolve("mpv")))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun keepsExistingManagedRuntimeInsteadOfReplacingItDuringMigration() {
+        val root = Files.createTempDirectory("anilife-runtime-migration-conflict-")
+        try {
+            val legacy = root.resolve("bin")
+            val runtime = root.resolve("AniLife/runtime")
+            Files.createDirectories(legacy.resolve("mpv"))
+            Files.createDirectories(runtime.resolve("mpv"))
+            Files.writeString(legacy.resolve("mpv/libmpv-2.dll"), "old")
+            Files.writeString(runtime.resolve("mpv/libmpv-2.dll"), "managed")
+
+            migrateLegacyDependencyDirectory(legacy.toFile(), runtime.toFile())
+
+            assertEquals("managed", Files.readString(runtime.resolve("mpv/libmpv-2.dll")))
+            assertEquals("old", Files.readString(legacy.resolve("mpv/libmpv-2.dll")))
         } finally {
             root.toFile().deleteRecursively()
         }
@@ -67,35 +87,19 @@ class DependencyManagerTest {
     }
 
     @Test
-    fun discoversPathExecutablesAndRequiresCompleteFfmpegAndUpscalerFiles() {
-        val root = Files.createTempDirectory("anilife-external-dependencies-")
+    fun librarySearchIsRestrictedToTheManagedRuntimeDirectory() {
+        val root = Files.createTempDirectory("anilife-managed-mpv-")
         try {
-            val ffmpeg = Files.createDirectory(root.resolve("ffmpeg"))
-            Files.writeString(ffmpeg.resolve("ffmpeg.exe"), "ffmpeg")
-            assertEquals(null, findFfmpegDirectory(ffmpeg.toString()))
-            Files.writeString(ffmpeg.resolve("ffprobe.exe"), "ffprobe")
-            assertEquals(ffmpeg, findFfmpegDirectory(ffmpeg.toString()))
+            val managed = Files.createDirectories(root.resolve("runtime/mpv"))
+            val external = Files.createDirectory(root.resolve("external"))
+            Files.writeString(external.resolve("libmpv-2.dll"), "external")
+            assertEquals(null, findLibrary(managed, "libmpv-2.dll"))
 
-            val upscaler = Files.createDirectory(root.resolve("upscaler"))
-            Files.writeString(upscaler.resolve("realesrgan-ncnn-vulkan.exe"), "upscaler")
-            assertEquals(null, findUpscalerDirectory(upscaler.toString()))
-            val models = Files.createDirectory(upscaler.resolve("models"))
-            Files.writeString(models.resolve("realesr-animevideov3-x4.param"), "param")
-            Files.writeString(models.resolve("realesr-animevideov3-x4.bin"), "model")
-            assertEquals(upscaler, findUpscalerDirectory(upscaler.toString()))
+            Files.writeString(managed.resolve("libmpv-2.dll"), "managed")
+            assertEquals(managed.resolve("libmpv-2.dll"), findLibrary(managed, "libmpv-2.dll"))
         } finally {
             root.toFile().deleteRecursively()
         }
-    }
-
-    @Test
-    fun acceptsOnlySupportedJavaVersionAndArchitecture() {
-        assertTrue(supportsJavaRuntime("""java.specification.version = 21
-os.arch = amd64"""))
-        assertTrue(!supportsJavaRuntime("""java.specification.version = 17
-os.arch = amd64"""))
-        assertTrue(!supportsJavaRuntime("""java.specification.version = 25
-os.arch = x86"""))
     }
 
     @Test
@@ -147,6 +151,19 @@ os.arch = x86"""))
     }
 
     @Test
+    fun networkErrorIncludesOperationHostAndTimeoutReason() {
+        val error = networkError(
+            "Fetching dependency metadata",
+            java.net.URI("https://api.example.test/releases"),
+            java.net.SocketTimeoutException("Read timed out"),
+        )
+
+        assertTrue(error.message.orEmpty().contains("Fetching dependency metadata"))
+        assertTrue(error.message.orEmpty().contains("api.example.test"))
+        assertTrue(error.message.orEmpty().contains("Read timed out"))
+    }
+
+    @Test
     fun fetchTextRejectsNonSuccessStatus() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val port = server.address.port
@@ -157,6 +174,8 @@ os.arch = x86"""))
         try {
             val error = assertFailsWith<IllegalStateException> { fetchText("http://127.0.0.1:$port/missing") }
             assertTrue(error.message.orEmpty().contains("404"))
+            assertTrue(error.message.orEmpty().contains("127.0.0.1"))
+            assertTrue(error.message.orEmpty().contains("not found"))
         } finally {
             server.stop(0)
         }

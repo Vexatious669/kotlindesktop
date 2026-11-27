@@ -31,7 +31,7 @@ The latest release is the stable build. The latest beta is the newest successful
 
 ## First launch
 
-AniLife reuses compatible Java runtimes found through `JAVA_HOME` or `PATH`, FFmpeg and Real-ESRGAN installations (including the required model files) found on `PATH`, and libmpv found through its configured path or `PATH`. Missing dependencies are downloaded under `%APPDATA%\AniLife\runtime`; dependencies from the previous `%APPDATA%\bin` location are migrated when present. A full uninstall removes the managed runtime, updater staging files, and `%LOCALAPPDATA%\AniLife` data (including settings, credentials, caches, and downloaded media). It keeps diagnostic logs under `%APPDATA%\AniLife\logs`; MSI upgrades retain the runtime and local data. To use your own libmpv copy, start the app with `-DAniLife.mpv.library=<path to libmpv>`. Settings, then About, shows which library is loaded.
+AniLife checks only its managed runtime under `%APPDATA%\AniLife\runtime`. It migrates its known dependencies and markers from the previous `%APPDATA%\bin` location into the managed runtime when present, then downloads any missing dependencies from the internet into that folder. It does not search `PATH`, `JAVA_HOME`, or other system locations. A full uninstall removes the managed runtime, updater staging files, and `%LOCALAPPDATA%\AniLife` data (including settings, credentials, caches, and downloaded media). It keeps diagnostic logs under `%APPDATA%\AniLife\logs`; MSI upgrades retain the runtime and local data.
 
 ## MyAnimeList sign-in
 

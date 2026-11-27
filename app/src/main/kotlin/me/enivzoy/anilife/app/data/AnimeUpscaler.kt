@@ -80,9 +80,9 @@ class AnimeUpscaler {
 
     private suspend fun prepareTools(onProgress: (Float) -> Unit): Tools {
         val ffmpeg = findTool("ffmpeg")
-            ?: error("ffmpeg wasn't found. Install ffmpeg or add it to PATH.")
+            ?: error("ffmpeg is missing from AniLife's managed runtime.")
         val ffprobe = findTool("ffprobe")
-            ?: error("ffprobe wasn't found. Install ffmpeg or add it to PATH.")
+            ?: error("ffprobe is missing from AniLife's managed runtime.")
         val upscaler = findUpscaler(onProgress)
         return Tools(ffmpeg, ffprobe, upscaler)
     }
@@ -93,22 +93,12 @@ class AnimeUpscaler {
         Files.createDirectories(directory)
         val executable = if (isWindows) "$UPSCALER.exe" else UPSCALER
         val installed = directory.resolve(executable)
-
-        if (Files.isRegularFile(installed)) return installed.toString()
-        javaClass.getResourceAsStream("/upscaler/$executable")?.use { source ->
-            Files.copy(source, installed, StandardCopyOption.REPLACE_EXISTING)
-            installed.toFile().setExecutable(true, false)
-        }
-        if (Files.isRegularFile(installed)) {
-            Files.createDirectories(directory.resolve("models"))
-            listOf("$MODEL-x$MODEL_SCALE.param", "$MODEL-x$MODEL_SCALE.bin").forEach { name ->
-                javaClass.getResourceAsStream("/upscaler/models/$name")?.use { source ->
-                    Files.copy(source, directory.resolve("models").resolve(name), StandardCopyOption.REPLACE_EXISTING)
-                }
-            }
+        val models = directory.resolve("models")
+        val modelParam = models.resolve("$MODEL-x$MODEL_SCALE.param")
+        val modelWeights = models.resolve("$MODEL-x$MODEL_SCALE.bin")
+        if (Files.isRegularFile(installed) && Files.isRegularFile(modelParam) && Files.isRegularFile(modelWeights)) {
             return installed.toString()
         }
-        findTool(UPSCALER)?.let { return it }
 
         val archiveUrl = when {
             isWindows -> UPSCALER_ARCHIVE
@@ -124,8 +114,8 @@ class AnimeUpscaler {
         }
         require(Files.isRegularFile(installed)) { "The upscaler download didn't contain $executable." }
         installed.toFile().setExecutable(true, false)
-        require(Files.isRegularFile(directory.resolve("models").resolve("$MODEL-x$MODEL_SCALE.param"))) {
-            "The upscaler download didn't contain the $MODEL-x$MODEL_SCALE model."
+        require(Files.isRegularFile(modelParam) && Files.isRegularFile(modelWeights)) {
+            "The upscaler download didn't contain the $MODEL-x$MODEL_SCALE model files."
         }
         return installed.toString()
     }
@@ -234,11 +224,17 @@ class AnimeUpscaler {
 
     private fun findTool(name: String): String? {
         val executable = if (isWindows) "$name.exe" else name
-        val directories = listOfNotNull(
-            System.getProperty("AniLife.ffmpeg.dir"),
-        ) + System.getenv("PATH")?.split(File.pathSeparator).orEmpty() +
-            listOf("/usr/bin", "/usr/local/bin", "C:\\ffmpeg\\bin", "C:\\tools\\ffmpeg\\bin")
-        return directories.map { File(it, executable) }
+        val property = if (name == UPSCALER) "AniLife.upscaler.dir" else "AniLife.ffmpeg.dir"
+        val managedDirectory = System.getProperty(property)
+            ?: dependencyDirectory().resolve(if (name == UPSCALER) "upscaler" else "ffmpeg").path
+        val directories = if (isWindows) {
+            listOf(managedDirectory)
+        } else {
+            listOf(managedDirectory) + System.getenv("PATH")?.split(File.pathSeparator).orEmpty() +
+                listOf("/usr/bin", "/usr/local/bin")
+        }
+        return directories.asSequence()
+            .map { File(it, executable) }
             .firstOrNull { it.isFile && it.canExecute() }
             ?.absolutePath
     }
