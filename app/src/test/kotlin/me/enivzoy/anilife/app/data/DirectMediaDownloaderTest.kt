@@ -40,6 +40,34 @@ class DirectMediaDownloaderTest {
     }
 
     @Test
+    fun reportsDirectFile403AsARefreshableSourceFailure() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/video.mp4") { exchange ->
+            val body = "forbidden".toByteArray()
+            exchange.sendResponseHeaders(403, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val error = assertFailsWith<SourceException> {
+                runBlocking {
+                    DirectMediaDownloader.download(
+                        url = "http://127.0.0.1:${server.address.port}/video.mp4",
+                        animeTitle = "Test",
+                        episode = 1.0,
+                        audio = "sub",
+                        downloadRoot = tempDirectory,
+                    )
+                }
+            }
+            assertEquals(SourceFailure.Forbidden, error.reason)
+            assertTrue(error.reason.retryWithFreshSource)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun rejectsUnsupportedUrlBeforeNetwork() {
         val error = assertFailsWith<IllegalArgumentException> {
             runBlocking {

@@ -1,6 +1,7 @@
 ﻿package me.enivzoy.anilife.app.data
 
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.enivzoy.anilife.core.diagnostics.ActionBreadcrumbs
@@ -197,21 +198,34 @@ class AnimeVideoProviders(
         titles: List<String>,
         episode: Double,
         dub: Boolean,
+        refresh: Boolean = false,
     ): List<AnimeVideoSource> = withContext(Dispatchers.IO) {
         val cacheKey = "$anilistId|$episode|$dub|${malId ?: 0}|${titles.distinct().joinToString("\u0001")}"
-        sourceCache[cacheKey]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let { return@withContext it.sources }
+        if (refresh) sourceCache.remove(cacheKey)
+        else sourceCache[cacheKey]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let { return@withContext it.sources }
         val startedAt = System.nanoTime()
         ActionBreadcrumbs.record("Resolving stream URL for episode: $episode")
-        val result = runCatching { miruroSources(anilistId, episode, dub) }
-            .onFailure { System.err.println("Miruro source lookup failed: ${it.message}") }
-            .getOrDefault(emptyList())
-        val extra = runCatching {
+        val result = try {
+            miruroSources(anilistId, episode, dub)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            System.err.println("Miruro source lookup failed: ${failure.message}")
+            emptyList()
+        }
+        val extra = try {
             wasmProviders.sources(
                 WasmAnimeTitle(anilistId, malId, titles.filter(String::isNotBlank).distinct()),
                 episode,
                 dub,
+                refresh,
             )
-        }.onFailure { System.err.println("WASM provider lookup failed: ${it.message}") }.getOrDefault(emptyList())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            System.err.println("WASM provider lookup failed: ${failure.message}")
+            emptyList()
+        }
         val combined = mergeVideoSources(result.filter { it.audio == if (dub) "Dub" else "Sub" } + extra)
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
         logger.info { "stream lookup completed episode=$episode dub=$dub servers=${combined.size} elapsedMs=$elapsedMs" }

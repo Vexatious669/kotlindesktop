@@ -133,7 +133,8 @@ fun AniLifeApp(
     val updater = remember { Updater() }
     val availableUpdate by updater.update.collectAsState()
     val downloadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 4) }
+    val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 2) }
+    val downloadJobs by downloadQueue.jobs.collectAsState()
     val autoDetect = remember(repository) {
         AutoDetectService(library = repository.asAutoDetectLibrary(), scope = downloadScope)
     }
@@ -453,18 +454,19 @@ fun AniLifeApp(
                     anime = anime.toCard(),
                     headers = source.headers,
                     maxHeight = 1080,
-                    resolve = { avoid ->
+                    resolve = { exclusions ->
                         val fresh = animeVideoProviders.sources(
                             anilistId = anime.id,
                             malId = anime.malId,
                             titles = titles,
                             episode = episode,
                             dub = audio.equals("Dub", ignoreCase = true),
+                            refresh = exclusions.urls.isNotEmpty(),
                         )
                         me.enivzoy.anilife.app.data.pickDownloadSource(
                             fresh,
                             me.enivzoy.anilife.app.data.DownloadTarget(resolution = 1080, server = "Auto"),
-                            avoid,
+                            exclusions,
                         )
                     },
                 )

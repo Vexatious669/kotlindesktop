@@ -8,14 +8,27 @@ internal data class DownloadTarget(
     val server: String,
 )
 
+data class DownloadServerIdentity(val provider: String, val server: String)
+
+data class DownloadSourceExclusions(
+    val urls: Set<String> = emptySet(),
+    val servers: Set<DownloadServerIdentity> = emptySet(),
+)
+
+internal fun downloadServerIdentity(source: AnimeVideoSource): DownloadServerIdentity =
+    DownloadServerIdentity(
+        provider = source.provider.trim().lowercase(),
+        server = source.server.trim().ifBlank { runCatching { URI(source.url).host.orEmpty() }.getOrDefault("") }.lowercase(),
+    )
+
 internal fun pickDownloadSource(
     sources: List<AnimeVideoSource>,
     target: DownloadTarget,
-    avoidUrl: String? = null,
+    exclusions: DownloadSourceExclusions = DownloadSourceExclusions(),
 ): AnimeVideoSource? {
-    val downloadable = sources.filter { downloadableSource(it) }
-    val candidates = downloadable.filter { avoidUrl == null || it.url != avoidUrl }
-    val pool = candidates.ifEmpty { downloadable }
+    val pool = sources.filter {
+        downloadableSource(it) && it.url !in exclusions.urls && downloadServerIdentity(it) !in exclusions.servers
+    }
     if (pool.isEmpty()) return null
     val preferred = if (target.server.equals("Auto", ignoreCase = true)) {
         pool

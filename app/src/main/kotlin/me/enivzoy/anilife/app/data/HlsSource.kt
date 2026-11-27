@@ -19,6 +19,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Duration
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -80,6 +82,7 @@ internal class SourceException(
     val reason: SourceFailure,
     val status: Int? = null,
     val contentType: String? = null,
+    val retryAfterMillis: Long? = null,
     cause: Throwable? = null,
 ) : IOException(reason.describe(status, contentType), cause)
 
@@ -96,7 +99,8 @@ internal fun Throwable.sourceException(): SourceException? {
 internal object HlsSource {
     private const val MAX_PLAYLIST_BYTES = 2 * 1024 * 1024
     private const val RETRIES = 3
-    private const val PARALLEL = 4
+    private const val PARALLEL = 2
+    private val MAX_RETRY_AFTER_MILLIS = Duration.ofMinutes(5).toMillis()
     private val restrictedHeaders = setOf(
         "host", "connection", "content-length", "expect", "upgrade", "date", "transfer-encoding", "keep-alive",
     )
@@ -262,7 +266,7 @@ internal object HlsSource {
         playlist: HlsMediaPlaylist,
         headers: Map<String, String>,
         output: Path,
-        onProgress: (written: Long) -> Unit,
+        onProgress: (written: Long, fraction: Float) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         val part = File("$output.part")
         val keys = playlist.segments.mapNotNull { it.key }
@@ -289,10 +293,11 @@ internal object HlsSource {
                             }
                         }.awaitAll()
                     }
-                    fetched.forEach { bytes ->
+                    fetched.forEachIndexed { fetchedIndex, bytes ->
                         file.write(bytes)
                         written += bytes.size
-                        onProgress(written)
+                        val completedSegments = index + fetchedIndex + 1
+                        onProgress(written, completedSegments.toFloat() / playlist.segments.size.coerceAtLeast(1))
                     }
                     index += window.size
                 }
@@ -385,7 +390,7 @@ internal object HlsSource {
         val type = response.headers().firstValue("Content-Type").orElse(null)
         val body = response.body().use { stream -> runCatching { readLimited(stream, 2048) }.getOrDefault(ByteArray(0)) }
         val status = response.statusCode()
-        if (status !in 200..299) throw SourceException(failureFor(status), status, type)
+        if (status !in 200..299) throw SourceException(sourceFailureFor(status), status, type)
         if (type != null) {
             val lowered = type.lowercase()
             if (lowered.startsWith("application/vnd.apple.mpegurl") || lowered.startsWith("application/x-mpegurl")) {
@@ -426,14 +431,19 @@ internal object HlsSource {
                 val head = response.body().use { stream ->
                     runCatching { readLimited(stream, 256).toString(Charsets.UTF_8) }.getOrDefault("")
                 }
-                val failure = failureFor(status)
+                val failure = sourceFailureFor(status)
                 if (failure == SourceFailure.ServerError || failure == SourceFailure.RateLimited) {
                     if (attempt < RETRIES) {
-                        delay(500L * attempt)
+                        delay(retryDelayMillis(failure, response.headers().firstValue("Retry-After").orElse(null), attempt))
                         continue
                     }
                 }
-                throw SourceException(failure, status, sniff(head))
+                throw SourceException(
+                    failure,
+                    status,
+                    sniff(head),
+                    retryAfterMillis = parseRetryAfterMillis(response.headers().firstValue("Retry-After").orElse(null)),
+                )
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (source: SourceException) {
@@ -461,12 +471,16 @@ internal object HlsSource {
                     return withContext(Dispatchers.IO) { response.body().use { it.readBytes() } }
                 }
                 response.body().close()
-                val failure = failureFor(status)
+                val failure = sourceFailureFor(status)
                 if ((failure == SourceFailure.ServerError || failure == SourceFailure.RateLimited) && attempt < RETRIES) {
-                    delay(500L * attempt)
+                    delay(retryDelayMillis(failure, response.headers().firstValue("Retry-After").orElse(null), attempt))
                     continue
                 }
-                throw SourceException(failure, status)
+                throw SourceException(
+                    failure,
+                    status,
+                    retryAfterMillis = parseRetryAfterMillis(response.headers().firstValue("Retry-After").orElse(null)),
+                )
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (source: SourceException) {
@@ -498,7 +512,26 @@ internal object HlsSource {
         return builder
     }
 
-    private fun failureFor(status: Int): SourceFailure = when {
+    internal fun parseRetryAfterMillis(value: String?, nowMillis: Long = System.currentTimeMillis()): Long? {
+        val header = value?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        val millis = header.toLongOrNull()?.let { seconds ->
+            if (seconds < 0L) return null
+            runCatching { Math.multiplyExact(seconds, 1_000L) }.getOrNull()
+        } ?: runCatching {
+            (ZonedDateTime.parse(header, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli() - nowMillis)
+                .coerceAtLeast(0L)
+        }.getOrNull() ?: return null
+        return millis.coerceAtMost(MAX_RETRY_AFTER_MILLIS)
+    }
+
+    private fun retryDelayMillis(failure: SourceFailure, retryAfter: String?, attempt: Int): Long =
+        parseRetryAfterMillis(retryAfter) ?: if (failure == SourceFailure.RateLimited) {
+            1_000L * (1L shl (attempt - 1).coerceIn(0, 8))
+        } else {
+            500L * attempt
+        }
+
+    internal fun sourceFailureFor(status: Int): SourceFailure = when {
         status == 401 || status == 410 -> SourceFailure.Expired
         status == 403 -> SourceFailure.Forbidden
         status == 404 -> SourceFailure.NotFound
