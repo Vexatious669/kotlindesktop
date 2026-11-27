@@ -7,6 +7,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
@@ -23,6 +24,8 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.coroutines.coroutineContext
+
+private val logger = KotlinLogging.logger("AniLife.downloads")
 
 internal data class HlsVariant(val url: URI, val height: Int?, val bandwidth: Long?)
 
@@ -131,7 +134,6 @@ internal object HlsSource {
         }
         return ValidatedSource(url, headers, SourceKind.DirectMedia, "direct media")
     }
-
     private suspend fun validatePlaylist(uri: URI, headers: Map<String, String>, maxHeight: Int): ValidatedSource {
         val (playlist, finalUri) = resolvePlaylist(uri, headers, maxHeight)
         val detail = buildString {
@@ -265,10 +267,15 @@ internal object HlsSource {
         onProgress: (written: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
         val part = File("$output.part")
+        val total = playlist.segments.size
+        val startedAt = System.nanoTime()
+        var written = 0L
+        var index = 0
+        var lastReport = 0L
+        logger.info { "hls segments start count=$total parallel=$PARALLEL fragmented=${playlist.isFragmented}" }
         val keys = playlist.segments.mapNotNull { it.key }
             .distinctBy { it.url.toString() }
             .associate { it.url.toString() to fetchBytes(it.url, headers) }
-        var written = 0L
         try {
             part.outputStream().buffered().use { file ->
                 playlist.initSegment?.let { init ->
@@ -276,16 +283,23 @@ internal object HlsSource {
                     file.write(bytes)
                     written += bytes.size
                 }
-                var index = 0
-                while (index < playlist.segments.size) {
+                while (index < total) {
                     coroutineContext.ensureActive()
-                    val window = playlist.segments.subList(index, minOf(index + PARALLEL, playlist.segments.size))
+                    val window = playlist.segments.subList(index, minOf(index + PARALLEL, total))
                     val fetched = coroutineScope {
                         window.map { segment ->
                             async {
-                                val body = fetchBytes(segment.url, headers)
-                                val key = segment.key ?: return@async body
-                                decrypt(body, keys.getValue(key.url.toString()), segment)
+                                try {
+                                    val body = fetchBytes(segment.url, headers)
+                                    val key = segment.key ?: return@async body
+                                    decrypt(body, keys.getValue(key.url.toString()), segment)
+                                } catch (error: Throwable) {
+                                    logger.warn {
+                                        "hls segment failed index=$index/${total} sequence=${segment.sequence} " +
+                                            "url=${redactUrl(segment.url.toString())} error=${error.javaClass.simpleName}: ${error.message}"
+                                    }
+                                    throw error
+                                }
                             }
                         }.awaitAll()
                     }
@@ -295,11 +309,28 @@ internal object HlsSource {
                         onProgress(written)
                     }
                     index += window.size
+                    val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                    if (elapsedMs - lastReport >= 10_000L || index == total) {
+                        lastReport = elapsedMs
+                        val rate = if (elapsedMs > 0L) written / 1_048_576.0 / (elapsedMs / 1000.0) else 0.0
+                        logger.info {
+                            "hls segments progress $index/$total bytes=$written " +
+                                "rate=${"%.2f".format(rate)}MB/s elapsedMs=$elapsedMs"
+                        }
+                    }
                 }
             }
             move(part.toPath(), output)
+            logger.info {
+                "hls segments done count=$total bytes=$written " +
+                    "elapsedMs=${(System.nanoTime() - startedAt) / 1_000_000}"
+            }
             written
         } catch (error: Throwable) {
+            logger.warn {
+                "hls segments aborted at $index/$total bytes=$written " +
+                    "elapsedMs=${(System.nanoTime() - startedAt) / 1_000_000} error=${error.javaClass.simpleName}: ${error.message}"
+            }
             Files.deleteIfExists(part.toPath())
             throw error
         }
@@ -462,6 +493,9 @@ internal object HlsSource {
                 }
                 response.body().close()
                 val failure = failureFor(status)
+                logger.warn {
+                    "segment http $status (${failure.name}) url=${redactUrl(uri.toString())} attempt=$attempt"
+                }
                 if ((failure == SourceFailure.ServerError || failure == SourceFailure.RateLimited) && attempt < RETRIES) {
                     delay(500L * attempt)
                     continue
@@ -472,6 +506,10 @@ internal object HlsSource {
             } catch (source: SourceException) {
                 throw source
             } catch (failure: Exception) {
+                logger.warn {
+                    "segment fetch error url=${redactUrl(uri.toString())} attempt=$attempt " +
+                        "${failure.javaClass.simpleName}: ${failure.message}"
+                }
                 if (attempt < RETRIES) {
                     delay(500L * attempt)
                     continue

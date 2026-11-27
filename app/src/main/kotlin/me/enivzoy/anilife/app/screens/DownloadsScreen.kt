@@ -722,6 +722,15 @@ private fun DownloadsHomeCard(
                     color = AniLifeColors.Primary,
                     trackColor = AniLifeColors.SurfaceVariant,
                 )
+            } ?: run {
+                // a stream download has no content length, so show motion instead of a frozen 0%
+                if (item.job?.status == DownloadStatus.Running) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                        color = AniLifeColors.Primary,
+                        trackColor = AniLifeColors.SurfaceVariant,
+                    )
+                }
             }
             item.error?.let { problem ->
                 Text(problem, color = AniLifeColors.Destructive, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -805,18 +814,20 @@ private fun buildDownloadsHomeItems(
         val existing = items[key]
         val anime = local?.anime ?: job.anime ?: existing?.anime
         val title = anime?.title ?: job.title
-        val percent = if (job.total != null && job.total > 0L) {
-            ((job.downloaded * 100L) / job.total).toInt().coerceIn(0, 100)
-        } else {
-            0
+        val percent = job.total?.takeIf { it > 0L }?.let { total ->
+            ((job.downloaded * 100L) / total).toInt().coerceIn(0, 100)
         }
         val statusText: String
         val progress: Float?
         val error: String?
         when (job.status) {
             DownloadStatus.Running -> {
-                statusText = "Downloading Episode ${job.episode.episodeLabel()} · $percent%"
-                progress = percent / 100f
+                statusText = if (percent != null) {
+                    "Downloading Episode ${job.episode.episodeLabel()} · $percent%"
+                } else {
+                    "Downloading Episode ${job.episode.episodeLabel()} · ${formatBytes(job.downloaded)}"
+                }
+                progress = percent?.let { it / 100f }
                 error = null
             }
             DownloadStatus.Queued -> {
@@ -1590,10 +1601,8 @@ private fun DownloadJobRow(
     onRetry: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    val fraction = if (job.total != null && job.total > 0L) {
-        (job.downloaded / job.total).toFloat().coerceIn(0f, 1f)
-    } else {
-        0f
+    val fraction = job.total?.takeIf { it > 0L }?.let { total ->
+        (job.downloaded.toFloat() / total).coerceIn(0f, 1f)
     }
     Column(
         Modifier
@@ -1628,23 +1637,39 @@ private fun DownloadJobRow(
         }
         if (job.status == DownloadStatus.Running || job.status == DownloadStatus.Queued) {
             Text(
-                "${formatBytes(job.downloaded)} of ${job.total?.let { formatBytes(it) } ?: "?"}",
+                when {
+                    job.status == DownloadStatus.Queued -> "Waiting to start"
+                    fraction == null && job.downloaded > 0L -> "${formatBytes(job.downloaded)} downloaded"
+                    fraction == null -> "Starting download"
+                    else -> "${formatBytes(job.downloaded)} of ${job.total?.let { formatBytes(it) } ?: "?"}"
+                },
                 color = DownloadMuted,
                 fontSize = 11.sp,
             )
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(DownloadSurfaceRaised),
-            ) {
+            if (fraction == null) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = DownloadAccent,
+                    trackColor = DownloadSurfaceRaised,
+                )
+            } else {
                 Box(
                     Modifier
-                        .fillMaxWidth(fraction)
+                        .fillMaxWidth()
                         .height(6.dp)
-                        .background(DownloadAccent),
-                )
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(DownloadSurfaceRaised),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction)
+                            .height(6.dp)
+                            .background(DownloadAccent),
+                    )
+                }
             }
         }
         if (job.status == DownloadStatus.Failed && job.error != null) {

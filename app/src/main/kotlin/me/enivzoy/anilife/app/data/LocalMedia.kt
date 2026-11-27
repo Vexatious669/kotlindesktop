@@ -562,7 +562,13 @@ object DirectMediaDownloader {
         onProgress: ((Long, Long?) -> Unit)?,
     ): LocalEpisode {
         // check the source before ffmpeg touches it, so an expired token is not reported as bad media
-        val validated = HlsSource.validate(url, headers, maxHeight)
+        val validated = try {
+            HlsSource.validate(url, headers, maxHeight)
+        } catch (failure: Throwable) {
+            logger.warn { "source validation failed url=${redactUrl(url)} ${failure.javaClass.simpleName}: ${failure.message}" }
+            throw failure
+        }
+        logger.info { "source validated url=${redactUrl(validated.url)} kind=${validated.kind} (${validated.detail})" }
         val directory = downloadRoot.resolve(safeName(animeTitle)).toFile()
         Files.createDirectories(directory.toPath())
         val episodeLabel = if (episode % 1.0 == 0.0) episode.toInt().toString() else episode.toString()
@@ -673,14 +679,17 @@ object DirectMediaDownloader {
                 ffmpeg, "-nostdin", "-y", "-loglevel", "error",
                 "-i", raw.absolutePath, "-c", "copy", "-f", "matroska", temporary.absolutePath,
             ).redirectErrorStream(true).start()
+            val remuxStarted = System.currentTimeMillis()
             val log = remux.inputStream.bufferedReader().use { it.readText() }
             val exit = remux.waitFor()
             if (exit != 0) {
+                logger.warn { "ffmpeg remux failed exit=$exit bytes=$bytes log=${log.takeLast(300)}" }
                 throw SourceException(
                     SourceFailure.NotPlaylist,
                     cause = IOException("ffmpeg remux failed ($exit): ${log.takeLast(240)}"),
                 )
             }
+            logger.info { "hls remux done bytes=$bytes durationMs=${System.currentTimeMillis() - remuxStarted}" }
             require(temporary.isFile && temporary.length() > 0L) { "The stream download produced an empty file." }
             try {
                 Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)

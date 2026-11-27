@@ -2,6 +2,7 @@ package me.enivzoy.anilife.app.data
 
 import me.enivzoy.anilife.core.model.AnimeCard
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.nio.file.Path
 import java.util.UUID
+
+private val logger = KotlinLogging.logger("AniLife.downloads")
 
 enum class DownloadStatus { Queued, Running, Done, Failed, Cancelled }
 
@@ -82,6 +85,7 @@ class DownloadQueueManager(
             resolve = resolve,
         )
         _jobs.update { it + job }
+        logger.info { "queued id=${job.id} title=\"${job.title}\" episode=${job.episode} host=${redactUrl(url)}" }
         launchJob(job)
         return job.id
     }
@@ -98,6 +102,7 @@ class DownloadQueueManager(
                 }
                 try {
                     val result = download(job)
+                    logger.info { "done id=${job.id} title=\"${job.title}\" episode=${job.episode} bytes=${result.bytes}" }
                     _jobs.update { list ->
                         list.map {
                             if (it.id == job.id) it.copy(
@@ -109,9 +114,11 @@ class DownloadQueueManager(
                         }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
+                    logger.info { "cancelled id=${job.id} title=\"${job.title}\" episode=${job.episode}" }
                     _jobs.update { list -> list.map { if (it.id == job.id) it.copy(status = DownloadStatus.Cancelled) else it } }
                     throw e
                 } catch (t: Throwable) {
+                    logger.warn { "failed id=${job.id} title=\"${job.title}\" episode=${job.episode} error=${t.javaClass.simpleName}: ${t.message}" }
                     _jobs.update { list ->
                         list.map {
                             if (it.id == job.id) it.copy(
@@ -135,32 +142,47 @@ class DownloadQueueManager(
             attempt++
             val url = source?.url ?: job.url
             val headers = source?.headers ?: job.headers
+            val startedAt = System.nanoTime()
+            logger.info { "start id=${job.id} attempt=$attempt host=${redactUrl(url)}" }
             try {
                 val progress: (Long, Long?) -> Unit = { downloaded, total ->
                     _jobs.update { list ->
                         list.map { if (it.id == job.id) it.copy(downloaded = downloaded, total = total) else it }
                     }
                 }
-                if (runner != null) {
-                    return runner.run(job, url, headers, progress)
+                val result = if (runner != null) {
+                    runner.run(job, url, headers, progress)
+                } else {
+                    val downloader = requireNotNull(repository) { "No download runner is configured." }
+                    downloader.downloadDirect(
+                        url = url,
+                        animeTitle = job.title,
+                        episode = job.episode,
+                        audio = job.audio,
+                        downloadRoot = job.downloadRoot,
+                        headers = headers,
+                        maxHeight = job.maxHeight,
+                        onProgress = progress,
+                    )
                 }
-                val downloader = requireNotNull(repository) { "No download runner is configured." }
-                return downloader.downloadDirect(
-                    url = url,
-                    animeTitle = job.title,
-                    episode = job.episode,
-                    audio = job.audio,
-                    downloadRoot = job.downloadRoot,
-                    headers = headers,
-                    maxHeight = job.maxHeight,
-                    onProgress = progress,
-                )
+                logger.info { "attempt ok id=${job.id} attempt=$attempt bytes=${result.bytes} elapsedMs=${(System.nanoTime() - startedAt) / 1_000_000}" }
+                return result
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                val retryable = failure.sourceException()?.reason?.retryWithFreshSource == true
+                val reason = failure.sourceException()?.reason
+                val retryable = reason?.retryWithFreshSource == true
+                logger.warn {
+                    "attempt failed id=${job.id} attempt=$attempt reason=${reason ?: failure.javaClass.simpleName} " +
+                        "retryable=$retryable elapsedMs=${(System.nanoTime() - startedAt) / 1_000_000} error=${failure.message}"
+                }
                 if (resolve == null || attempt >= 2 || !retryable) throw failure
-                val fresh = runCatching { resolve(url) }.getOrNull() ?: throw failure
+                val fresh = runCatching { resolve(url) }.getOrNull()
+                if (fresh == null) {
+                    logger.warn { "retry aborted id=${job.id} no fresh source available" }
+                    throw failure
+                }
+                logger.info { "retry id=${job.id} fresh source host=${redactUrl(fresh.url)}" }
                 source = fresh
                 _jobs.update { list ->
                     list.map {
