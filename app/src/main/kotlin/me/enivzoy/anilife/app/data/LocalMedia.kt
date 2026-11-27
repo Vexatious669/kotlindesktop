@@ -686,10 +686,16 @@ object DirectMediaDownloader {
             val log = remux.inputStream.bufferedReader().use { it.readText() }
             val exit = remux.waitFor()
             if (exit != 0) {
-                throw SourceException(
-                    SourceFailure.NotPlaylist,
-                    cause = IOException("ffmpeg remux failed ($exit): ${log.takeLast(240)}"),
-                )
+                val rawTarget = File(destination.parentFile, destination.name.removeSuffix(".mkv") + raw.extension)
+                logger.warn {
+                    "ffmpeg remux failed exit=$exit; preserving downloaded media as ${rawTarget.name}: ${log.takeLast(240)}"
+                }
+                try {
+                    Files.move(raw.toPath(), rawTarget.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(raw.toPath(), rawTarget.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+                return finalizeDownload(rawTarget, downloadRoot, animeTitle, episode, audio, anime, episodeTitle)
             }
             require(temporary.isFile && temporary.length() > 0L) { "The stream download produced an empty file." }
             try {
