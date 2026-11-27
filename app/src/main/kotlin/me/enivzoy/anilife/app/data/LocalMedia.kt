@@ -699,12 +699,17 @@ object DirectMediaDownloader {
         listOf(".m3u8", ".mpd").any { url.contains(it, ignoreCase = true) }
 
     private fun findFfmpeg(): String? {
-        val executable = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "ffmpeg.exe" else "ffmpeg"
-        val directories = listOfNotNull(
-            System.getProperty("AniLife.ffmpeg.dir"),
-            dependencyDirectory().resolve("ffmpeg").toString(),
-        ) + System.getenv("PATH")?.split(File.pathSeparator).orEmpty()
-        return directories.map { File(it, executable) }
+        val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        val executable = if (isWindows) "ffmpeg.exe" else "ffmpeg"
+        val managedDirectory = System.getProperty("AniLife.ffmpeg.dir")
+            ?: dependencyDirectory().resolve("ffmpeg").toString()
+        val directories = if (isWindows) {
+            listOf(managedDirectory)
+        } else {
+            listOf(managedDirectory) + System.getenv("PATH")?.split(File.pathSeparator).orEmpty()
+        }
+        return directories.asSequence()
+            .map { File(it, executable) }
             .firstOrNull { it.isFile && it.canExecute() }
             ?.absolutePath
     }

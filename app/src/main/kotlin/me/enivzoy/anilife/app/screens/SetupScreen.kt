@@ -86,7 +86,7 @@ fun SetupScreen(manager: DependencyManager, onContinue: () -> Unit) {
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Installing the runtime and media tools AniLife needs.",
+                    text = "Downloading missing runtimes. First-time setup may take a few minutes; failures show the service and step that needs attention.",
                     color = AniLifeColors.MutedForeground,
                     fontSize = 14.sp,
                 )
@@ -135,6 +135,7 @@ private fun DependencyCard(state: DependencyState, onRetry: () -> Unit) {
     }
     val detail = when (state.status) {
         DependencyStatus.Pending -> "Waiting"
+        DependencyStatus.Resolving -> "Checking download source…"
         DependencyStatus.Downloading -> listOfNotNull(
             state.totalBytes.takeIf { it > 0L }?.let { "${formatSetupBytes(state.bytes)} / ${formatSetupBytes(it)}" },
             state.speedBps.takeIf { it > 0L }?.let { "${formatSetupBytes(it)}/s" },
@@ -160,7 +161,7 @@ private fun DependencyCard(state: DependencyState, onRetry: () -> Unit) {
                     tint = AniLifeColors.Success,
                     modifier = Modifier.size(20.dp),
                 )
-                DependencyStatus.Downloading, DependencyStatus.Verifying, DependencyStatus.Extracting ->
+                DependencyStatus.Resolving, DependencyStatus.Downloading, DependencyStatus.Verifying, DependencyStatus.Extracting ->
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         color = AniLifeColors.Primary,
@@ -171,7 +172,12 @@ private fun DependencyCard(state: DependencyState, onRetry: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(label, color = AniLifeColors.Foreground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Text(detail, color = AniLifeColors.MutedForeground, fontSize = 12.sp)
+                Text(
+                    detail,
+                    color = if (state.status == DependencyStatus.Failed) AniLifeColors.Destructive else AniLifeColors.MutedForeground,
+                    fontSize = 12.sp,
+                    maxLines = 4,
+                )
             }
             if (state.status == DependencyStatus.Failed) {
                 TextButton(onClick = onRetry) { Text("Retry", color = AniLifeColors.Primary) }
