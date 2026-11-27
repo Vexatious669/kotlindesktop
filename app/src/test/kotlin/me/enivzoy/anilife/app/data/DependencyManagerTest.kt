@@ -33,6 +33,48 @@ class DependencyManagerTest {
     }
 
     @Test
+    fun configurePathsKeepsUserSuppliedMpvLibraryEvenWithAManagedCopy() {
+        val dir = Files.createTempDirectory("anilife-mpv-override")
+        val userLib = File(dir.toFile(), "custom/libmpv-2.dll").apply {
+            parentFile.mkdirs()
+            writeText("user supplied")
+        }
+        val managed = dir.resolve("mpv/libmpv-2.dll")
+        Files.createDirectories(managed.parent)
+        Files.writeString(managed, "managed")
+        System.setProperty("AniLife.mpv.library", userLib.absolutePath)
+        try {
+            DependencyManager(CoroutineScope(Dispatchers.Unconfined), dir.toFile()).configurePaths()
+            assertEquals(userLib.absolutePath, System.getProperty("AniLife.mpv.library"))
+        } finally {
+            System.clearProperty("AniLife.mpv.library")
+            System.clearProperty("AniLife.ffmpeg.dir")
+            System.clearProperty("AniLife.jre.home")
+            System.clearProperty("AniLife.upscaler.dir")
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun configurePathsUsesTheManagedCopyWhenNoOverrideIsSet() {
+        val dir = Files.createTempDirectory("anilife-mpv-managed")
+        val managed = dir.resolve("mpv/libmpv-2.dll")
+        Files.createDirectories(managed.parent)
+        Files.writeString(managed, "managed")
+        System.clearProperty("AniLife.mpv.library")
+        try {
+            DependencyManager(CoroutineScope(Dispatchers.Unconfined), dir.toFile()).configurePaths()
+            assertEquals(managed.toString(), System.getProperty("AniLife.mpv.library"))
+        } finally {
+            System.clearProperty("AniLife.mpv.library")
+            System.clearProperty("AniLife.ffmpeg.dir")
+            System.clearProperty("AniLife.jre.home")
+            System.clearProperty("AniLife.upscaler.dir")
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun storesDependenciesInAniLifeRuntimeDirectory() {
         val root = Files.createTempDirectory("anilife-appdata-").toFile()
         try {

@@ -10,6 +10,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
+import java.security.MessageDigest
 import java.time.Duration
 
 object MpvBootstrap {
@@ -40,37 +41,47 @@ object MpvBootstrap {
             onStatus("mpv ready")
             return target.absolutePath
         }
-        onStatus("mpv not found; downloading…")
+        onStatus("mpv not found; downloading.")
         return try {
             withContext(Dispatchers.IO) {
                 val client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(30))
                     .followRedirects(HttpClient.Redirect.NORMAL)
                     .build()
-                val releaseRequest = request(MPV_RELEASES, "application/vnd.github+json")
-                val releaseResponse = ResourceTracker.networkOpened(releaseRequest.uri().host).use {
-                    client.send(releaseRequest, HttpResponse.BodyHandlers.ofString())
-                }
-                requireSuccess(releaseResponse.statusCode(), releaseRequest.uri(), releaseResponse.body())
-                val source = parseReleaseSource(releaseResponse.body(), releaseAssetPattern(Dependency.MPV))
-                onStatus("fetching libmpv…")
-                val archive = Files.createTempFile("anilife-mpv-", ".7z")
-                try {
-                    val assetRequest = request(source.url, "application/octet-stream")
-                    val assetResponse = ResourceTracker.networkOpened(assetRequest.uri().host).use {
-                        client.send(assetRequest, HttpResponse.BodyHandlers.ofByteArray())
+                // Same ordered mirrors as setup: one code path for libmpv.
+                firstWorkingSource(Dependency.MPV, candidateSources(Dependency.MPV, ::fetchText)) { source ->
+                    onStatus("fetching libmpv.")
+                    val request = HttpRequest.newBuilder(URI.create(source.url))
+                        .timeout(Duration.ofMinutes(2))
+                        .header("User-Agent", USER_AGENT)
+                        .header("Accept", "application/octet-stream")
+                        .GET()
+                        .build()
+                    val response = ResourceTracker.networkOpened(request.uri().host).use {
+                        client.send(request, HttpResponse.BodyHandlers.ofByteArray())
                     }
-                    requireSuccess(assetResponse.statusCode(), assetRequest.uri(), "")
-                    Files.write(archive, assetResponse.body())
-                    onStatus("extracting…")
-                    extractArchive(
-                        archive,
-                        targetDir.toPath(),
-                        name = { it.substringAfterLast('/') },
-                        keep = { it.equals("libmpv-2.dll", ignoreCase = true) },
-                    )
-                } finally {
-                    Files.deleteIfExists(archive)
+                    if (response.statusCode() !in 200..299) {
+                        error("HTTP ${response.statusCode()} from ${request.uri().host}")
+                    }
+                    val bytes = response.body()
+                    val actual = MessageDigest.getInstance("SHA-256").digest(bytes)
+                        .joinToString("") { "%02x".format(it) }
+                    if (!actual.equals(source.sha256, ignoreCase = true)) {
+                        error("libmpv checksum mismatch.")
+                    }
+                    val archive = Files.createTempFile("anilife-mpv-", ".7z")
+                    try {
+                        Files.write(archive, bytes)
+                        onStatus("extracting.")
+                        extractArchive(
+                            archive,
+                            targetDir.toPath(),
+                            name = { it.substringAfterLast('/') },
+                            keep = { it.equals("libmpv-2.dll", ignoreCase = true) },
+                        )
+                    } finally {
+                        Files.deleteIfExists(archive)
+                    }
                 }
                 if (target.exists() && target.length() > 0) {
                     System.setProperty("AniLife.mpv.library", target.absolutePath)
@@ -81,23 +92,10 @@ object MpvBootstrap {
                 }
             }
         } catch (error: Throwable) {
-            onStatus("mpv download failed: ${error.message}")
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            // A resolver failure already carries the compact per-source summary; keep it intact.
+            onStatus(if (error is SourceResolutionException) error.message.orEmpty() else shortReason(error))
             null
-        }
-    }
-
-    private fun request(url: String, accept: String): HttpRequest =
-        HttpRequest.newBuilder(URI.create(url))
-            .timeout(Duration.ofMinutes(2))
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", accept)
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .GET()
-            .build()
-
-    private fun requireSuccess(status: Int, uri: URI, body: String) {
-        if (status !in 200..299) {
-            error("HTTP $status from ${uri.host}: ${body.take(240).ifBlank { "No response details" }}")
         }
     }
 }

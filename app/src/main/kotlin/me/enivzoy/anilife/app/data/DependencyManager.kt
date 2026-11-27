@@ -151,6 +151,12 @@ internal fun requireSuccess(connection: HttpURLConnection) {
     val code = connection.responseCode
     if (code !in 200..299) {
         val body = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        val rateLimited = (code == 403 || code == 429) &&
+            (
+                connection.getHeaderField("X-RateLimit-Remaining") == "0" ||
+                    body.contains("rate limit", ignoreCase = true)
+                )
+        if (rateLimited) error("HTTP $code from ${connection.url.host}: API rate limit exceeded")
         error("HTTP $code from ${connection.url.host}: ${body.take(240).ifBlank { connection.responseMessage }}")
     }
 }
@@ -262,11 +268,17 @@ class DependencyManager(
         System.setProperty("AniLife.jre.java", jreDir.resolve("bin/java.exe").toString())
         System.setProperty("AniLife.ffmpeg.dir", ffmpegDir.toString())
         System.setProperty("AniLife.upscaler.dir", upscalerDir.toString())
-        val mpvLibrary = findLibrary(mpvDir, "libmpv-2.dll")
-        if (mpvLibrary != null) {
-            System.setProperty("AniLife.mpv.library", mpvLibrary.toString())
+        // A user-supplied override wins over the managed copy, so it survives setup.
+        val override = System.getProperty("AniLife.mpv.library")?.takeIf(String::isNotBlank)
+        if (override != null && File(override).isFile) {
+            System.setProperty("AniLife.mpv.library", override)
         } else {
-            System.clearProperty("AniLife.mpv.library")
+            val mpvLibrary = findLibrary(mpvDir, "libmpv-2.dll")
+            if (mpvLibrary != null) {
+                System.setProperty("AniLife.mpv.library", mpvLibrary.toString())
+            } else {
+                System.clearProperty("AniLife.mpv.library")
+            }
         }
         if (isWindows && isInstalled(Dependency.JRE)) {
             installDir.resolve("use-jre").toFile().writeText("1")
@@ -295,40 +307,38 @@ class DependencyManager(
         }
         var archive: Path? = null
         try {
-            val source = resolveSource(dependency)
-            archive = Files.createTempFile("anilife-${dependency.name.lowercase()}-", archiveSuffix(source.url))
-            download(source, archive, dependency, onProgress)
-            state(dependency) { copy(status = DependencyStatus.Extracting, progress = 1f) }
-            Files.createDirectories(installDir)
             val target = when (dependency) {
                 Dependency.JRE -> jreDir
                 Dependency.MPV -> mpvDir
                 Dependency.FFMPEG -> ffmpegDir
                 Dependency.UPSCALER -> upscalerDir
             }
-            extract(archive, target, dependency)
-            installDir.resolve("${dependency.name.lowercase()}.installed").toFile()
-                .writeText("${source.version}|${source.sha256}")
-            state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f) }
+            // Each candidate is resolved and installed in turn; a bad host or bad hash moves on.
+            firstWorkingSource(dependency, candidateSources(dependency, ::fetchText)) { source ->
+                archive?.let(Files::deleteIfExists)
+                val file = Files.createTempFile("anilife-${dependency.name.lowercase()}-", archiveSuffix(source.url))
+                archive = file
+                download(source, file, dependency, onProgress)
+                state(dependency) {
+                    copy(status = DependencyStatus.Extracting, progress = 1f, error = null)
+                }
+                Files.createDirectories(installDir)
+                extract(file, target, dependency)
+                installDir.resolve("${dependency.name.lowercase()}.installed").toFile()
+                    .writeText("${source.version}|${source.sha256}")
+                state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f) }
+            }
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
-            val detailed = IOException("${dependency.name} setup failed: ${error.message ?: error.javaClass.simpleName}", error)
-            fail(dependency, detailed)
-            throw detailed
+            fail(dependency, error)
+            throw error
         } finally {
             archive?.let(Files::deleteIfExists)
         }
     }
 
-    private fun resolveSource(dependency: Dependency): DependencySource = when (dependency) {
-        Dependency.JRE -> parseJreSource(fetchText(ADOPTIUM_API))
-        Dependency.MPV -> parseReleaseSource(fetchText(MPV_RELEASES), releaseAssetPattern(Dependency.MPV))
-        Dependency.FFMPEG -> parseReleaseSource(fetchText(FFMPEG_RELEASES), releaseAssetPattern(Dependency.FFMPEG))
-        Dependency.UPSCALER -> upscalerSource()
-    }
-
-    private suspend fun download(
+    internal suspend fun download(
         source: DependencySource,
         target: Path,
         dependency: Dependency,

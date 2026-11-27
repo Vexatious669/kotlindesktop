@@ -85,8 +85,11 @@ fun main() {
         ),
         dependencyDirectory(),
     )
-    File(dependencyDirectory(), "mpv/libmpv-2.dll").takeIf(File::isFile)?.let {
-        System.setProperty("AniLife.mpv.library", it.absolutePath)
+    // The managed copy is only a default: an explicit -DAniLife.mpv.library always wins.
+    if (System.getProperty("AniLife.mpv.library").isNullOrBlank()) {
+        File(dependencyDirectory(), "mpv/libmpv-2.dll").takeIf(File::isFile)?.let {
+            System.setProperty("AniLife.mpv.library", it.absolutePath)
+        }
     }
     if (relaunchWithSetupJre()) return
     val instance = if (System.getenv("ANILIFE_ALLOW_MULTIPLE") == "1") {
