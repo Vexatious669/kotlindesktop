@@ -786,10 +786,10 @@ object DirectMediaDownloader {
         .take(100)
         .ifBlank { "Anime" }
 
-    fun defaultDownloadDirectory(): Path {
-        val base = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)?.let(::File)
-            ?: File(System.getProperty("user.home"), ".local/share")
-        return File(base, "AniLife/Downloads").toPath()
-    }
+fun defaultDownloadDirectory(): Path =
+    Path.of(System.getProperty("user.home"), "Videos", "AniLife")
+
+fun ensureDownloadDirectory(directory: Path = defaultDownloadDirectory()): Path =
+    Files.createDirectories(directory)
 }
 

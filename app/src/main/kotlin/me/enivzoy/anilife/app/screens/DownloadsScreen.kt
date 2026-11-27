@@ -908,7 +908,7 @@ private fun DirectDownloadDialog(
                     OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
+                    Text("Audio: ${audio.uppercase()} · saved in your download folder", fontSize = 11.sp)
                 }
                 PageScrollbar(dialogScrollState, Modifier.align(Alignment.CenterEnd))
             }

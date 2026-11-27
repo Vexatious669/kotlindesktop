@@ -8,6 +8,14 @@ import kotlin.test.assertTrue
 
 class DirectMediaDownloaderTest {
     @Test
+    fun defaultsDownloadsToTheUsersVideosFolder() {
+        assertEquals(
+            Path.of(System.getProperty("user.home"), "Videos", "AniLife"),
+            DirectMediaDownloader.defaultDownloadDirectory(),
+        )
+    }
+
+    @Test
     fun detectsHlsAndDashPlaylists() {
         assertTrue(DirectMediaDownloader.isStreamUrl("https://example.com/master.m3u8?token=abc"))
         assertTrue(DirectMediaDownloader.isStreamUrl("https://example.com/manifest.mpd"))

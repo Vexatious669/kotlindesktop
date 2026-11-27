@@ -35,6 +35,7 @@ import me.enivzoy.anilife.app.ui.ProvideHighRefresh
 import me.enivzoy.anilife.app.ui.FrameProbe
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DependencyManager
+import me.enivzoy.anilife.app.data.DirectMediaDownloader
 import me.enivzoy.anilife.app.data.SavedWindow
 import me.enivzoy.anilife.app.data.SingleInstance
 import me.enivzoy.anilife.app.data.WindowStateStore
@@ -45,6 +46,7 @@ import me.enivzoy.anilife.app.data.restoreWindowBounds
 import me.enivzoy.anilife.app.screens.SetupScreen
 import java.awt.Color
 import java.io.File
+import java.io.IOException
 import java.awt.Dimension
 import java.awt.EventQueue
 import java.awt.GraphicsEnvironment
@@ -77,6 +79,18 @@ private fun skipSetup(): Boolean =
 
 fun main() {
     runCatching { DiagnosticsPaths.ensure() }
+    try {
+        DirectMediaDownloader.ensureDownloadDirectory()
+    } catch (failure: IOException) {
+        logger.error(failure) { "Couldn't create the default download folder." }
+        javax.swing.JOptionPane.showMessageDialog(
+            null,
+            "AniLife couldn't create the download folder:\n${DirectMediaDownloader.defaultDownloadDirectory()}\n\n${failure.message}",
+            "AniLife startup error",
+            javax.swing.JOptionPane.ERROR_MESSAGE,
+        )
+        return
+    }
     installFatalExceptionHandler()
     migrateLegacyDependencyDirectory(
         legacyDependencyDirectory(
