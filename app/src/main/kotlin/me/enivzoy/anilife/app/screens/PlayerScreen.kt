@@ -56,6 +56,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -71,9 +72,12 @@ import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
 import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.PlayerAction
 import me.enivzoy.anilife.app.data.AniListSync
+import me.enivzoy.anilife.app.data.AudioLanguages
 import me.enivzoy.anilife.app.data.MyAnimeListSync
 import me.enivzoy.anilife.app.player.MpvPlaybackEngine
+import me.enivzoy.anilife.app.player.PlayerAudioChoice
 import me.enivzoy.anilife.app.player.WakeLock
+import me.enivzoy.anilife.app.player.buildAudioChoices
 import me.enivzoy.anilife.app.ui.appTween
 import me.enivzoy.anilife.core.model.AnimeCard
 import me.enivzoy.anilife.core.model.AnimeDetail
@@ -108,7 +112,8 @@ fun PlayerScreen(
     episodeTitles: Map<Double, String> = emptyMap(),
     episodeThumbnails: Map<Double, String> = emptyMap(),
     alternatives: List<AnimeVideoSource> = emptyList(),
-    audioTrack: String = "Sub",
+    audioResolving: Boolean = false,
+    audioError: String? = null,
     detail: AnimeDetail? = null,
     settings: AppSettings = AppSettings(),
     onSettingsChange: (AppSettings) -> Unit = {},
@@ -118,7 +123,6 @@ fun PlayerScreen(
     onClosePip: () -> Unit = {},
     onToggleFullscreen: () -> Unit = {},
     onSourceSelect: (AnimeVideoSource) -> Unit = {},
-    onAudioChange: (String) -> Unit = {},
     onEpisodeChange: (Double) -> Unit = {},
     onSmartDownload: (Double) -> Unit = {},
     onSmartDelete: (Double) -> Unit = {},
@@ -165,7 +169,8 @@ fun PlayerScreen(
     val presenceReporter = rememberUpdatedState(onPresence)
     val reportPresence = remember { { p: Presence? -> presenceReporter.value(p) } }
 
-    val engine = remember(url, headers, selectedSource?.subtitles, resumePosition, settings.expMpvBuffering) {
+    val hasStream = url?.takeIf(String::isNotBlank) != null
+    val engine = remember(detail?.id, episode, settings.expMpvBuffering, hasStream) {
         url?.takeIf(String::isNotBlank)?.let { stream ->
             MpvPlaybackEngine(
                 url = stream,
@@ -179,10 +184,28 @@ fun PlayerScreen(
                 playbackBufferSize = settings.playbackBufferSize,
                 gpuAcceleration = settings.gpuAcceleration,
                 experimentalBuffering = settings.expMpvBuffering,
+                preferredAudioLanguage = selectedSource?.audioLanguage,
                 presenceInfo = playbackInfo,
                 onPresence = reportPresence,
             )
         }
+    }
+    LaunchedEffect(engine, url, headers) {
+        val player = engine ?: return@LaunchedEffect
+        val targetUrl = url?.takeIf(String::isNotBlank) ?: return@LaunchedEffect
+        if (targetUrl == player.currentUrl) return@LaunchedEffect
+        player.switchSource(
+            url = targetUrl,
+            headers = headers,
+            subtitles = selectedSource?.subtitles.orEmpty(),
+            audioLanguage = selectedSource?.audioLanguage,
+            label = selectedSource?.let { source ->
+                listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · ")
+            },
+        )
+    }
+    val audioChoices = remember(engine?.audioTracks, alternatives, url) {
+        buildAudioChoices(engine?.audioTracks.orEmpty(), alternatives, url)
     }
     LaunchedEffect(engine, settings.subtitleAppearance) {
         engine?.applySubtitleAppearance(settings.subtitleAppearance)
@@ -587,7 +610,8 @@ fun PlayerScreen(
         },
     ) {
         if (!isPipMode) videoSurface(Modifier.fillMaxSize())
-        val notice = engine?.error
+        val notice = engine?.switchError
+            ?: engine?.error
             ?: engine?.takeIf { it.isLoading && it.videoFrame == null }?.let { "Buffering…" }
         if (notice != null) {
             Text(
@@ -713,6 +737,13 @@ fun PlayerScreen(
                     onClick = { openPanel = "episodes" },
                     showLabel = true,
                 )
+                val currentAudio = audioChoices.firstOrNull(PlayerAudioChoice::selected) ?: audioChoices.firstOrNull()
+                if (audioChoices.size > 1 || audioResolving) PlayerActionPill(
+                    label = currentAudio?.language?.let { "Audio · ${AudioLanguages.shortName(it)}" } ?: "Audio",
+                    icon = Icons.Rounded.GraphicEq,
+                    onClick = { openPanel = "audio" },
+                    showLabel = true,
+                )
                 PlayerActionPill("Subtitles", Icons.Rounded.Subtitles, { openPanel = "subtitles" }, showLabel = true)
                 PlayerActionPill("Settings", Icons.Rounded.Settings, { openPanel = "settings" }, showLabel = true)
                 PlayerActionPill(
@@ -727,10 +758,12 @@ fun PlayerScreen(
             panel = openPanel,
             onDismiss = { openPanel = null },
             sources = alternatives,
-            audio = audioTrack,
             selectedSourceUrl = url,
             subtitles = engine?.subtitleTracks.orEmpty(),
             subtitleSources = selectedSource?.subtitles.orEmpty(),
+            audioChoices = audioChoices,
+            audioResolving = audioResolving,
+            audioError = audioError ?: engine?.switchError,
             episodes = episodeRows,
             currentEpisode = episode,
             posterUrl = detail?.cover,
@@ -742,7 +775,17 @@ fun PlayerScreen(
             onScreenSizeChange = { onSettingsChange(settings.copy(contentScale = it)) },
             autoplayNext = settings.autoplayNextEpisode,
             onAutoplayNextChange = { onSettingsChange(settings.copy(autoplayNextEpisode = it)) },
-            onAudioChange = onAudioChange,
+            onAudioChoice = { choice ->
+                val trackId = choice.embeddedTrackId
+                val source = choice.source
+                if (trackId != null) {
+                    engine?.selectAudioTrack(trackId)
+                    openPanel = null
+                } else if (source != null) {
+                    openPanel = null
+                    onSourceSelect(source)
+                }
+            },
             onSourceSelect = { source -> openPanel = null; onSourceSelect(source) },
             onEpisodeSelect = { selectedEpisode -> openPanel = null; onEpisodeChange(selectedEpisode) },
             onSubtitleSelect = { track, source ->

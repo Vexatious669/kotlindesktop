@@ -137,7 +137,7 @@ internal class WasmAnimeProviders(
                     val result = instance.invoke("servers", query) as? Map<*, *> ?: return emptyList()
                     if (result["isOk"] != true) return emptyList()
                     val servers = result["ok"] as? List<*> ?: return emptyList()
-                    return servers.flatMap { value -> parseServer(value, name, dub) }
+                    return servers.flatMap { value -> ProviderServerParser.parse(value, name, dub) }
                 } finally {
                     instance.close()
                 }
@@ -265,41 +265,6 @@ internal class WasmAnimeProviders(
     )
 
     private data class ProviderHttpResponse(val status: Int, val headers: List<Pair<String, String>>, val body: ByteArray)
-
-    private fun parseServer(value: Any?, providerName: String, requestedDub: Boolean): List<AnimeVideoSource> {
-        val server = value as? Map<*, *> ?: return emptyList()
-        val serverName = server["name"] as? String ?: providerName
-        val dub = server["dub"] as? Boolean ?: requestedDub
-        val language = server["language"] as? String ?: ""
-        val headers = (server["headers"] as? List<*>)?.mapNotNull { pair ->
-            val parts = pair as? List<*> ?: return@mapNotNull null
-            val key = parts.getOrNull(0) as? String ?: return@mapNotNull null
-            val header = parts.getOrNull(1) as? String ?: return@mapNotNull null
-            key to header
-        }?.toMap().orEmpty()
-        val streams = server["streams"] as? List<*> ?: return emptyList()
-        return streams.mapNotNull { item ->
-            val stream = item as? Map<*, *> ?: return@mapNotNull null
-            val url = stream["url"] as? String ?: return@mapNotNull null
-            val format = stream["format"] as? String ?: inferFormat(url)
-            AnimeVideoSource(
-                provider = providerName,
-                server = serverName,
-                audio = if (dub) "Dub" else "Sub",
-                format = format,
-                quality = stream["quality"] as? String,
-                url = url,
-                headers = headers,
-                language = language,
-            )
-        }
-    }
-
-    private fun inferFormat(url: String) = when {
-        ".m3u8" in url.lowercase() -> "hls"
-        ".mpd" in url.lowercase() -> "dash"
-        else -> "mp4"
-    }
 
     private val http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).connectTimeout(Duration.ofSeconds(10)).build()
 

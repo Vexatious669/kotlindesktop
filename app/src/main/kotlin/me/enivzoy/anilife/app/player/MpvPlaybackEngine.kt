@@ -7,20 +7,17 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import me.enivzoy.anilife.mpv.EndReason
 import me.enivzoy.anilife.mpv.Event
+import me.enivzoy.anilife.mpv.Format
 import me.enivzoy.anilife.mpv.Mpv
 import me.enivzoy.anilife.mpv.MpvError
 import me.enivzoy.anilife.mpv.PropertyValue
 import me.enivzoy.anilife.mpv.defaultPlayerOptions
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
+import me.enivzoy.anilife.app.data.AudioLanguage
 import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
 import me.enivzoy.anilife.app.data.PlayerAction
 import me.enivzoy.anilife.app.data.Presence
 import me.enivzoy.anilife.app.data.SubtitleAppearance
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image as SkiaImage
@@ -92,10 +89,10 @@ internal fun bufferedPlayerOptions(experimental: Boolean): List<Pair<String, Str
  * time follow the real playback instead of a simulated clock.
  */
 class MpvPlaybackEngine(
-    private val url: String,
-    private val headers: Map<String, String> = emptyMap(),
+    url: String,
+    headers: Map<String, String> = emptyMap(),
     fallbackDurationSeconds: Double = 0.0,
-    private val serverSubtitles: List<AnimeSubtitleSource> = emptyList(),
+    serverSubtitles: List<AnimeSubtitleSource> = emptyList(),
     private val startPositionSeconds: Double = 0.0,
     private val subtitlesByDefault: Boolean = true,
     private val subtitleLanguage: String = "en",
@@ -106,6 +103,7 @@ class MpvPlaybackEngine(
 private val playbackBufferSize: String = "auto",
     private val gpuAcceleration: String = "off",
     private val experimentalBuffering: Boolean = true,
+    private val preferredAudioLanguage: AudioLanguage? = null,
     /** Series metadata needed for Rich Presence; playback state is supplied by this engine. */
     private var presenceInfo: DiscordPlaybackInfo? = null,
     private val onPresence: (Presence?) -> Unit = {},
@@ -127,15 +125,44 @@ private val playbackBufferSize: String = "auto",
         private set
     var subtitleTracks by mutableStateOf<List<PlayerSubtitleTrack>>(emptyList())
         private set
+    var audioTracks by mutableStateOf<List<PlayerAudioTrack>>(emptyList())
+        private set
+    var switchError by mutableStateOf<String?>(null)
+        private set
     var isMuted by mutableStateOf(false)
         private set
     var subtitleDelaySeconds by mutableStateOf(0.0)
         private set
 
+    val currentUrl: String get() = sourceUrl
+    // the source mpv actually opened; may lag currentUrl while a switch is loading
+    val currentLoadedUrl: String? get() = loadedUrl
+
+    // embedded track first because a source label can lag the real stream
+    val currentAudioLanguage: AudioLanguage?
+        get() = audioTracks.firstOrNull { it.selected }?.language?.takeIf(AudioLanguage::known)
+            ?: sourceAudioLanguage
+            ?: audioTracks.firstOrNull { it.selected }?.language
+
     private val closed = AtomicBoolean(false)
     @Volatile private var player: Mpv? = null
     @Volatile private var surface: Mpv.SoftwareVideoSurface? = null
     @Volatile private var worker: Thread? = null
+    @Volatile private var sourceUrl = url
+    @Volatile private var sourceHeaders = headers
+    @Volatile private var sourceSubtitles = serverSubtitles
+    @Volatile private var sourceAudioLanguage = preferredAudioLanguage
+    @Volatile private var loadedUrl: String? = null
+    @Volatile private var lastGoodSource: LoadedSource? = null
+    @Volatile private var pendingRestore: PlaybackRestore? = null
+    @Volatile private var pendingSwitchLabel: String? = null
+    @Volatile private var rollingBack = false
+    private data class LoadedSource(
+        val url: String,
+        val headers: Map<String, String>,
+        val subtitles: List<AnimeSubtitleSource>,
+        val language: AudioLanguage?,
+    )
     @Volatile private var activeSubtitleAppearance = subtitleAppearance
     @Volatile private var lastPresenceReportAt = 0L
     @Volatile private var lastFrameAt = 0L
@@ -157,17 +184,19 @@ private val playbackBufferSize: String = "auto",
     private fun runPlayback() {
         try {
             val hwdec = hwdecFor(gpuAcceleration)
-            val mpv = createMpvWithFallback(headers, hwdec)
+            val mpv = createMpvWithFallback(sourceHeaders, hwdec)
             player = mpv
             applySubtitleAppearanceTo(mpv, activeSubtitleAppearance)
             mpv.observeDouble("time-pos")
             mpv.observeDouble("duration")
             mpv.observeFlag("pause")
             mpv.observeFlag("mute")
+            mpv.observeProperty("aid", Format.STRING)
+            mpv.observeProperty("sid", Format.STRING)
             mpv.startEvents(::onEvent)
             val target = mpv.createSoftwareVideoSurface(renderWidth, renderHeight, renderFormat)
             surface = target
-            mpv.loadfile(url)
+            mpv.loadfile(sourceUrl)
 
             while (!closed.get()) {
                 if (target.needsRender()) {
@@ -222,8 +251,10 @@ private val playbackBufferSize: String = "auto",
                     reportPresence(force = true)
                 }
                 "mute" -> (event.value as? PropertyValue.Flag)?.value?.let { isMuted = it }
+                "aid", "sid" -> refreshTracks()
             }
             Event.FileLoaded -> {
+                val firstLoad = lastGoodSource == null
                 positionClock.reset()
                 isLoading = false
                 transition("playing")
@@ -232,35 +263,51 @@ private val playbackBufferSize: String = "auto",
                 player?.getDoubleProperty("duration")
                     ?.takeIf { it.isFinite() && it > 0.0 }
                     ?.let { durationSeconds = it }
-                serverSubtitles.distinctBy(AnimeSubtitleSource::url).forEach { subtitle ->
+                sourceSubtitles.distinctBy(AnimeSubtitleSource::url).forEach { subtitle ->
                     runCatching { player?.addSubtitle(subtitle.url, subtitle.label, subtitle.language) }
                 }
-                refreshSubtitleTracks()
-                applyDefaultSubtitles()
+                refreshTracks()
+                player?.let(::applyDefaultSubtitlesInternal)
+                lastGoodSource = LoadedSource(sourceUrl, sourceHeaders, sourceSubtitles, sourceAudioLanguage)
+                loadedUrl = sourceUrl
+                pendingSwitchLabel = null
+                rollingBack = false
+                pendingRestore?.let { restore ->
+                    player?.let { mpv -> applyRestore(mpv, restore) }
+                    pendingRestore = null
+                }
                 // Resume where the episode was left off, a few seconds back so the viewer hears the
                 // line before the one they missed.
-                if (startPositionSeconds > 0.0) {
+                if (firstLoad && startPositionSeconds > 0.0) {
                     val target = startPositionSeconds
                     positionSeconds = target
                     runCatching { player?.seekTo(target) }
                 }
+                refreshTracks()
                 reportPresence(force = true)
             }
             is Event.EndFile -> {
                 positionClock.reset()
                 if (event.reason == EndReason.EOF) {
+                    isLoading = false
                     isPlaying = false
                     positionSeconds = durationSeconds
                     hasEnded = true
                     transition("idle")
                 } else if (event.reason == EndReason.ERROR) {
-                    error = event.error ?: "mpv could not play this stream"
-                    val code = event.code
-                    logger.error { "mpv end-file error code=$code error=$error" }
-                    transition("error", "code=$code $error")
+                    if (rollBackAfterFailedSwitch()) {
+                        isLoading = true
+                    } else {
+                        isLoading = false
+                        error = event.error ?: "mpv could not play this stream"
+                        val code = event.code
+                        logger.error { "mpv end-file error code=$code error=$error" }
+                        transition("error", "code=$code $error")
+                    }
+                } else {
+                    isLoading = false
                 }
-                isLoading = false
-                onPresence(null)
+                if (!isLoading) onPresence(null)
             }
             is Event.Log -> {
                 val level = event.level
@@ -353,7 +400,57 @@ private val playbackBufferSize: String = "auto",
     fun selectSubtitleTrack(id: Int?) {
         player?.setPropertyValue("sid", id?.toString() ?: "no")
         if (id != null) player?.setPropertyValue("sub-visibility", "yes")
-        refreshSubtitleTracks()
+        refreshTracks()
+    }
+
+    fun selectAudioTrack(id: Int?) {
+        player?.setPropertyValue("aid", id?.toString() ?: "no")
+        switchError = null
+        refreshTracks()
+    }
+
+    // loadfile keeps volume, speed and mute alive; a failed load falls back to the last good stream
+    fun switchSource(
+        url: String,
+        headers: Map<String, String>,
+        subtitles: List<AnimeSubtitleSource>,
+        audioLanguage: AudioLanguage?,
+        label: String? = null,
+    ) {
+        if (url.isBlank() || url == sourceUrl) return
+        synchronized(this) {
+            // An unlabelled dub keeps the stream's own default track instead of guessing.
+            val wantedAudio = when {
+                audioLanguage == null -> currentAudioLanguage
+                audioLanguage.known -> audioLanguage
+                else -> null
+            }
+            pendingRestore = PlaybackRestore(
+                positionSeconds = positionSeconds,
+                // a switch before the first successful load should still autoplay
+                paused = !isPlaying && lastGoodSource != null,
+                subtitlePreference = subtitlePreference(),
+                audioLanguage = wantedAudio,
+            )
+            pendingSwitchLabel = label
+            sourceUrl = url
+            sourceHeaders = headers
+            sourceSubtitles = subtitles
+            sourceAudioLanguage = audioLanguage
+            switchError = null
+            rollingBack = false
+            error = null
+            hasEnded = false
+            loadedUrl = null
+            val mpv = player
+            if (mpv != null) {
+                applyHeaders(mpv, headers)
+                runCatching { mpv.command("sub-remove") }
+                isLoading = true
+                transition("loading", "switch")
+                mpv.loadfile(url)
+            }
+        }
     }
 
     /**
@@ -363,21 +460,23 @@ private val playbackBufferSize: String = "auto",
      */
     fun applyDefaultSubtitles() {
         val mpv = player ?: return
+        refreshTracks()
+        applyDefaultSubtitlesInternal(mpv)
+    }
+
+    private fun applyDefaultSubtitlesInternal(mpv: Mpv) {
         if (!subtitlesByDefault) {
             runCatching { mpv.setPropertyValue("sid", "no") }
-            refreshSubtitleTracks()
             return
         }
-        refreshSubtitleTracks()
         if (subtitleTracks.any(PlayerSubtitleTrack::selected)) return
         val track = chooseSubtitleTrack(subtitleTracks, subtitleLanguage) ?: return
         runCatching { mpv.setPropertyValue("sid", track.id.toString()) }
-        refreshSubtitleTracks()
     }
 
     fun addSubtitle(source: AnimeSubtitleSource) {
         player?.addSubtitle(source.url, source.label, source.language, select = true)
-        refreshSubtitleTracks()
+        refreshTracks()
     }
 
     fun setVolume(volume: Int) {
@@ -415,36 +514,77 @@ private val playbackBufferSize: String = "auto",
             .forEach { (name, value) -> mpv.setPropertyValue(name, value) }
     }
 
-    private fun refreshSubtitleTracks() {
-        val text = runCatching { player?.getStringProperty("track-list") }.getOrNull() ?: return
-        subtitleTracks = runCatching {
-            (Json.parseToJsonElement(text) as? JsonArray ?: JsonArray(emptyList())).mapNotNull { item ->
-                val track = item as? JsonObject ?: return@mapNotNull null
-                if (track.string("type") != "sub") return@mapNotNull null
-                val id = track.string("id")?.toIntOrNull() ?: return@mapNotNull null
-                val language = track.string("lang")?.takeIf(String::isNotBlank)
-                val title = track.string("title")?.takeIf(String::isNotBlank)
-                val external = track.string("external") == "true"
-                val label = title ?: language?.let(::subtitleLanguageName)
-                    ?: if (external) "External subtitle" else "Subtitle $id"
-                PlayerSubtitleTrack(id, label, language, external, track.string("selected") == "true")
+    private fun applyRestore(mpv: Mpv, restore: PlaybackRestore) {
+        restore.audioLanguage?.let { wanted ->
+            chooseAudioTrack(audioTracks, wanted)?.let { track ->
+                runCatching { mpv.setPropertyValue("aid", track.id.toString()) }
             }
-        }.getOrDefault(emptyList())
+        }
+        when (val preference = restore.subtitlePreference) {
+            null -> Unit
+            "off" -> runCatching { mpv.setPropertyValue("sid", "no") }
+            else -> findSubtitleTrack(preference)?.let { track ->
+                runCatching {
+                    mpv.setPropertyValue("sid", track.id.toString())
+                    mpv.setPropertyValue("sub-visibility", "yes")
+                }
+            }
+        }
+        if (restore.positionSeconds > 0.0) {
+            val target = restorePosition(restore.positionSeconds, durationSeconds)
+            positionSeconds = target
+            runCatching { mpv.seekTo(target) }
+        }
+        if (restore.paused) {
+            runCatching { mpv.setPaused(true) }
+            isPlaying = false
+        }
     }
 
-    private fun JsonObject.string(name: String): String? = this[name]?.jsonPrimitive?.contentOrNull
+    private fun findSubtitleTrack(language: String): PlayerSubtitleTrack? =
+        subtitleTracks.firstOrNull { it.selected && subtitleLanguageMatches(it.language, language) }
+            ?: subtitleTracks.firstOrNull { subtitleLanguageMatches(it.language, language) }
 
-    private fun subtitleLanguageName(code: String): String = when (code.lowercase()) {
-        "en" -> "English"
-        "ja" -> "Japanese"
-        "es" -> "Spanish"
-        "fr" -> "French"
-        "de" -> "German"
-        "it" -> "Italian"
-        "pt" -> "Portuguese"
-        "ru" -> "Russian"
-        "zh" -> "Chinese"
-        else -> code.uppercase()
+    private fun subtitlePreference(): String? = when {
+        subtitleTracks.isEmpty() -> null
+        subtitleTracks.none(PlayerSubtitleTrack::selected) -> "off"
+        else -> subtitleTracks.first(PlayerSubtitleTrack::selected).language
+    }
+
+    private fun rollBackAfterFailedSwitch(): Boolean {
+        val good = lastGoodSource ?: return false
+        val mpv = player ?: return false
+        val restore = pendingRestore
+        if (restore == null || rollingBack || good.url == sourceUrl) return false
+        val failedLabel = pendingSwitchLabel
+        rollingBack = true
+        switchError = if (failedLabel != null) {
+            "Couldn't switch to $failedLabel. Keeping the previous stream."
+        } else {
+            "Couldn't switch the audio. Keeping the previous stream."
+        }
+        sourceUrl = good.url
+        sourceHeaders = good.headers
+        sourceSubtitles = good.subtitles
+        sourceAudioLanguage = good.language
+        pendingRestore = restore
+        applyHeaders(mpv, good.headers)
+        runCatching { mpv.command("sub-remove") }
+        error = null
+        loadedUrl = null
+        transition("loading", "rollback")
+        mpv.loadfile(good.url)
+        return true
+    }
+
+    private fun applyHeaders(mpv: Mpv, headers: Map<String, String>) {
+        runCatching { mpv.setPropertyValue("http-header-fields", httpHeaderFields(headers)) }
+    }
+
+    private fun refreshTracks() {
+        val text = runCatching { player?.getStringProperty("track-list") }.getOrNull() ?: return
+        subtitleTracks = parseSubtitleTracks(text)
+        audioTracks = parseAudioTracks(text)
     }
 
     override fun close() {
@@ -472,10 +612,8 @@ private val playbackBufferSize: String = "auto",
             subtitleLanguage.trim().lowercase()
                 .takeIf { it.isNotEmpty() && it != "none" }
                 ?.let { add("slang" to it) }
-            val fields = headers.entries
-                .filter { it.key.isNotBlank() && it.value.isNotBlank() }
-                .map { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }
-            if (fields.isNotEmpty()) add("http-header-fields" to fields.joinToString(","))
+            val fields = httpHeaderFields(headers)
+            if (fields.isNotEmpty()) add("http-header-fields" to fields)
         }
     }
 
@@ -491,6 +629,11 @@ private val playbackBufferSize: String = "auto",
         }
     }
 }
+
+internal fun httpHeaderFields(headers: Map<String, String>): String =
+    headers.entries
+        .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+        .joinToString(",") { (name, value) -> "$name: ${value.replace(',', ' ').replace('\n', ' ')}" }
 
 internal fun subtitleAppearanceOptions(appearance: SubtitleAppearance): List<Pair<String, String>> {
     val position = appearance.verticalOffset.coerceIn(0f, 30f)

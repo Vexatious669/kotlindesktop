@@ -53,6 +53,7 @@ import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
 import me.enivzoy.anilife.app.data.AutoDetectService
 import me.enivzoy.anilife.app.data.asAutoDetectLibrary
+import me.enivzoy.anilife.app.data.mergeVideoSources
 import me.enivzoy.anilife.app.data.DiscordOAuth
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
@@ -147,6 +148,10 @@ fun AniLifeApp(
     }
     val backStack = remember { mutableStateListOf<Screen>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    val mergedAudioKeys = remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(screen is Screen.Player) {
+        if (screen !is Screen.Player) mergedAudioKeys.value = emptySet()
+    }
     var homeLoaded by remember { mutableStateOf(false) }
     var playerFullscreen by remember { mutableStateOf(false) }
     var isPipMode by remember { mutableStateOf(false) }
@@ -400,6 +405,8 @@ fun AniLifeApp(
             headers = selected.headers,
             alternatives = resolved,
             audioTrack = audio,
+            audioResolving = false,
+            audioError = null,
             episode = episode,
             episodeTitle = rows.firstOrNull { it.number == episode }?.title,
             episodes = rows.map { it.number },
@@ -637,68 +644,112 @@ fun AniLifeApp(
                             )
                         },
                     )
-                    is Screen.Player -> PlayerScreen(
-                        title = target.title,
-                        showTitle = target.detail?.title?.takeIf(String::isNotBlank) ?: target.title.substringBefore(" · Episode "),
-                        url = target.url,
-                        headers = target.headers,
-                        alternatives = target.alternatives,
-                        audioTrack = target.audioTrack,
-                        episode = target.episode,
-                        episodeTitle = target.episodeTitle,
-                        durationMinutes = target.detail?.duration,
-                        episodes = target.episodes,
-                        episodeTitles = target.episodeTitles,
-                        episodeThumbnails = target.episodeThumbnails,
-                        detail = target.detail,
-                        settings = settings,
-                        onSettingsChange = { updated -> updateSettings { updated } },
-                        isFullscreen = playerFullscreen,
-                        isPipMode = isPipMode,
-                        onTogglePip = { isPipMode = !isPipMode },
-                        onClosePip = { isPipMode = false },
-                        onToggleFullscreen = { playerFullscreen = !playerFullscreen },
-                        onSourceSelect = { source ->
-                            val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
-                            ActionBreadcrumbs.record("Clicked server: $serverName")
-                            logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality} url=${source.url}" }
-                            screen = target.copy(
-                                title = "${target.detail?.title ?: target.title.substringBefore(" · Episode ")} · Episode ${formatPlayerEpisode(target.episode ?: 1.0)} · ${source.provider} ${source.quality ?: source.format.uppercase()}",
-                                url = source.url,
-                                headers = source.headers,
-                                audioTrack = source.audio,
+                    is Screen.Player -> {
+                        LaunchedEffect(target.detail?.id, target.episode) {
+                            val anime = target.detail ?: return@LaunchedEffect
+                            val episodeNumber = target.episode ?: return@LaunchedEffect
+                            // downloaded/local playback uses a filesystem path, so there is nothing to resolve
+                            if (target.url?.startsWith("http", ignoreCase = true) != true) return@LaunchedEffect
+                            val key = "${anime.id}:$episodeNumber"
+                            if (key in mergedAudioKeys.value) return@LaunchedEffect
+                            val current = screen as? Screen.Player ?: return@LaunchedEffect
+                            val currentAudio = current.alternatives.firstOrNull { it.url == current.url }?.audio ?: current.audioTrack
+                            if (current.alternatives.any { it.audio.equals("Dub", true) } &&
+                                current.alternatives.any { it.audio.equals("Sub", true) }
+                            ) {
+                                mergedAudioKeys.value = mergedAudioKeys.value + key
+                                return@LaunchedEffect
+                            }
+                            val fetchDub = !currentAudio.equals("Dub", true)
+                            mergedAudioKeys.value = mergedAudioKeys.value + key
+                            screen = current.copy(audioResolving = true, audioError = null)
+                            var failure = false
+                            val others = try {
+                                animeVideoProviders.sources(
+                                    anilistId = anime.id,
+                                    malId = anime.malId,
+                                    titles = listOfNotNull(anime.title, anime.titleRomaji, anime.titleNative) + anime.synonyms,
+                                    episode = episodeNumber,
+                                    dub = fetchDub,
+                                )
+                            } catch (cancelled: CancellationException) {
+                                mergedAudioKeys.value = mergedAudioKeys.value - key
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                failure = true
+                                logger.warn { "other-audio lookup failed episode=$episodeNumber ${error.message}" }
+                                emptyList()
+                            }
+                            val now = screen as? Screen.Player ?: return@LaunchedEffect
+                            if (now.detail?.id != anime.id || now.episode != episodeNumber) return@LaunchedEffect
+                            screen = now.copy(
+                                alternatives = mergeVideoSources(now.alternatives + others),
+                                audioResolving = false,
+                                audioError = if (failure) "Couldn't check the other audio tracks." else null,
                             )
-                        },
-                        onAudioChange = { audio ->
-                            val activeEpisode = target.episode
-                            if (activeEpisode != null) scope.launch { resolvePlayerEpisode(target, activeEpisode, audio) }
-                        },
-                        onSmartDownload = { nextEpisode ->
-                            smartDownloadNext(target.detail, nextEpisode, target.audioTrack)
-                        },
-                        onSmartDelete = { oldEpisode -> deleteSmartDownload(target.detail, oldEpisode) },
-                        onEpisodeChange = { episode ->
-                            if (target.detail != null) scope.launch { resolvePlayerEpisode(target, episode, target.audioTrack) }
-                            else screen = target.copy(episode = episode, episodeTitle = target.episodeTitles[episode])
-                        },
-                        onPresence = { presence ->
-                            if (presence != null) {
-                                discordPresence.show(presence)
-                            } else {
-                                // mpv reports an end-of-file and Compose disposes the old engine when
-                                // switching episodes. Don't flash idle unless we really left the player.
-                                if (screen !is Screen.Player) {
-                                    discordPresence.clearPlayer()
+                        }
+                        PlayerScreen(
+                            title = target.title,
+                            showTitle = target.detail?.title?.takeIf(String::isNotBlank) ?: target.title.substringBefore(" · Episode "),
+                            url = target.url,
+                            headers = target.headers,
+                            alternatives = target.alternatives,
+                            audioResolving = target.audioResolving,
+                            audioError = target.audioError,
+                            episode = target.episode,
+                            episodeTitle = target.episodeTitle,
+                            durationMinutes = target.detail?.duration,
+                            episodes = target.episodes,
+                            episodeTitles = target.episodeTitles,
+                            episodeThumbnails = target.episodeThumbnails,
+                            detail = target.detail,
+                            settings = settings,
+                            onSettingsChange = { updated -> updateSettings { updated } },
+                            isFullscreen = playerFullscreen,
+                            isPipMode = isPipMode,
+                            onTogglePip = { isPipMode = !isPipMode },
+                            onClosePip = { isPipMode = false },
+                            onToggleFullscreen = { playerFullscreen = !playerFullscreen },
+                            onSourceSelect = { source ->
+                                val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
+                                ActionBreadcrumbs.record("Clicked server: $serverName")
+                                logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality} url=${source.url}" }
+                                screen = target.copy(
+                                    title = "${target.detail?.title ?: target.title.substringBefore(" · Episode ")} · Episode ${formatPlayerEpisode(target.episode ?: 1.0)} · ${source.provider} ${source.quality ?: source.format.uppercase()}",
+                                    url = source.url,
+                                    headers = source.headers,
+                                    audioTrack = source.audio,
+                                    audioResolving = false,
+                                    audioError = null,
+                                )
+                            },
+                            onSmartDownload = { nextEpisode ->
+                                smartDownloadNext(target.detail, nextEpisode, target.audioTrack)
+                            },
+                            onSmartDelete = { oldEpisode -> deleteSmartDownload(target.detail, oldEpisode) },
+                            onEpisodeChange = { episode ->
+                                if (target.detail != null) scope.launch { resolvePlayerEpisode(target, episode, target.audioTrack) }
+                                else screen = target.copy(episode = episode, episodeTitle = target.episodeTitles[episode])
+                            },
+                            onPresence = { presence ->
+                                if (presence != null) {
+                                    discordPresence.show(presence)
                                 } else {
-                                    scope.launch {
-                                        delay(700)
-                                        if (screen !is Screen.Player) discordPresence.clearPlayer()
+                                    // mpv reports an end-of-file and Compose disposes the old engine when
+                                    // switching episodes. Don't flash idle unless we really left the player.
+                                    if (screen !is Screen.Player) {
+                                        discordPresence.clearPlayer()
+                                    } else {
+                                        scope.launch {
+                                            delay(700)
+                                            if (screen !is Screen.Player) discordPresence.clearPlayer()
+                                        }
                                     }
                                 }
-                            }
-                        },
-                        onBack = ::goBack,
-                    )
+                            },
+                            onBack = ::goBack,
+                        )
+                    }
                 }
                 }
                 }

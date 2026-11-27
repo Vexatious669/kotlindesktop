@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -44,6 +45,8 @@ import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AnimeEpisode
 import me.enivzoy.anilife.app.data.AnimeSubtitleSource
 import me.enivzoy.anilife.app.data.AnimeVideoSource
+import me.enivzoy.anilife.app.data.AudioLanguages
+import me.enivzoy.anilife.app.player.PlayerAudioChoice
 import me.enivzoy.anilife.app.player.PlayerSubtitleTrack
 import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.PageScrollbar
@@ -55,10 +58,12 @@ internal fun PlayerPanelLayer(
     panel: String?,
     onDismiss: () -> Unit,
     sources: List<AnimeVideoSource>,
-    audio: String,
     selectedSourceUrl: String?,
     subtitles: List<PlayerSubtitleTrack>,
     subtitleSources: List<AnimeSubtitleSource>,
+    audioChoices: List<PlayerAudioChoice>,
+    audioResolving: Boolean,
+    audioError: String?,
     episodes: List<AnimeEpisode>,
     currentEpisode: Double?,
     posterUrl: String?,
@@ -70,7 +75,7 @@ internal fun PlayerPanelLayer(
     onScreenSizeChange: (String) -> Unit,
     autoplayNext: Boolean,
     onAutoplayNextChange: (Boolean) -> Unit,
-    onAudioChange: (String) -> Unit,
+    onAudioChoice: (PlayerAudioChoice) -> Unit,
     onSourceSelect: (AnimeVideoSource) -> Unit,
     onEpisodeSelect: (Double) -> Unit,
     onSubtitleSelect: (Int?, AnimeSubtitleSource?) -> Unit,
@@ -95,7 +100,8 @@ internal fun PlayerPanelLayer(
             }
             Spacer(Modifier.height(12.dp))
             when (panel) {
-                "sources" -> SourcesPanel(sources, audio, selectedSourceUrl, subtitles, onAudioChange, onSourceSelect)
+                "sources" -> SourcesPanel(sources, selectedSourceUrl, subtitles, onSourceSelect)
+                "audio" -> AudioPanel(audioChoices, audioResolving, audioError, onAudioChoice)
                 "episodes" -> EpisodesPanel(episodes, currentEpisode, posterUrl, onEpisodeSelect)
                 "subtitles" -> SubtitlesPanel(subtitles, subtitleSources, onSubtitleSelect)
                 "settings" -> SettingsPanel(volume, onVolumeChange, speed, onSpeedChange, screenSize, onScreenSizeChange, autoplayNext, onAutoplayNextChange)
@@ -107,64 +113,107 @@ internal fun PlayerPanelLayer(
 @Composable
 private fun ColumnScope.SourcesPanel(
     sources: List<AnimeVideoSource>,
-    audio: String,
     selectedUrl: String?,
     subtitles: List<PlayerSubtitleTrack>,
-    onAudioChange: (String) -> Unit,
     onSelect: (AnimeVideoSource) -> Unit,
+) {
+    if (sources.isEmpty()) {
+        EmptyPanelMessage("No servers are available for this episode.")
+        return
+    }
+    val grouped = sources.groupBy { AudioLanguages.displayName(it.audioLanguage) }
+    val sourceListState = rememberLazyListState()
+    Box(Modifier.weight(1f)) {
+        LazyColumn(Modifier.fillMaxSize(), state = sourceListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            grouped.forEach { (language, langSources) ->
+                item(key = "lang-$language") {
+                    Text(
+                        language.uppercase(),
+                        color = AniLifeColors.MutedForeground,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    )
+                }
+                items(langSources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
+                    val selected = source.url == selectedUrl
+                    PanelChoice(
+                        title = listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · "),
+                        subtitle = buildString {
+                            if (selected) append("Playing now · ")
+                            append(if (source.audio.equals("Dub", true)) "Dubbed audio" else "Original audio")
+                            val available = source.subtitles.map(AnimeSubtitleSource::label).distinct().ifEmpty { subtitles.map(PlayerSubtitleTrack::label).distinct() }
+                            append(if (available.isEmpty()) " · subtitles load with the video" else " · subtitles: ${available.joinToString(", ")}")
+                            source.quality?.let { append(" · $it") }
+                        },
+                        selected = selected,
+                        onClick = { onSelect(source) },
+                    )
+                }
+            }
+        }
+        PageScrollbar(sourceListState, Modifier.align(Alignment.CenterEnd))
+    }
+}
+
+@Composable
+private fun ColumnScope.AudioPanel(
+    choices: List<PlayerAudioChoice>,
+    resolving: Boolean,
+    error: String?,
+    onSelect: (PlayerAudioChoice) -> Unit,
 ) {
     Text("AUDIO", color = AniLifeColors.MutedForeground, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
     Spacer(Modifier.height(8.dp))
-    Row(Modifier.fillMaxWidth().clip(CircleShape).background(Color(0xFF1A1A1A)).padding(4.dp)) {
-        listOf("Sub", "Dub").forEach { option ->
-            val value = if (option == "Dub") "dub" else "sub"
-            Box(
-                Modifier.weight(1f).clip(CircleShape)
-                    .background(if (audio.equals(value, true)) Color(0xFF343434) else Color.Transparent)
-                    .clickable { onAudioChange(value) }.padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text(option, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-        }
+    if (choices.isEmpty() && !resolving) {
+        EmptyPanelMessage("This video has not exposed any audio tracks yet.")
+        error?.let { Message(it) }
+        return
     }
-    Spacer(Modifier.height(16.dp))
-    val filtered = sources.filter { it.audio.equals(audio, true) }
-    if (filtered.isEmpty()) EmptyPanelMessage("No servers are available for this audio.")
-    else {
-        val grouped = filtered.groupBy { it.resolvedLanguage }
-        val sourceListState = rememberLazyListState()
-        Box(Modifier.weight(1f)) {
-            LazyColumn(Modifier.fillMaxSize(), state = sourceListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                grouped.forEach { (language, langSources) ->
-                    if (true) {
-                        item(key = "lang-$language") {
-                            Text(
-                                language.uppercase(),
-                                color = AniLifeColors.MutedForeground,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.5.sp,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+    val single = choices.size == 1
+    val listState = rememberLazyListState()
+    Box(Modifier.weight(1f)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(choices, key = { choice ->
+                choice.embeddedTrackId?.let { "track-$it" } ?: "source-${choice.source?.url ?: choice.language.key}"
+            }) { choice ->
+                PanelChoice(
+                    title = AudioLanguages.displayName(choice.language),
+                    subtitle = buildString {
+                        if (choice.selected) append("Playing now")
+                        if (single) {
+                            if (isNotEmpty()) append(" · ")
+                            append("only audio track available")
+                        } else {
+                            if (isNotEmpty()) append(" · ")
+                            append(
+                                if (choice.embedded) "Embedded audio track"
+                                else listOfNotNull(choice.source?.provider, choice.source?.server)
+                                    .filter(String::isNotBlank)
+                                    .joinToString(" · ")
+                                    .ifBlank { "Stream" },
                             )
                         }
-                    }
-                    items(langSources, key = { "${it.provider}:${it.server}:${it.audio}:${it.url}" }) { source ->
-                        val selected = source.url == selectedUrl
-                        PanelChoice(
-                            title = listOf(source.provider, source.server).filter(String::isNotBlank).joinToString(" · "),
-                            subtitle = buildString {
-                                if (selected) append("Playing now · ")
-                                val available = source.subtitles.map(AnimeSubtitleSource::label).distinct().ifEmpty { subtitles.map(PlayerSubtitleTrack::label).distinct() }
-                                append(if (available.isEmpty()) "Subtitle tracks load with the video" else "Subtitles you can switch · ${available.joinToString(", ")}")
-                                source.quality?.let { append(" · $it") }
-                            },
-                            selected = selected,
-                            onClick = { onSelect(source) },
-                        )
-                    }
+                        if (!choice.language.known) append(" · language not reported")
+                    },
+                    selected = choice.selected,
+                    onClick = { onSelect(choice) },
+                )
+            }
+            if (resolving) item(key = "audio-resolving") {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    CircularProgressIndicator(Modifier.size(14.dp), color = AniLifeColors.MutedForeground, strokeWidth = 2.dp)
+                    Text("Checking for other audio tracks…", color = AniLifeColors.MutedForeground, fontSize = 12.sp)
                 }
             }
-            PageScrollbar(sourceListState, Modifier.align(Alignment.CenterEnd))
+            error?.let { message -> item(key = "audio-error") { Message(message) } }
         }
+        PageScrollbar(listState, Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -335,8 +384,22 @@ private fun EmptyPanelMessage(message: String) {
     Text(message, Modifier.fillMaxWidth().padding(vertical = 12.dp), color = AniLifeColors.MutedForeground, fontSize = 12.sp, lineHeight = 18.sp)
 }
 
+@Composable
+private fun Message(message: String) {
+    Text(
+        message,
+        Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .clip(RoundedCornerShape(10.dp)).background(Color(0xFF2A1515))
+            .padding(horizontal = 11.dp, vertical = 9.dp),
+        color = Color(0xFFFFB4AB),
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+    )
+}
+
 private fun panelTitle(panel: String): String = when (panel) {
     "sources" -> "Sources"
+    "audio" -> "Audio"
     "episodes" -> "Episodes"
     "subtitles" -> "Subtitles"
     else -> "Settings"

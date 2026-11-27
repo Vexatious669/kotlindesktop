@@ -24,6 +24,8 @@ sealed interface Screen {
         val headers: Map<String, String> = emptyMap(),
         val alternatives: List<AnimeVideoSource> = emptyList(),
         val audioTrack: String = "Sub",
+        val audioResolving: Boolean = false,
+        val audioError: String? = null,
         val detail: me.enivzoy.anilife.core.model.AnimeDetail? = null,
         val episode: Double? = null,
         val episodeTitle: String? = null,
