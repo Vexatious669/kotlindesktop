@@ -264,16 +264,28 @@ fun DetailScreen(
                     val titles = listOfNotNull(d.title, d.titleRomaji, d.titleNative) + d.synonyms
                     val dub = config.audio == AudioType.Dub
                     var queued = 0
+                    val target = me.enivzoy.anilife.app.data.DownloadTarget(
+                        resolution = when (config.resolution) {
+                            Resolution.Auto, Resolution.P1080 -> 1080
+                            Resolution.P720 -> 720
+                            Resolution.P480 -> 480
+                            Resolution.P360 -> 360
+                        },
+                        server = config.firstChoiceServer,
+                    )
                     config.episodeNumbers.forEach { episode ->
-                        val sources = try {
-                            providers.sources(d.id, d.malId, titles, episode.toDouble(), dub)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Throwable) {
-                            emptyList()
+                        // the queue re-runs this on retry, because these urls expire
+                        val resolve: suspend (String?) -> AnimeVideoSource? = { avoid ->
+                            val fresh = try {
+                                providers.sources(d.id, d.malId, titles, episode.toDouble(), dub)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Throwable) {
+                                emptyList()
+                            }
+                            me.enivzoy.anilife.app.data.pickDownloadSource(fresh, target, avoid)
                         }
-                        val source = pickDownloadSource(sources, config.resolution, config.firstChoiceServer)
-                            ?: return@forEach
+                        val source = resolve(null) ?: return@forEach
                         queueManager.enqueue(
                             title = d.title,
                             episode = episode.toDouble(),
@@ -283,6 +295,8 @@ fun DetailScreen(
                             anime = d.toCard(),
                             episodeTitle = null,
                             headers = source.headers,
+                            maxHeight = target.resolution,
+                            resolve = resolve,
                         )
                         queued++
                     }
@@ -820,44 +834,4 @@ private fun DetailSkeleton() {
         }
     }
 }
-
-private fun pickDownloadSource(
-    sources: List<AnimeVideoSource>,
-    resolution: Resolution,
-    firstChoiceServer: String,
-): AnimeVideoSource? {
-    val direct = sources.filter { directVideoFile(it.url) }
-    val downloadable = direct.ifEmpty { sources.filter { streamSource(it) } }
-    if (downloadable.isEmpty()) return null
-    val preferred = if (firstChoiceServer == "Auto") {
-        downloadable
-    } else {
-        downloadable.filter {
-            it.server.contains(firstChoiceServer, ignoreCase = true) ||
-                it.provider.contains(firstChoiceServer, ignoreCase = true)
-        }
-    }
-    val pool = preferred.ifEmpty { downloadable }
-    val cap = when (resolution) {
-        Resolution.Auto, Resolution.P1080 -> 1080
-        Resolution.P720 -> 720
-        Resolution.P480 -> 480
-        Resolution.P360 -> 360
-    }
-    return pool.filter { sourceHeight(it.quality) <= cap }.maxByOrNull { sourceHeight(it.quality) }
-        ?: pool.minByOrNull { sourceHeight(it.quality) }
-}
-
-private fun sourceHeight(quality: String?): Int =
-    Regex("(\\d{3,4})").find(quality.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
-
-private fun directVideoFile(url: String): Boolean {
-    val path = runCatching { java.net.URI(url).path }.getOrNull().orEmpty().lowercase()
-    return listOf(".mp4", ".mkv", ".m4v", ".webm", ".avi", ".mov", ".ts").any { path.endsWith(it) }
-}
-
-private fun streamSource(source: AnimeVideoSource): Boolean =
-    source.format.equals("hls", ignoreCase = true) ||
-        source.format.equals("dash", ignoreCase = true) ||
-        listOf(".m3u8", ".mpd").any { source.url.contains(it, ignoreCase = true) }
 

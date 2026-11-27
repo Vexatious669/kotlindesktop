@@ -53,39 +53,28 @@ data class AnimeVideoSource(
     val language: String = "",
 ) {
     val label: String get() = listOfNotNull(provider, server, quality, format.uppercase()).joinToString(" · ")
-    val resolvedLanguage: String get() = language.ifBlank {
-        if (audio.equals("dub", true)) detectDubLanguage(provider, server, subtitles) else "Japanese (Sub)"
-    }
+    val audioLanguage: AudioLanguage get() = AudioLanguages.forSource(provider, server, language, audio)
+    val resolvedLanguage: String get() = AudioLanguages.displayName(audioLanguage)
 }
 
-private fun detectDubLanguage(provider: String, server: String, subtitles: List<AnimeSubtitleSource>): String {
-    val text = "$provider $server".lowercase()
-    // Check provider/server name first
-    when {
-        text.contains("spanish") || text.contains("español") || text.contains("castellano") || text.contains("latino") -> return "Spanish"
-        text.contains("portuguese") || text.contains("português") || text.contains("brazilian") -> return "Portuguese"
-        text.contains("french") || text.contains("français") -> return "French"
-        text.contains("german") || text.contains("deutsch") -> return "German"
-        text.contains("italian") || text.contains("italiano") -> return "Italian"
-        text.contains("russian") || text.contains("русский") -> return "Russian"
-        text.contains("arabic") || text.contains("عربي") -> return "Arabic"
-        text.contains("hindi") -> return "Hindi"
-        text.contains("english") -> return "English"
-    }
-    // Fall back to subtitle languages
-    val subLangs = subtitles.map { it.language.lowercase() }
-    when {
-        subLangs.any { it.startsWith("es") } && !subLangs.any { it.startsWith("en") } -> return "Spanish"
-        subLangs.any { it.startsWith("pt") } && !subLangs.any { it.startsWith("en") } -> return "Portuguese"
-        subLangs.any { it.startsWith("fr") } && !subLangs.any { it.startsWith("en") } -> return "French"
-        subLangs.any { it.startsWith("de") } && !subLangs.any { it.startsWith("en") } -> return "German"
-        subLangs.any { it.startsWith("it") } && !subLangs.any { it.startsWith("en") } -> return "Italian"
-        subLangs.any { it.startsWith("ru") } && !subLangs.any { it.startsWith("en") } -> return "Russian"
-        subLangs.any { it.startsWith("ar") } && !subLangs.any { it.startsWith("en") } -> return "Arabic"
-        subLangs.any { it.startsWith("hi") } && !subLangs.any { it.startsWith("en") } -> return "Hindi"
-    }
-    return "English (Dub)"
-}
+// same url can arrive twice with different metadata; keep quality and borrow language
+internal fun mergeVideoSources(sources: List<AnimeVideoSource>): List<AnimeVideoSource> =
+    sources.groupBy(AnimeVideoSource::url).values
+        .map { duplicates ->
+            val best = duplicates.maxWith(
+                compareBy<AnimeVideoSource> { resolutionOf(it.quality) }
+                    .thenBy { it.subtitles.size },
+            )
+            best.copy(
+                language = duplicates.firstOrNull { it.language.isNotBlank() }?.language ?: best.language,
+                subtitles = duplicates.flatMap(AnimeVideoSource::subtitles).distinctBy(AnimeSubtitleSource::url),
+            )
+        }
+        .sortedByDescending { resolutionOf(it.quality) }
+
+private fun resolutionOf(quality: String?): Int =
+    Regex("(\\d{3,4})\\s*p", RegexOption.IGNORE_CASE).find(quality.orEmpty())
+        ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
 
 /** Miruro's public catalog API, following the same AniList-id → episode → provider flow as AniLife. */
 class AnimeVideoProviders(
@@ -95,6 +84,8 @@ class AnimeVideoProviders(
     private val titleIds = ConcurrentHashMap<Long, String>()
     private val malEpisodeTitleCache = ConcurrentHashMap<Long, Map<Int, String>>()
     @Volatile private var streamingConfig: JsonObject? = null
+    private data class CachedSources(val sources: List<AnimeVideoSource>, val expiresAt: Long)
+    private val sourceCache = ConcurrentHashMap<String, CachedSources>()
     private val wasmProviders by lazy { WasmAnimeProviders() }
 
     suspend fun episodes(
@@ -207,6 +198,8 @@ class AnimeVideoProviders(
         episode: Double,
         dub: Boolean,
     ): List<AnimeVideoSource> = withContext(Dispatchers.IO) {
+        val cacheKey = "$anilistId|$episode|$dub|${malId ?: 0}|${titles.distinct().joinToString("\u0001")}"
+        sourceCache[cacheKey]?.takeIf { it.expiresAt > System.currentTimeMillis() }?.let { return@withContext it.sources }
         val startedAt = System.nanoTime()
         ActionBreadcrumbs.record("Resolving stream URL for episode: $episode")
         val result = runCatching { miruroSources(anilistId, episode, dub) }
@@ -219,14 +212,19 @@ class AnimeVideoProviders(
                 dub,
             )
         }.onFailure { System.err.println("WASM provider lookup failed: ${it.message}") }.getOrDefault(emptyList())
-        val combined = (result.filter { it.audio == if (dub) "Dub" else "Sub" } + extra)
-            .distinctBy { it.url }
-            .sortedByDescending { source ->
-                Regex("(\\d{3,4})\\s*p", RegexOption.IGNORE_CASE).find(source.quality.orEmpty())
-                    ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
-            }
+        val combined = mergeVideoSources(result.filter { it.audio == if (dub) "Dub" else "Sub" } + extra)
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
         logger.info { "stream lookup completed episode=$episode dub=$dub servers=${combined.size} elapsedMs=$elapsedMs" }
+        if (combined.isNotEmpty()) {
+            if (sourceCache.size >= MAX_SOURCE_CACHE_ENTRIES) {
+                val now = System.currentTimeMillis()
+                sourceCache.entries.removeIf { it.value.expiresAt <= now }
+                if (sourceCache.size >= MAX_SOURCE_CACHE_ENTRIES) {
+                    sourceCache.entries.minByOrNull { it.value.expiresAt }?.let { sourceCache.remove(it.key) }
+                }
+            }
+            sourceCache[cacheKey] = CachedSources(combined, System.currentTimeMillis() + SOURCE_CACHE_TTL_MS)
+        }
         combined
     }
 
@@ -368,6 +366,8 @@ class AnimeVideoProviders(
         const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         const val MAX_FALLBACK_EPISODES = 300
         const val MAL_EPISODES_PER_PAGE = 100
+        const val SOURCE_CACHE_TTL_MS = 60_000L
+        const val MAX_SOURCE_CACHE_ENTRIES = 40
     }
 }
 

@@ -74,9 +74,22 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
 }
 
-// Overridable from CI: -PappVersion=1.2.3 -Pportable=true
-val defaultVersion = "1.1.0"
+// Overridable from CI: -PappVersion=1.2.3-HOTFIX -Pportable=true
+val defaultVersion = "1.1.1-HOTFIX"
 val appVersion = providers.gradleProperty("appVersion").orNull ?: defaultVersion
+// App version may carry a release suffix (e.g. 1.1.1-HOTFIX), but jpackage/MSI
+// only accept a plain numeric MAJOR.MINOR.PATCH.
+val versionPattern = Regex("""^[0-9]+\.[0-9]+\.[0-9]+(?:-(HOTFIX|RELEASE|PRE|TESTING))?$""")
+require(versionPattern.matches(appVersion)) {
+    "Invalid appVersion '$appVersion'. Expected MAJOR.MINOR.PATCH optionally followed by " +
+        "-HOTFIX, -RELEASE, -PRE or -TESTING (e.g. 1.2.3-HOTFIX or 1.2.3). " +
+        "Pass it as -PappVersion=<version>."
+}
+val numericPackageVersion = appVersion.substringBefore('-')
+require(Regex("""^[0-9]+\.[0-9]+\.[0-9]+$""").matches(numericPackageVersion)) {
+    "Invalid numeric package version '$numericPackageVersion' derived from appVersion '$appVersion'. " +
+        "MSI/EXE packaging requires MAJOR.MINOR.PATCH with digits only, e.g. 1.1.1."
+}
 val portableBuild = providers.gradleProperty("portable").orNull == "true"
 val generatedVersionResources = layout.buildDirectory.dir("generated/versionResources")
 
@@ -105,7 +118,7 @@ compose.desktop {
                 targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             }
             packageName = "AniLife"
-            packageVersion = appVersion
+            packageVersion = numericPackageVersion
             vendor = "github.com/anilifecommunity"
             appResourcesRootDir = file("src/main/appResources")
             includeAllModules = false

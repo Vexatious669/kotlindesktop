@@ -472,19 +472,16 @@ class Mpv(
 
     companion object {
         fun defaultLibraryPath(): String? {
-            System.getProperty("AniLife.mpv.library")?.let { return it }
+            System.getProperty("AniLife.mpv.library")?.takeIf(String::isNotBlank)?.let { return it }
             System.getenv("ANILIFE_MPV_LIBRARY")?.takeIf(String::isNotBlank)?.let { return it }
             val candidates = mutableListOf<String>()
             val codeSource = Mpv::class.java.protectionDomain?.codeSource
             val sourcePath = codeSource?.location?.toString()
             if (sourcePath != null) {
                 candidates.add(sourcePath)
-                candidates.add(File(sourcePath).parent)
+                File(sourcePath).parent?.let(candidates::add)
             }
             candidates.add(System.getProperty("user.dir") ?: ".")
-            candidates.add("D:/AniLife")
-            candidates.add("D:/Anilili")
-            candidates.add("D:/lilibackup/Anilili")
             candidates.add(System.getProperty("user.home") ?: ".")
             candidates.addAll(listOf("/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib", "/usr/local/lib"))
             for (dir in candidates) {

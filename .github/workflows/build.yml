@@ -28,34 +28,85 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # GitHub tag filters are globs (`v*`), not regex, so the exact tag shape is
+      # enforced here. Only v<major>.<minor>.<patch>-(HOTFIX|RELEASE|PRE|TESTING)
+      # is accepted; everything else fails before anything is built or published.
+      - name: Validate version tag
+        run: |
+          $tagPattern = '^v[0-9]+\.[0-9]+\.[0-9]+-(HOTFIX|RELEASE|PRE|TESTING)$'
+          $versionPattern = '^[0-9]+\.[0-9]+\.[0-9]+-(HOTFIX|RELEASE|PRE|TESTING)$'
+
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $ref = $env:GITHUB_REF_NAME
+            if ($ref -cnotmatch $tagPattern) {
+              throw "Tag '$ref' is not a valid release tag. Expected $tagPattern (e.g. v1.1.1-RELEASE)."
+            }
+            "Tag '$ref' is valid."
+          } else {
+            $match = Select-String -Path app/build.gradle.kts -Pattern 'val defaultVersion = "([^"]+)"'
+            if (-not $match) { throw 'Could not find val defaultVersion = "..." in app/build.gradle.kts' }
+            $default = $match.Matches[0].Groups[1].Value
+            if ($default -cnotmatch $versionPattern) {
+              throw "defaultVersion '$default' is not valid. Expected $versionPattern (e.g. 1.1.1-HOTFIX)."
+            }
+            "defaultVersion '$default' is valid."
+          }
+
       - name: Run tests
         run: .\gradlew test --no-daemon --no-configuration-cache
 
-      # Version comes from the tag (v1.2.3 -> 1.2.3), otherwise from app/build.gradle.kts.
+      # Version comes from the tag (v1.2.3-RELEASE -> 1.2.3-RELEASE), otherwise
+      # from app/build.gradle.kts. The suffix is kept; the numeric core is
+      # exported separately for MSI packaging.
       - name: Resolve version
         run: |
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            $v = $env:GITHUB_REF_NAME.TrimStart('v')
+          $tagPattern = '^v[0-9]+\.[0-9]+\.[0-9]+-(HOTFIX|RELEASE|PRE|TESTING)$'
+          $versionPattern = '^[0-9]+\.[0-9]+\.[0-9]+-(HOTFIX|RELEASE|PRE|TESTING)$'
+
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $name = $env:GITHUB_REF_NAME
+            if (-not $name.StartsWith('v')) { throw "Tag '$name' must start with 'v' (e.g. v1.1.1-RELEASE)." }
+            $v = $name.Substring(1)   # strip exactly one leading 'v'; the suffix is kept
+            $ref = "v$v"
+            if ($ref -cnotmatch $tagPattern) {
+              throw "Tag '$ref' must match $tagPattern (e.g. v1.1.1-RELEASE)."
+            }
           } else {
-            $v = (Select-String -Path app/build.gradle.kts -Pattern 'val defaultVersion = "([^"]+)"').Matches[0].Groups[1].Value
+            $match = Select-String -Path app/build.gradle.kts -Pattern 'val defaultVersion = "([^"]+)"'
+            if (-not $match) { throw 'Could not find val defaultVersion = "..." in app/build.gradle.kts' }
+            $v = $match.Matches[0].Groups[1].Value
           }
-          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$v' must look like 1.2.3 (MSI requirement)" }
+
+          if ($v -cnotmatch $versionPattern) {
+            throw "Version '$v' must match $versionPattern (e.g. 1.1.1-HOTFIX)."
+          }
+
+          $parts = $v -split '-', 2
+          $packageVersion = $parts[0]
+          if ($parts.Count -ne 2 -or $packageVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "Could not derive a numeric package version from '$v'."
+          }
+
+          $channel = if ($parts[1] -eq 'HOTFIX' -or $parts[1] -eq 'RELEASE') { 'stable' } else { 'prerelease' }
+
           "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "Building version $v"
+          "PACKAGE_VERSION=$packageVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "Building version $v (package version $packageVersion, channel $channel)"
 
       - name: Build base installers (.msi + .exe)
         run: |
           .\gradlew :app:packageMsi :app:packageExe "-PappVersion=$env:VERSION" --no-daemon --no-configuration-cache
           New-Item -ItemType Directory -Force dist | Out-Null
           $bin = "app/build/compose/binaries/main"
-          Copy-Item (Get-ChildItem "$bin/msi/*.msi" | Select-Object -First 1) "dist/anilife-$env:VERSION#base.msi"
-          Copy-Item (Get-ChildItem "$bin/exe/*.exe" | Select-Object -First 1) "dist/anilife-$env:VERSION#base.exe"
+          Copy-Item (Get-ChildItem "$bin/msi/*.msi" | Select-Object -First 1) "dist/anilife-$($env:VERSION).base.msi"
+          Copy-Item (Get-ChildItem "$bin/exe/*.exe" | Select-Object -First 1) "dist/anilife-$($env:VERSION).base.exe"
 
       - name: Build portable .msi (no shortcuts, per-user, choose folder)
         run: |
           .\gradlew :app:packageMsi "-PappVersion=$env:VERSION" -Pportable=true --no-daemon --no-configuration-cache
           $msi = Get-ChildItem "app/build/compose/binaries/main/msi/*.msi" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          Copy-Item $msi "dist/anilife-$env:VERSION#portable.msi"
+          Copy-Item $msi "dist/anilife-$($env:VERSION).portable.msi"
 
       # Portable .exe: a single self-extracting file wrapping the app image.
       # Double-click -> unpacks to a temp folder -> launches AniLife. Nothing is installed.
@@ -77,7 +128,7 @@ jobs:
           ;!@InstallEnd@!
           '@ -replace '(?m)^\s+', '' | Set-Content -Encoding utf8NoBOM sfx-config.txt
 
-          $out = "dist/anilife-$env:VERSION#portable.exe"
+          $out = "dist/anilife-$($env:VERSION).portable.exe"
           $stream = [IO.File]::Create((Join-Path $PWD $out))
           foreach ($f in @("$sevenZip\7z.sfx", "sfx-config.txt", "sfx-payload.7z")) {
             $bytes = [IO.File]::ReadAllBytes((Resolve-Path $f))
@@ -88,7 +139,7 @@ jobs:
       # The SFX config format has no Icon option; the helper rewrites the stub's icon resources.
       - name: Apply AniLife icon to portable exe
         run: |
-          & "$PWD/scripts/Set-ExeIcon.ps1" -Path "dist/anilife-$env:VERSION#portable.exe" -Icon "app/src/main/resources/anilife.ico"
+          & "$PWD/scripts/Set-ExeIcon.ps1" -Path "dist/anilife-$($env:VERSION).portable.exe" -Icon "app/src/main/resources/anilife.ico"
 
       - name: Sign Windows installers
         if: env.SIGN_CERT_PFX != ''
@@ -109,10 +160,11 @@ jobs:
 
       - name: Write update metadata
         run: |
-          $msi = "dist/anilife-$env:VERSION#base.msi"
+          $assetName = "anilife-$($env:VERSION).base.msi"
+          $msi = "dist/$assetName"
           $hash = (Get-FileHash -Algorithm SHA256 -Path $msi).Hash.ToLowerInvariant()
           $size = [int64](Get-Item $msi).Length
-          $url = "https://github.com/anilifecommunity/kotlindesktop/releases/download/v$env:VERSION/anilife-$env:VERSION.base.msi"
+          $url = "https://github.com/anilifecommunity/kotlindesktop/releases/download/v$($env:VERSION)/$assetName"
           $asset = [ordered]@{
             platform = "windows"
             url = $url
@@ -122,6 +174,8 @@ jobs:
           }
           $latest = [ordered]@{
             version = $env:VERSION
+            channel = $env:CHANNEL
+            tag = "v$($env:VERSION)"
             releasedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
             releaseNotes = "Auto-update metadata for AniLife."
             assets = @($asset)
@@ -129,7 +183,8 @@ jobs:
           $latest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $PWD "dist/latest.json")
           $manifest = [ordered]@{
             version = $env:VERSION
-            channel = "beta"
+            channel = $env:CHANNEL
+            tag = "v$($env:VERSION)"
             releasedAt = $latest.releasedAt
             minVersion = "1.0.0"
             releaseNotes = $latest.releaseNotes
@@ -145,28 +200,28 @@ jobs:
       - name: Upload base.msi
         uses: actions/upload-artifact@v7
         with:
-          path: dist/anilife-${{ env.VERSION }}#base.msi
+          path: dist/anilife-${{ env.VERSION }}.base.msi
           archive: false
           if-no-files-found: error
 
       - name: Upload base.exe
         uses: actions/upload-artifact@v7
         with:
-          path: dist/anilife-${{ env.VERSION }}#base.exe
+          path: dist/anilife-${{ env.VERSION }}.base.exe
           archive: false
           if-no-files-found: error
 
       - name: Upload portable.msi
         uses: actions/upload-artifact@v7
         with:
-          path: dist/anilife-${{ env.VERSION }}#portable.msi
+          path: dist/anilife-${{ env.VERSION }}.portable.msi
           archive: false
           if-no-files-found: error
 
       - name: Upload portable.exe
         uses: actions/upload-artifact@v7
         with:
-          path: dist/anilife-${{ env.VERSION }}#portable.exe
+          path: dist/anilife-${{ env.VERSION }}.portable.exe
           archive: false
           if-no-files-found: error
 
@@ -178,13 +233,13 @@ jobs:
             dist/version.json
           if-no-files-found: error
 
-      # Publish all raw files and metadata to GitHub Releases on version tags
+      # Publish all raw files and metadata to GitHub Releases on version tags.
+      # PRE/TESTING builds are prereleases, so /releases/latest keeps pointing at stable.
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: "v${{ env.VERSION }}"
+          prerelease: ${{ env.CHANNEL == 'prerelease' }}
           files: dist/*
           generate_release_notes: true
-
-  
-          

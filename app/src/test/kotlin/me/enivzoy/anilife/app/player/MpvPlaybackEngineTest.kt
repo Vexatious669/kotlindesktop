@@ -126,6 +126,95 @@ class MpvPlaybackEngineTest {
         }
     }
 
+    @Test
+    fun listsAndSelectsTheEmbeddedAudioTrack() {
+        val clip = File("src/main/resources/anilife-intro.mp4")
+        if (!playable(clip)) return
+        val engine = MpvPlaybackEngine(url = clip.absolutePath, renderWidth = 320, renderHeight = 180)
+        engine.start()
+        try {
+            assertTrue(await(15_000L) { engine.videoFrame != null }, "expected the clip to play")
+            if (engine.audioTracks.isEmpty()) {
+                println("the sample clip has no audio track; audio switching is untested here")
+                return
+            }
+            val track = engine.audioTracks.first()
+            engine.selectAudioTrack(track.id)
+            assertTrue(
+                await(5_000L) { engine.audioTracks.any { it.selected && it.id == track.id } },
+                "audio track ${track.id} was not selected",
+            )
+            assertNull(engine.switchError)
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun switchingSourcePreservesPositionAndPlaybackState() {
+        val clip = File("src/main/resources/anilife-intro.mp4")
+        if (!playable(clip)) return
+        val copy = File.createTempFile("anilife-audio-switch", ".mp4")
+        clip.copyTo(copy, overwrite = true)
+        val engine = MpvPlaybackEngine(url = clip.absolutePath, renderWidth = 320, renderHeight = 180)
+        engine.start()
+        try {
+            assertTrue(await(15_000L) { engine.videoFrame != null }, "expected the first stream to play")
+            engine.seekTo(2.0)
+            assertTrue(await(5_000L) { engine.positionSeconds in 1.9..8.0 }, "seek did not take")
+            engine.togglePause()
+            assertTrue(await(3_000L) { !engine.isPlaying }, "pause did not take")
+
+            engine.switchSource(copy.absolutePath, emptyMap(), emptyList(), null, "Test source")
+
+            assertTrue(
+                await(20_000L) { engine.currentLoadedUrl == copy.absolutePath },
+                "the switched stream never opened",
+            )
+            assertTrue(await(5_000L) { engine.positionSeconds >= 1.9 }, "position was not restored: ${engine.positionSeconds}")
+            assertTrue(await(3_000L) { !engine.isPlaying }, "paused state was not restored")
+            assertNull(engine.switchError)
+            assertNull(engine.error)
+        } finally {
+            engine.close()
+            copy.delete()
+        }
+    }
+
+    @Test
+    fun aFailedSwitchKeepsTheWorkingStream() {
+        val clip = File("src/main/resources/anilife-intro.mp4")
+        if (!playable(clip)) return
+        val engine = MpvPlaybackEngine(url = clip.absolutePath, renderWidth = 320, renderHeight = 180)
+        engine.start()
+        try {
+            assertTrue(await(15_000L) { engine.videoFrame != null }, "expected the first stream to play")
+            engine.seekTo(2.0)
+            assertTrue(await(5_000L) { engine.positionSeconds in 1.9..8.0 }, "seek did not take")
+            engine.togglePause()
+            assertTrue(await(3_000L) { !engine.isPlaying }, "pause did not take")
+
+            engine.switchSource("file:///definitely-not-a-video.mp4", emptyMap(), emptyList(), null, "Broken source")
+
+            assertTrue(await(20_000L) { engine.switchError != null }, "the failed switch was not reported")
+            assertNull(engine.error)
+            assertEquals(clip.absolutePath, engine.currentUrl)
+            assertTrue(
+                await(10_000L) { engine.currentLoadedUrl == clip.absolutePath && engine.videoFrame != null },
+                "the previous stream was not restored",
+            )
+            assertTrue(await(5_000L) { engine.positionSeconds >= 1.9 }, "position was not restored: ${engine.positionSeconds}")
+            assertTrue(await(3_000L) { !engine.isPlaying }, "paused state was not restored")
+        } finally {
+            engine.close()
+        }
+    }
+
+    private fun playable(clip: File): Boolean {
+        val library = Mpv.defaultLibraryPath() ?: return false
+        return File(library).isFile && clip.isFile
+    }
+
     private fun await(timeoutMillis: Long, condition: () -> Boolean): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMillis
         while (System.currentTimeMillis() < deadline) {

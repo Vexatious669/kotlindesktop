@@ -16,6 +16,16 @@ import java.util.UUID
 
 enum class DownloadStatus { Queued, Running, Done, Failed, Cancelled }
 
+// lets tests drive the queue without network or files
+fun interface DownloadRunner {
+    suspend fun run(
+        job: DownloadJob,
+        url: String,
+        headers: Map<String, String>,
+        onProgress: (Long, Long?) -> Unit,
+    ): LocalEpisode
+}
+
 data class DownloadJob(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
@@ -26,6 +36,8 @@ data class DownloadJob(
     val anime: AnimeCard? = null,
     val episodeTitle: String? = null,
     val headers: Map<String, String> = emptyMap(),
+    val maxHeight: Int = Int.MAX_VALUE,
+    val resolve: (suspend (avoidUrl: String?) -> AnimeVideoSource?)? = null,
     val status: DownloadStatus = DownloadStatus.Queued,
     val downloaded: Long = 0L,
     val total: Long? = null,
@@ -34,9 +46,10 @@ data class DownloadJob(
 )
 
 class DownloadQueueManager(
-    private val repository: AniListRepository,
+    private val repository: AniListRepository?,
     private val scope: CoroutineScope,
     private val concurrency: Int = 3,
+    private val runner: DownloadRunner? = null,
 ) {
     private val _jobs = MutableStateFlow<List<DownloadJob>>(emptyList())
     val jobs: StateFlow<List<DownloadJob>> = _jobs.asStateFlow()
@@ -53,6 +66,8 @@ class DownloadQueueManager(
         anime: AnimeCard? = null,
         episodeTitle: String? = null,
         headers: Map<String, String> = emptyMap(),
+        maxHeight: Int = Int.MAX_VALUE,
+        resolve: (suspend (avoidUrl: String?) -> AnimeVideoSource?)? = null,
     ): String {
         val job = DownloadJob(
             title = title,
@@ -63,6 +78,8 @@ class DownloadQueueManager(
             anime = anime,
             episodeTitle = episodeTitle,
             headers = headers,
+            maxHeight = maxHeight,
+            resolve = resolve,
         )
         _jobs.update { it + job }
         launchJob(job)
@@ -72,19 +89,15 @@ class DownloadQueueManager(
     private fun launchJob(job: DownloadJob) {
         val handle = scope.launch {
             semaphore.withPermit {
-                _jobs.update { list -> list.map { if (it.id == job.id) it.copy(status = DownloadStatus.Running) else it } }
+                _jobs.update { list ->
+                    list.map {
+                        if (it.id == job.id) {
+                            it.copy(status = DownloadStatus.Running, downloaded = 0L, total = null, error = null)
+                        } else it
+                    }
+                }
                 try {
-                    val result = repository.downloadDirect(
-                        url = job.url,
-                        animeTitle = job.title,
-                        episode = job.episode,
-                        audio = job.audio,
-                        downloadRoot = job.downloadRoot,
-                        headers = job.headers,
-                        onProgress = { downloaded, total ->
-                            _jobs.update { list -> list.map { if (it.id == job.id) it.copy(downloaded = downloaded, total = total) else it } }
-                        },
-                    )
+                    val result = download(job)
                     _jobs.update { list ->
                         list.map {
                             if (it.id == job.id) it.copy(
@@ -111,6 +124,58 @@ class DownloadQueueManager(
             }
         }
         handles[job.id] = handle
+    }
+
+    // sources are signed and expire, so every attempt resolves again instead of reusing the queued url
+    private suspend fun download(job: DownloadJob): LocalEpisode {
+        val resolve = job.resolve
+        var source = resolve?.let { runCatching { it(null) }.getOrNull() }
+        var attempt = 0
+        while (true) {
+            attempt++
+            val url = source?.url ?: job.url
+            val headers = source?.headers ?: job.headers
+            try {
+                val progress: (Long, Long?) -> Unit = { downloaded, total ->
+                    _jobs.update { list ->
+                        list.map { if (it.id == job.id) it.copy(downloaded = downloaded, total = total) else it }
+                    }
+                }
+                if (runner != null) {
+                    return runner.run(job, url, headers, progress)
+                }
+                val downloader = requireNotNull(repository) { "No download runner is configured." }
+                return downloader.downloadDirect(
+                    url = url,
+                    animeTitle = job.title,
+                    episode = job.episode,
+                    audio = job.audio,
+                    downloadRoot = job.downloadRoot,
+                    headers = headers,
+                    maxHeight = job.maxHeight,
+                    onProgress = progress,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                val retryable = failure.sourceException()?.reason?.retryWithFreshSource == true
+                if (resolve == null || attempt >= 2 || !retryable) throw failure
+                val fresh = runCatching { resolve(url) }.getOrNull() ?: throw failure
+                source = fresh
+                _jobs.update { list ->
+                    list.map {
+                        if (it.id == job.id) {
+                            it.copy(
+                                url = fresh.url,
+                                headers = fresh.headers,
+                                downloaded = 0L,
+                                total = null,
+                            )
+                        } else it
+                    }
+                }
+            }
+        }
     }
 
     fun cancel(id: String) {

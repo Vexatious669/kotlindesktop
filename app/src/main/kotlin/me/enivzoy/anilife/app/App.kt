@@ -51,6 +51,9 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AnimeVideoProviders
+import me.enivzoy.anilife.app.data.AutoDetectService
+import me.enivzoy.anilife.app.data.asAutoDetectLibrary
+import me.enivzoy.anilife.app.data.mergeVideoSources
 import me.enivzoy.anilife.app.data.DiscordOAuth
 import me.enivzoy.anilife.app.data.AppSettingsStore
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
@@ -131,6 +134,12 @@ fun AniLifeApp(
     val availableUpdate by updater.update.collectAsState()
     val downloadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     val downloadQueue = remember(repository) { DownloadQueueManager(repository, downloadScope, 4) }
+    val autoDetect = remember(repository) {
+        AutoDetectService(library = repository.asAutoDetectLibrary(), scope = downloadScope)
+    }
+    val autoDetectScan by autoDetect.scan.collectAsState()
+    val autoDetectRunning by autoDetect.running.collectAsState()
+    val autoDetectStatus by autoDetect.status.collectAsState()
     val settings by settingsStore.settings.collectAsState()
     val discordState by discordPresence.state.collectAsState()
     val smartDownloaded = remember(repository) { mutableSetOf<String>() }
@@ -139,6 +148,10 @@ fun AniLifeApp(
     }
     val backStack = remember { mutableStateListOf<Screen>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    val mergedAudioKeys = remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(screen is Screen.Player) {
+        if (screen !is Screen.Player) mergedAudioKeys.value = emptySet()
+    }
     var homeLoaded by remember { mutableStateOf(false) }
     var playerFullscreen by remember { mutableStateOf(false) }
     var isPipMode by remember { mutableStateOf(false) }
@@ -263,11 +276,9 @@ fun AniLifeApp(
         }
     }
     LaunchedEffect(Unit) {
-        if (System.getProperty("AniLife.mpv.library") == null) {
-            val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
-            if (path == null) {
-                NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = "libmpv not found. Install mpv manually.")
-            }
+        val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
+        if (path == null) {
+            NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = "libmpv not found. Install mpv manually.")
         }
     }
 
@@ -280,6 +291,24 @@ fun AniLifeApp(
     }
     DisposableEffect(discordPresence) {
         onDispose { discordPresence.close() }
+    }
+
+    LaunchedEffect(
+        settings.autoDetectEnabled,
+        settings.autoDetectDirectories,
+        settings.autoDetectSettleSeconds,
+        settings.audio,
+    ) {
+        autoDetect.configure(
+            directories = settings.autoDetectDirectories,
+            settleSeconds = settings.autoDetectSettleSeconds,
+            audio = settings.audio,
+            autoImport = true,
+        )
+        if (settings.autoDetectEnabled) autoDetect.start() else autoDetect.stop()
+    }
+    DisposableEffect(autoDetect) {
+        onDispose { autoDetect.stop() }
     }
 
     fun updateSettings(transform: (me.enivzoy.anilife.app.data.AppSettings) -> me.enivzoy.anilife.app.data.AppSettings) {
@@ -374,6 +403,8 @@ fun AniLifeApp(
             headers = selected.headers,
             alternatives = resolved,
             audioTrack = audio,
+            audioResolving = false,
+            audioError = null,
             episode = episode,
             episodeTitle = rows.firstOrNull { it.number == episode }?.title,
             episodes = rows.map { it.number },
@@ -403,7 +434,10 @@ fun AniLifeApp(
                     episode = episode,
                     dub = audio.equals("Dub", ignoreCase = true),
                 )
-                val source = sources.firstOrNull()
+                val source = me.enivzoy.anilife.app.data.pickDownloadSource(
+                    sources,
+                    me.enivzoy.anilife.app.data.DownloadTarget(resolution = 1080, server = "Auto"),
+                )
                 if (source == null) {
                     smartDownloaded -= key
                     return@launch
@@ -418,6 +452,21 @@ fun AniLifeApp(
                     downloadRoot = root,
                     anime = anime.toCard(),
                     headers = source.headers,
+                    maxHeight = 1080,
+                    resolve = { avoid ->
+                        val fresh = animeVideoProviders.sources(
+                            anilistId = anime.id,
+                            malId = anime.malId,
+                            titles = titles,
+                            episode = episode,
+                            dub = audio.equals("Dub", ignoreCase = true),
+                        )
+                        me.enivzoy.anilife.app.data.pickDownloadSource(
+                            fresh,
+                            me.enivzoy.anilife.app.data.DownloadTarget(resolution = 1080, server = "Auto"),
+                            avoid,
+                        )
+                    },
                 )
             } catch (cancelled: CancellationException) {
                 smartDownloaded -= key
@@ -431,12 +480,16 @@ fun AniLifeApp(
     fun deleteSmartDownload(anime: AnimeDetail?, episode: Double) {
         if (!settings.expSmartDownloads || anime == null) return
         if ("${anime.id}:$episode" !in smartDownloaded) return
+        val queued = downloadQueue.jobs.value.filter { job ->
+            job.anime?.id == anime.id && job.episode == episode
+        }
+        queued.forEach { downloadQueue.remove(it.id) }
         val entry = repository.localEpisodes.value
-            .firstOrNull { it.anime.id == anime.id && it.episode == episode } ?: return
-        downloadQueue.jobs.value.firstOrNull { it.localEpisode?.path == entry.path }
-            ?.let { downloadQueue.remove(it.id) }
-        runCatching { Files.deleteIfExists(entry.path) }
-        repository.removeLocalEpisode(entry)
+            .firstOrNull { it.anime.id == anime.id && it.episode == episode }
+        if (entry != null) {
+            runCatching { Files.deleteIfExists(entry.path) }
+            repository.removeLocalEpisode(entry)
+        }
         smartDownloaded -= "${anime.id}:$episode"
     }
 
@@ -528,6 +581,10 @@ fun AniLifeApp(
                         discordState = discordState,
                         onSettingsChange = ::updateSettings,
                         onDiscordConnect = ::connectDiscord,
+                        autoDetect = autoDetect,
+                        autoDetectScan = autoDetectScan,
+                        autoDetectRunning = autoDetectRunning,
+                        autoDetectStatus = autoDetectStatus,
                         currentVersion = Updater.currentVersion(),
                         updateCheckStatus = updateCheckStatus,
                         checkingForUpdates = checkingForUpdates,
@@ -585,68 +642,112 @@ fun AniLifeApp(
                             )
                         },
                     )
-                    is Screen.Player -> PlayerScreen(
-                        title = target.title,
-                        showTitle = target.detail?.title?.takeIf(String::isNotBlank) ?: target.title.substringBefore(" · Episode "),
-                        url = target.url,
-                        headers = target.headers,
-                        alternatives = target.alternatives,
-                        audioTrack = target.audioTrack,
-                        episode = target.episode,
-                        episodeTitle = target.episodeTitle,
-                        durationMinutes = target.detail?.duration,
-                        episodes = target.episodes,
-                        episodeTitles = target.episodeTitles,
-                        episodeThumbnails = target.episodeThumbnails,
-                        detail = target.detail,
-                        settings = settings,
-                        onSettingsChange = { updated -> updateSettings { updated } },
-                        isFullscreen = playerFullscreen,
-                        isPipMode = isPipMode,
-                        onTogglePip = { isPipMode = !isPipMode },
-                        onClosePip = { isPipMode = false },
-                        onToggleFullscreen = { playerFullscreen = !playerFullscreen },
-                        onSourceSelect = { source ->
-                            val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
-                            ActionBreadcrumbs.record("Clicked server: $serverName")
-                            logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality} url=${source.url}" }
-                            screen = target.copy(
-                                title = "${target.detail?.title ?: target.title.substringBefore(" · Episode ")} · Episode ${formatPlayerEpisode(target.episode ?: 1.0)} · ${source.provider} ${source.quality ?: source.format.uppercase()}",
-                                url = source.url,
-                                headers = source.headers,
-                                audioTrack = source.audio,
+                    is Screen.Player -> {
+                        LaunchedEffect(target.detail?.id, target.episode) {
+                            val anime = target.detail ?: return@LaunchedEffect
+                            val episodeNumber = target.episode ?: return@LaunchedEffect
+                            // downloaded/local playback uses a filesystem path, so there is nothing to resolve
+                            if (target.url?.startsWith("http", ignoreCase = true) != true) return@LaunchedEffect
+                            val key = "${anime.id}:$episodeNumber"
+                            if (key in mergedAudioKeys.value) return@LaunchedEffect
+                            val current = screen as? Screen.Player ?: return@LaunchedEffect
+                            val currentAudio = current.alternatives.firstOrNull { it.url == current.url }?.audio ?: current.audioTrack
+                            if (current.alternatives.any { it.audio.equals("Dub", true) } &&
+                                current.alternatives.any { it.audio.equals("Sub", true) }
+                            ) {
+                                mergedAudioKeys.value = mergedAudioKeys.value + key
+                                return@LaunchedEffect
+                            }
+                            val fetchDub = !currentAudio.equals("Dub", true)
+                            mergedAudioKeys.value = mergedAudioKeys.value + key
+                            screen = current.copy(audioResolving = true, audioError = null)
+                            var failure = false
+                            val others = try {
+                                animeVideoProviders.sources(
+                                    anilistId = anime.id,
+                                    malId = anime.malId,
+                                    titles = listOfNotNull(anime.title, anime.titleRomaji, anime.titleNative) + anime.synonyms,
+                                    episode = episodeNumber,
+                                    dub = fetchDub,
+                                )
+                            } catch (cancelled: CancellationException) {
+                                mergedAudioKeys.value = mergedAudioKeys.value - key
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                failure = true
+                                logger.warn { "other-audio lookup failed episode=$episodeNumber ${error.message}" }
+                                emptyList()
+                            }
+                            val now = screen as? Screen.Player ?: return@LaunchedEffect
+                            if (now.detail?.id != anime.id || now.episode != episodeNumber) return@LaunchedEffect
+                            screen = now.copy(
+                                alternatives = mergeVideoSources(now.alternatives + others),
+                                audioResolving = false,
+                                audioError = if (failure) "Couldn't check the other audio tracks." else null,
                             )
-                        },
-                        onAudioChange = { audio ->
-                            val activeEpisode = target.episode
-                            if (activeEpisode != null) scope.launch { resolvePlayerEpisode(target, activeEpisode, audio) }
-                        },
-                        onSmartDownload = { nextEpisode ->
-                            smartDownloadNext(target.detail, nextEpisode, target.audioTrack)
-                        },
-                        onSmartDelete = { oldEpisode -> deleteSmartDownload(target.detail, oldEpisode) },
-                        onEpisodeChange = { episode ->
-                            if (target.detail != null) scope.launch { resolvePlayerEpisode(target, episode, target.audioTrack) }
-                            else screen = target.copy(episode = episode, episodeTitle = target.episodeTitles[episode])
-                        },
-                        onPresence = { presence ->
-                            if (presence != null) {
-                                discordPresence.show(presence)
-                            } else {
-                                // mpv reports an end-of-file and Compose disposes the old engine when
-                                // switching episodes. Don't flash idle unless we really left the player.
-                                if (screen !is Screen.Player) {
-                                    discordPresence.clearPlayer()
+                        }
+                        PlayerScreen(
+                            title = target.title,
+                            showTitle = target.detail?.title?.takeIf(String::isNotBlank) ?: target.title.substringBefore(" · Episode "),
+                            url = target.url,
+                            headers = target.headers,
+                            alternatives = target.alternatives,
+                            audioResolving = target.audioResolving,
+                            audioError = target.audioError,
+                            episode = target.episode,
+                            episodeTitle = target.episodeTitle,
+                            durationMinutes = target.detail?.duration,
+                            episodes = target.episodes,
+                            episodeTitles = target.episodeTitles,
+                            episodeThumbnails = target.episodeThumbnails,
+                            detail = target.detail,
+                            settings = settings,
+                            onSettingsChange = { updated -> updateSettings { updated } },
+                            isFullscreen = playerFullscreen,
+                            isPipMode = isPipMode,
+                            onTogglePip = { isPipMode = !isPipMode },
+                            onClosePip = { isPipMode = false },
+                            onToggleFullscreen = { playerFullscreen = !playerFullscreen },
+                            onSourceSelect = { source ->
+                                val serverName = source.server.takeIf(String::isNotBlank) ?: source.provider
+                                ActionBreadcrumbs.record("Clicked server: $serverName")
+                                logger.info { "server selected provider=${source.provider} server=${source.server} quality=${source.quality} url=${source.url}" }
+                                screen = target.copy(
+                                    title = "${target.detail?.title ?: target.title.substringBefore(" · Episode ")} · Episode ${formatPlayerEpisode(target.episode ?: 1.0)} · ${source.provider} ${source.quality ?: source.format.uppercase()}",
+                                    url = source.url,
+                                    headers = source.headers,
+                                    audioTrack = source.audio,
+                                    audioResolving = false,
+                                    audioError = null,
+                                )
+                            },
+                            onSmartDownload = { nextEpisode ->
+                                smartDownloadNext(target.detail, nextEpisode, target.audioTrack)
+                            },
+                            onSmartDelete = { oldEpisode -> deleteSmartDownload(target.detail, oldEpisode) },
+                            onEpisodeChange = { episode ->
+                                if (target.detail != null) scope.launch { resolvePlayerEpisode(target, episode, target.audioTrack) }
+                                else screen = target.copy(episode = episode, episodeTitle = target.episodeTitles[episode])
+                            },
+                            onPresence = { presence ->
+                                if (presence != null) {
+                                    discordPresence.show(presence)
                                 } else {
-                                    scope.launch {
-                                        delay(700)
-                                        if (screen !is Screen.Player) discordPresence.clearPlayer()
+                                    // mpv reports an end-of-file and Compose disposes the old engine when
+                                    // switching episodes. Don't flash idle unless we really left the player.
+                                    if (screen !is Screen.Player) {
+                                        discordPresence.clearPlayer()
+                                    } else {
+                                        scope.launch {
+                                            delay(700)
+                                            if (screen !is Screen.Player) discordPresence.clearPlayer()
+                                        }
                                     }
                                 }
-                            }
-                        },
-                        onBack = ::goBack,
-                    )
+                            },
+                            onBack = ::goBack,
+                        )
+                    }
                 }
                 }
                 }

@@ -39,6 +39,8 @@ import me.enivzoy.anilife.app.data.SavedWindow
 import me.enivzoy.anilife.app.data.SingleInstance
 import me.enivzoy.anilife.app.data.WindowStateStore
 import me.enivzoy.anilife.app.data.dependencyDirectory
+import me.enivzoy.anilife.app.data.legacyDependencyDirectory
+import me.enivzoy.anilife.app.data.migrateLegacyDependencyDirectory
 import me.enivzoy.anilife.app.data.restoreWindowBounds
 import me.enivzoy.anilife.app.screens.SetupScreen
 import java.awt.Color
@@ -59,7 +61,7 @@ internal fun forwardedJvmProperties(properties: Properties): List<String> =
     properties.stringPropertyNames()
         .filter {
             it.startsWith("compose.") || it.startsWith("jpackage.") ||
-                it == "file.encoding" || it == "skiko.library.path"
+                it == "file.encoding" || it == "skiko.library.path" || it == "AniLife.mpv.library"
         }
         .map { "-D$it=${properties.getProperty(it)}" }
 
@@ -68,7 +70,7 @@ private fun showcaseRequested(): Boolean =
     System.getProperty("anilife.glassShowcase") == "true" ||
         System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
 
-/** Skip the first-run dependency setup (for development when deps are already on PATH). */
+/** Skip dependency setup for development when the managed runtimes are already installed. */
 private fun skipSetup(): Boolean =
     System.getProperty("anilife.skipSetup") == "true" ||
         System.getenv("ANILIFE_SKIP_SETUP") == "1"
@@ -76,6 +78,19 @@ private fun skipSetup(): Boolean =
 fun main() {
     runCatching { DiagnosticsPaths.ensure() }
     installFatalExceptionHandler()
+    migrateLegacyDependencyDirectory(
+        legacyDependencyDirectory(
+            System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(::File),
+            File(System.getProperty("user.home")),
+        ),
+        dependencyDirectory(),
+    )
+    // The managed copy is only a default: an explicit -DAniLife.mpv.library always wins.
+    if (System.getProperty("AniLife.mpv.library").isNullOrBlank()) {
+        File(dependencyDirectory(), "mpv/libmpv-2.dll").takeIf(File::isFile)?.let {
+            System.setProperty("AniLife.mpv.library", it.absolutePath)
+        }
+    }
     if (relaunchWithSetupJre()) return
     val instance = if (System.getenv("ANILIFE_ALLOW_MULTIPLE") == "1") {
         null

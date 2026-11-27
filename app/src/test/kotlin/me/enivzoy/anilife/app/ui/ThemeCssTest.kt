@@ -1,5 +1,8 @@
 package me.enivzoy.anilife.app.ui
 
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.Color
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -147,5 +150,21 @@ class ThemeCssTest {
                 assertTrue(ThemeCss.tokens.any { it.name == name }, "${preset.name} uses unknown token $name")
             }
         }
+    }
+
+    @Test
+    fun aDarkBackgroundSelectsTheDarkScheme() {
+        val scheme = schemeFor(Color(0xFF0A0F0A))
+
+        assertEquals(darkColorScheme().surfaceTint, scheme.surfaceTint)
+        assertEquals(Color(0xFF0A0F0A), scheme.background)
+    }
+
+    @Test
+    fun aLightBackgroundSelectsTheLightScheme() {
+        val scheme = schemeFor(Color(0xFFF7F7F7))
+
+        assertEquals(lightColorScheme().surfaceTint, scheme.surfaceTint)
+        assertEquals(Color(0xFFF7F7F7), scheme.background)
     }
 }

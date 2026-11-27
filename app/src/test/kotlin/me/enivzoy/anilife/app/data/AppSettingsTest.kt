@@ -346,6 +346,35 @@ class AppSettingsTest {
     }
 
     @Test
+    fun autodetectSettingsPersistAndOldFilesKeepTheDefaults() {
+        val root = Files.createTempDirectory("AniLife-settings-autodetect")
+        try {
+            val file = root.resolve("settings.properties").toFile()
+            val legacy = AppSettingsStore(file).settings.value
+            assertFalse(legacy.autoDetectEnabled)
+            assertEquals(emptyList(), legacy.autoDetectDirectories)
+            assertEquals(45, legacy.autoDetectSettleSeconds)
+
+            val first = root.resolve("downloads").toFile()
+            val second = root.resolve("anime inbox").toFile()
+            AppSettingsStore(file).update {
+                it.copy(
+                    autoDetectEnabled = true,
+                    autoDetectDirectories = listOf(first.absolutePath, second.absolutePath, "  "),
+                    autoDetectSettleSeconds = 5,
+                )
+            }
+
+            val persisted = AppSettingsStore(file).settings.value
+            assertTrue(persisted.autoDetectEnabled)
+            assertEquals(listOf(first.absolutePath, second.absolutePath), persisted.autoDetectDirectories)
+            assertEquals(10, persisted.autoDetectSettleSeconds)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun experimentalDefaultsKeepTheExistingBehaviourEnabled() {
         val settings = AppSettings()
         assertTrue(settings.expDebouncedSearch)

@@ -5,18 +5,161 @@ import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DependencyManagerTest {
     @Test
+    fun configurePathsDoesNotThrowOnFreshInstall() {
+        val dir = Files.createTempDirectory("anilife-fresh-install")
+        System.clearProperty("AniLife.mpv.library")
+        try {
+            // No jre/mpv/ffmpeg/upscaler folders exist yet, exactly like a first run.
+            DependencyManager(CoroutineScope(Dispatchers.Unconfined), dir.toFile()).configurePaths()
+            assertNull(System.getProperty("AniLife.mpv.library"))
+        } finally {
+            System.clearProperty("AniLife.mpv.library")
+            System.clearProperty("AniLife.ffmpeg.dir")
+            System.clearProperty("AniLife.jre.home")
+            System.clearProperty("AniLife.upscaler.dir")
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun configurePathsKeepsUserSuppliedMpvLibraryEvenWithAManagedCopy() {
+        val dir = Files.createTempDirectory("anilife-mpv-override")
+        val userLib = File(dir.toFile(), "custom/libmpv-2.dll").apply {
+            parentFile.mkdirs()
+            writeText("user supplied")
+        }
+        val managed = dir.resolve("mpv/libmpv-2.dll")
+        Files.createDirectories(managed.parent)
+        Files.writeString(managed, "managed")
+        System.setProperty("AniLife.mpv.library", userLib.absolutePath)
+        try {
+            DependencyManager(CoroutineScope(Dispatchers.Unconfined), dir.toFile()).configurePaths()
+            assertEquals(userLib.absolutePath, System.getProperty("AniLife.mpv.library"))
+        } finally {
+            System.clearProperty("AniLife.mpv.library")
+            System.clearProperty("AniLife.ffmpeg.dir")
+            System.clearProperty("AniLife.jre.home")
+            System.clearProperty("AniLife.upscaler.dir")
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun configurePathsUsesTheManagedCopyWhenNoOverrideIsSet() {
+        val dir = Files.createTempDirectory("anilife-mpv-managed")
+        val managed = dir.resolve("mpv/libmpv-2.dll")
+        Files.createDirectories(managed.parent)
+        Files.writeString(managed, "managed")
+        System.clearProperty("AniLife.mpv.library")
+        try {
+            DependencyManager(CoroutineScope(Dispatchers.Unconfined), dir.toFile()).configurePaths()
+            assertEquals(managed.toString(), System.getProperty("AniLife.mpv.library"))
+        } finally {
+            System.clearProperty("AniLife.mpv.library")
+            System.clearProperty("AniLife.ffmpeg.dir")
+            System.clearProperty("AniLife.jre.home")
+            System.clearProperty("AniLife.upscaler.dir")
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun storesDependenciesInAniLifeRuntimeDirectory() {
+        val root = Files.createTempDirectory("anilife-appdata-").toFile()
+        try {
+            val appData = File(root, "Roaming")
+            val userHome = File(root, "Home")
+
+            assertEquals(File(appData, "AniLife/runtime"), dependencyDirectory(appData, userHome))
+            assertEquals(File(userHome, ".anilife/runtime"), dependencyDirectory(null, userHome))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun migratesOnlyKnownDependenciesFromLegacyBinIntoManagedRuntime() {
+        val root = Files.createTempDirectory("anilife-runtime-migration-")
+        try {
+            val legacy = root.resolve("bin")
+            val runtime = root.resolve("AniLife/runtime")
+            Files.createDirectories(legacy.resolve("mpv"))
+            Files.writeString(legacy.resolve("mpv/libmpv-2.dll"), "mpv")
+            Files.writeString(legacy.resolve("mpv.installed"), "version|sha256")
+            Files.writeString(legacy.resolve("unrelated.txt"), "leave in place")
+
+            migrateLegacyDependencyDirectory(legacy.toFile(), runtime.toFile())
+
+            assertTrue(Files.isRegularFile(runtime.resolve("mpv/libmpv-2.dll")))
+            assertTrue(Files.isRegularFile(runtime.resolve("mpv.installed")))
+            assertTrue(Files.isRegularFile(legacy.resolve("unrelated.txt")))
+            assertTrue(!Files.exists(legacy.resolve("mpv")))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun keepsExistingManagedRuntimeInsteadOfReplacingItDuringMigration() {
+        val root = Files.createTempDirectory("anilife-runtime-migration-conflict-")
+        try {
+            val legacy = root.resolve("bin")
+            val runtime = root.resolve("AniLife/runtime")
+            Files.createDirectories(legacy.resolve("mpv"))
+            Files.createDirectories(runtime.resolve("mpv"))
+            Files.writeString(legacy.resolve("mpv/libmpv-2.dll"), "old")
+            Files.writeString(runtime.resolve("mpv/libmpv-2.dll"), "managed")
+
+            migrateLegacyDependencyDirectory(legacy.toFile(), runtime.toFile())
+
+            assertEquals("managed", Files.readString(runtime.resolve("mpv/libmpv-2.dll")))
+            assertEquals("old", Files.readString(legacy.resolve("mpv/libmpv-2.dll")))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun usesWindowsUserAgent() {
         assertTrue(USER_AGENT.contains("Windows NT"))
         assertTrue(USER_AGENT.startsWith("Mozilla/"))
+    }
+
+    @Test
+    fun librarySearchReturnsNullWhenDependencyDirectoryDoesNotExist() {
+        val root = Files.createTempDirectory("anilife-missing-mpv-")
+        try {
+            assertEquals(null, findLibrary(root.resolve("runtime/mpv"), "libmpv-2.dll"))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun librarySearchIsRestrictedToTheManagedRuntimeDirectory() {
+        val root = Files.createTempDirectory("anilife-managed-mpv-")
+        try {
+            val managed = Files.createDirectories(root.resolve("runtime/mpv"))
+            val external = Files.createDirectory(root.resolve("external"))
+            Files.writeString(external.resolve("libmpv-2.dll"), "external")
+            assertEquals(null, findLibrary(managed, "libmpv-2.dll"))
+
+            Files.writeString(managed.resolve("libmpv-2.dll"), "managed")
+            assertEquals(managed.resolve("libmpv-2.dll"), findLibrary(managed, "libmpv-2.dll"))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
     }
 
     @Test
@@ -27,6 +170,23 @@ class DependencyManagerTest {
         )
         assertEquals("https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest", MPV_RELEASES)
         assertEquals("https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", FFMPEG_RELEASES)
+    }
+
+    @Test
+    fun fetchTextUsesStandardJsonAcceptHeaderForNonGitHubMetadataApis() {
+        var acceptHeader: String? = null
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/metadata") { exchange ->
+            acceptHeader = exchange.requestHeaders.getFirst("Accept")
+            respond(exchange, 200, "{}")
+        }
+        server.start()
+        try {
+            fetchText("http://127.0.0.1:${server.address.port}/metadata")
+            assertEquals("application/json", acceptHeader)
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test
@@ -51,6 +211,19 @@ class DependencyManagerTest {
     }
 
     @Test
+    fun networkErrorIncludesOperationHostAndTimeoutReason() {
+        val error = networkError(
+            "Fetching dependency metadata",
+            java.net.URI("https://api.example.test/releases"),
+            java.net.SocketTimeoutException("Read timed out"),
+        )
+
+        assertTrue(error.message.orEmpty().contains("Fetching dependency metadata"))
+        assertTrue(error.message.orEmpty().contains("api.example.test"))
+        assertTrue(error.message.orEmpty().contains("Read timed out"))
+    }
+
+    @Test
     fun fetchTextRejectsNonSuccessStatus() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val port = server.address.port
@@ -61,6 +234,8 @@ class DependencyManagerTest {
         try {
             val error = assertFailsWith<IllegalStateException> { fetchText("http://127.0.0.1:$port/missing") }
             assertTrue(error.message.orEmpty().contains("404"))
+            assertTrue(error.message.orEmpty().contains("127.0.0.1"))
+            assertTrue(error.message.orEmpty().contains("not found"))
         } finally {
             server.stop(0)
         }

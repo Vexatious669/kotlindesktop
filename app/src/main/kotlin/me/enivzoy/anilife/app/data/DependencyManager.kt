@@ -1,6 +1,7 @@
 package me.enivzoy.anilife.app.data
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -19,6 +21,7 @@ import net.sf.sevenzipjbinding.impl.RandomAccessFileInStream
 import net.sf.sevenzipjbinding.simple.ISimpleInArchiveItem
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URI
@@ -39,10 +42,12 @@ internal const val UPSCALER_ARCHIVE =
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
 internal const val UPSCALER_SHA256 = "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d"
 private const val UPSCALER_VERSION = "v0.2.5.0"
+private const val DOWNLOAD_ATTEMPTS = 2
+private const val DOWNLOAD_READ_TIMEOUT_MS = 45_000
 
 enum class Dependency { JRE, MPV, FFMPEG, UPSCALER }
 
-enum class DependencyStatus { Pending, Downloading, Verifying, Extracting, Installed, Failed }
+enum class DependencyStatus { Pending, Resolving, Downloading, Verifying, Extracting, Installed, Failed }
 
 data class DependencyState(
     val dependency: Dependency,
@@ -60,10 +65,37 @@ internal data class DependencySource(
     val version: String,
 )
 
-fun dependencyDirectory(): File {
-    val base = System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(::File)
-        ?: File(System.getProperty("user.home"), ".anilife")
-    return File(base, "bin")
+fun dependencyDirectory(): File = dependencyDirectory(
+    appDataDirectory = System.getenv("APPDATA")?.takeIf(String::isNotBlank)?.let(::File),
+    userHome = File(System.getProperty("user.home")),
+)
+
+internal fun dependencyDirectory(appDataDirectory: File?, userHome: File): File =
+    if (appDataDirectory != null) {
+        File(File(appDataDirectory, "AniLife"), "runtime")
+    } else {
+        File(File(userHome, ".anilife"), "runtime")
+    }
+
+internal fun legacyDependencyDirectory(appDataDirectory: File?, userHome: File): File =
+    File(appDataDirectory ?: File(userHome, ".anilife"), "bin")
+
+internal fun migrateLegacyDependencyDirectory(legacyDirectory: File, runtimeDirectory: File) {
+    val dependencyNames = Dependency.entries.map { it.name.lowercase() }
+    val entriesToMigrate = dependencyNames.flatMap { name -> listOf(name, "$name.installed") } + "use-jre"
+    if (entriesToMigrate.none { File(legacyDirectory, it).exists() }) return
+
+    Files.createDirectories(runtimeDirectory.toPath())
+    entriesToMigrate.forEach { name ->
+        val source = File(legacyDirectory, name).toPath()
+        val target = File(runtimeDirectory, name).toPath()
+        if (Files.exists(source) && !Files.exists(target)) Files.move(source, target)
+    }
+}
+
+internal fun findLibrary(root: Path, name: String): Path? {
+    if (!Files.isDirectory(root)) return null
+    return root.resolve(name).takeIf(Files::isRegularFile)
 }
 
 internal fun releaseAssetPattern(dependency: Dependency): Regex = when (dependency) {
@@ -76,13 +108,20 @@ internal fun upscalerSource(): DependencySource =
     DependencySource(UPSCALER_ARCHIVE, UPSCALER_SHA256, UPSCALER_VERSION)
 
 internal fun fetchText(url: String): String {
-    val connection = openConnection(url, api = true, followRedirects = true, connectMs = 30_000, readMs = 30_000)
+    val connection = openConnection(url, api = true, followRedirects = true, connectMs = 30_000, readMs = 60_000)
     return try {
         requireSuccess(connection)
         connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    } catch (error: IOException) {
+        throw networkError("Fetching dependency metadata", connection.url.toURI(), error)
     } finally {
         connection.disconnect()
     }
+}
+
+internal fun networkError(operation: String, uri: URI, cause: Throwable): IOException {
+    val detail = cause.message?.takeIf(String::isNotBlank) ?: cause.javaClass.simpleName
+    return IOException("$operation from ${uri.host} failed: $detail", cause)
 }
 
 internal fun openConnection(
@@ -96,15 +135,29 @@ internal fun openConnection(
     connectTimeout = connectMs
     readTimeout = readMs
     setRequestProperty("User-Agent", USER_AGENT)
-    setRequestProperty("Accept", if (api) "application/vnd.github+json" else "application/octet-stream")
-    if (api) setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+    val githubApi = api && URI(url).host.equals("api.github.com", ignoreCase = true)
+    setRequestProperty(
+        "Accept",
+        when {
+            !api -> "application/octet-stream"
+            githubApi -> "application/vnd.github+json"
+            else -> "application/json"
+        },
+    )
+    if (githubApi) setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
 }
 
 internal fun requireSuccess(connection: HttpURLConnection) {
     val code = connection.responseCode
     if (code !in 200..299) {
         val body = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-        error("Request failed ($code): ${body.take(240).ifBlank { connection.url.host }}")
+        val rateLimited = (code == 403 || code == 429) &&
+            (
+                connection.getHeaderField("X-RateLimit-Remaining") == "0" ||
+                    body.contains("rate limit", ignoreCase = true)
+                )
+        if (rateLimited) error("HTTP $code from ${connection.url.host}: API rate limit exceeded")
+        error("HTTP $code from ${connection.url.host}: ${body.take(240).ifBlank { connection.responseMessage }}")
     }
 }
 
@@ -133,53 +186,100 @@ class DependencyManager(
         if (isSetupComplete() || installJob?.isActive == true) return
         installJob = scope.launch {
             downloadAndInstall(callback).onFailure { error ->
-                Dependency.entries.filter { currentState(it).status != DependencyStatus.Installed }
-                    .forEach { fail(it, error) }
+                val failedDependency = Dependency.entries.firstOrNull {
+                    currentState(it).status == DependencyStatus.Failed
+                }
+                Dependency.entries
+                    .filter { currentState(it).status == DependencyStatus.Pending }
+                    .forEach { dependency ->
+                        val reason = failedDependency?.let { "${it.name} setup failed; this runtime was not attempted." }
+                            ?: "Setup failed before this runtime was attempted."
+                        fail(dependency, IOException("${dependency.name}: $reason", error))
+                    }
             }
         }
     }
 
     fun retryAll() {
-        installJob?.cancel()
-        installJob = null
-        start()
-    }
-
-    fun retry(dependency: Dependency) {
-        if (jobs[dependency]?.isActive == true) return
-        jobs[dependency] = scope.launch {
-            runCatching { install(dependency, callback) }
-                .onSuccess { configurePaths() }
-                .onFailure { error -> fail(dependency, error) }
+        if (installJob?.isActive == true || jobs.values.any(Job::isActive)) return
+        installJob = scope.launch {
+            Dependency.entries
+                .filter { currentState(it).status != DependencyStatus.Installed }
+                .forEach { dependency ->
+                    try {
+                        install(dependency, callback)
+                    } catch (error: kotlinx.coroutines.CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        fail(dependency, error)
+                    }
+                }
+            configurePaths()
         }
     }
 
-    suspend fun downloadAndInstall(onProgress: (Dependency, Float) -> Unit): Result<Unit> {
+    fun retry(dependency: Dependency) {
+        if (jobs[dependency]?.isActive == true || installJob?.isActive == true) return
+        jobs[dependency] = scope.launch {
+            try {
+                install(dependency, callback)
+                configurePaths()
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                fail(dependency, error)
+            }
+        }
+    }
+
+    suspend fun downloadAndInstall(onProgress: (Dependency, Float) -> Unit): Result<Unit> = withContext(Dispatchers.IO) {
         callback = onProgress
         if (!isWindows) {
             Dependency.entries.forEach { dependency ->
                 state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f) }
             }
             configurePaths()
-            return Result.success(Unit)
+            return@withContext Result.success(Unit)
         }
-        return runCatching {
-            Dependency.entries.forEach { dependency ->
-                if (isInstalled(dependency)) {
-                    state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f, error = null) }
-                } else {
+        val failures = mutableListOf<Throwable>()
+        Dependency.entries.forEach { dependency ->
+            if (isInstalled(dependency)) {
+                state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f, error = null) }
+            } else {
+                try {
                     install(dependency, onProgress)
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    failures += error
                 }
             }
-            configurePaths()
+        }
+        configurePaths()
+        if (failures.isEmpty()) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IOException("${failures.size} runtime download(s) failed.", failures.first()))
         }
     }
 
     fun configurePaths() {
-        System.setProperty("AniLife.ffmpeg.dir", ffmpegDir.toString())
         System.setProperty("AniLife.jre.home", jreDir.toString())
+        System.setProperty("AniLife.jre.java", jreDir.resolve("bin/java.exe").toString())
+        System.setProperty("AniLife.ffmpeg.dir", ffmpegDir.toString())
         System.setProperty("AniLife.upscaler.dir", upscalerDir.toString())
-        findLibrary(mpvDir, "libmpv-2.dll")?.let { System.setProperty("AniLife.mpv.library", it.toString()) }
+        // A user-supplied override wins over the managed copy, so it survives setup.
+        val override = System.getProperty("AniLife.mpv.library")?.takeIf(String::isNotBlank)
+        if (override != null && File(override).isFile) {
+            System.setProperty("AniLife.mpv.library", override)
+        } else {
+            val mpvLibrary = findLibrary(mpvDir, "libmpv-2.dll")
+            if (mpvLibrary != null) {
+                System.setProperty("AniLife.mpv.library", mpvLibrary.toString())
+            } else {
+                System.clearProperty("AniLife.mpv.library")
+            }
+        }
         if (isWindows && isInstalled(Dependency.JRE)) {
             installDir.resolve("use-jre").toFile().writeText("1")
         }
@@ -201,94 +301,122 @@ class DependencyManager(
         return binaries.all(Files::isRegularFile)
     }
 
-    private suspend fun install(dependency: Dependency, onProgress: (Dependency, Float) -> Unit) {
+    private suspend fun install(dependency: Dependency, onProgress: (Dependency, Float) -> Unit) = withContext(Dispatchers.IO) {
         state(dependency) {
-            copy(status = DependencyStatus.Downloading, progress = 0f, error = null, bytes = 0L, totalBytes = 0L)
+            copy(status = DependencyStatus.Resolving, progress = 0f, error = null, bytes = 0L, totalBytes = 0L)
         }
-        val source = resolveSource(dependency)
-        val archive = Files.createTempFile("anilife-${dependency.name.lowercase()}-", archiveSuffix(source.url))
+        var archive: Path? = null
         try {
-            download(source, archive, dependency, onProgress)
-            state(dependency) { copy(status = DependencyStatus.Extracting, progress = 1f) }
-            Files.createDirectories(installDir)
             val target = when (dependency) {
                 Dependency.JRE -> jreDir
                 Dependency.MPV -> mpvDir
                 Dependency.FFMPEG -> ffmpegDir
                 Dependency.UPSCALER -> upscalerDir
             }
-            extract(archive, target, dependency)
-            installDir.resolve("${dependency.name.lowercase()}.installed").toFile()
-                .writeText("${source.version}|${source.sha256}")
-            state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f) }
-        } catch (error: Throwable) {
+            // Each candidate is resolved and installed in turn; a bad host or bad hash moves on.
+            firstWorkingSource(dependency, candidateSources(dependency, ::fetchText)) { source ->
+                archive?.let(Files::deleteIfExists)
+                val file = Files.createTempFile("anilife-${dependency.name.lowercase()}-", archiveSuffix(source.url))
+                archive = file
+                download(source, file, dependency, onProgress)
+                state(dependency) {
+                    copy(status = DependencyStatus.Extracting, progress = 1f, error = null)
+                }
+                Files.createDirectories(installDir)
+                extract(file, target, dependency)
+                installDir.resolve("${dependency.name.lowercase()}.installed").toFile()
+                    .writeText("${source.version}|${source.sha256}")
+                state(dependency) { copy(status = DependencyStatus.Installed, progress = 1f) }
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
             fail(dependency, error)
             throw error
         } finally {
-            Files.deleteIfExists(archive)
+            archive?.let(Files::deleteIfExists)
         }
     }
 
-    private fun resolveSource(dependency: Dependency): DependencySource = when (dependency) {
-        Dependency.JRE -> parseJreSource(fetchText(ADOPTIUM_API))
-        Dependency.MPV -> parseReleaseSource(fetchText(MPV_RELEASES), releaseAssetPattern(Dependency.MPV))
-        Dependency.FFMPEG -> parseReleaseSource(fetchText(FFMPEG_RELEASES), releaseAssetPattern(Dependency.FFMPEG))
-        Dependency.UPSCALER -> upscalerSource()
-    }
-
-    private suspend fun download(
+    internal suspend fun download(
         source: DependencySource,
         target: Path,
         dependency: Dependency,
         onProgress: (Dependency, Float) -> Unit,
     ) {
-        val connection = openConnection(source.url, api = false, followRedirects = true, connectMs = 30_000, readMs = 60_000)
-        val digest = MessageDigest.getInstance("SHA-256")
-        val total = connection.contentLength.toLong().coerceAtLeast(0L)
-        var copied = 0L
-        var lastTime = System.nanoTime()
-        var lastBytes = 0L
-        try {
-            requireSuccess(connection)
-            DigestInputStream(BufferedInputStream(connection.inputStream), digest).use { input ->
-                Files.newOutputStream(target).use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        if (!coroutineContext.isActive) error("Dependency download was cancelled.")
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        copied += read
-                        val now = System.nanoTime()
-                        if (now - lastTime >= 200_000_000L || total > 0 && copied == total) {
-                            val fraction = if (total > 0) (copied.toFloat() / total).coerceIn(0f, 1f) else 0f
-                            val speed = (copied - lastBytes) * 1_000_000_000L / (now - lastTime).coerceAtLeast(1L)
-                            update(dependency) {
-                                copy(
-                                    status = DependencyStatus.Downloading,
-                                    progress = fraction,
-                                    bytes = copied,
-                                    totalBytes = total,
-                                    speedBps = speed,
-                                )
+        var lastError: IOException? = null
+        for (attempt in 1..DOWNLOAD_ATTEMPTS) {
+            val connection = openConnection(
+                source.url,
+                api = false,
+                followRedirects = true,
+                connectMs = 30_000,
+                readMs = DOWNLOAD_READ_TIMEOUT_MS,
+            )
+            val digest = MessageDigest.getInstance("SHA-256")
+            var total = 0L
+            var copied = 0L
+            var lastTime = System.nanoTime()
+            var lastBytes = 0L
+            try {
+                requireSuccess(connection)
+                total = connection.contentLength.toLong().coerceAtLeast(0L)
+                DigestInputStream(BufferedInputStream(connection.inputStream), digest).use { input ->
+                    Files.newOutputStream(target).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            if (!coroutineContext.isActive) error("Dependency download was cancelled.")
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            copied += read
+                            val now = System.nanoTime()
+                            if (now - lastTime >= 200_000_000L || total > 0 && copied == total) {
+                                val fraction = if (total > 0) (copied.toFloat() / total).coerceIn(0f, 1f) else 0f
+                                val speed = (copied - lastBytes) * 1_000_000_000L / (now - lastTime).coerceAtLeast(1L)
+                                update(dependency) {
+                                    copy(
+                                        status = DependencyStatus.Downloading,
+                                        progress = fraction,
+                                        bytes = copied,
+                                        totalBytes = total,
+                                        speedBps = speed,
+                                    )
+                                }
+                                onProgress(dependency, fraction)
+                                lastTime = now
+                                lastBytes = copied
                             }
-                            onProgress(dependency, fraction)
-                            lastTime = now
-                            lastBytes = copied
                         }
                     }
                 }
+                val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                if (!actual.equals(source.sha256, ignoreCase = true)) {
+                    error("${dependency.name} checksum mismatch. Expected ${source.sha256.take(12)}…, got ${actual.take(12)}…")
+                }
+                state(dependency) {
+                    copy(status = DependencyStatus.Verifying, progress = 1f, bytes = copied, totalBytes = total)
+                }
+                return
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: IOException) {
+                lastError = networkError(
+                    "Downloading ${dependency.name} (attempt $attempt/$DOWNLOAD_ATTEMPTS, ${formatBytes(copied)} received)",
+                    connection.url.toURI(),
+                    error,
+                )
+                if (attempt < DOWNLOAD_ATTEMPTS) {
+                    state(dependency) {
+                        copy(status = DependencyStatus.Resolving, progress = 0f, bytes = 0L, totalBytes = 0L, speedBps = 0L)
+                    }
+                    kotlinx.coroutines.delay(1_000L)
+                }
+            } finally {
+                connection.disconnect()
             }
-        } finally {
-            connection.disconnect()
         }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        if (!actual.equals(source.sha256, ignoreCase = true)) {
-            error("${dependency.name} checksum mismatch. Expected ${source.sha256.take(12)}…, got ${actual.take(12)}…")
-        }
-        state(dependency) {
-            copy(status = DependencyStatus.Verifying, progress = 1f, bytes = copied, totalBytes = total)
-        }
+        throw lastError ?: IOException("${dependency.name} download failed without a network response.")
     }
 
     private fun extract(archive: Path, target: Path, dependency: Dependency) {
@@ -324,8 +452,10 @@ class DependencyManager(
         return if (extension == "7z" || extension == "zip") ".$extension" else ".zip"
     }
 
-    private fun findLibrary(root: Path, name: String): Path? = Files.walk(root).use { paths ->
-        paths.filter { it.fileName.toString().equals(name, ignoreCase = true) }.findFirst().orElse(null)
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+        bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
+        else -> "$bytes B"
     }
 
     private fun update(dependency: Dependency, change: DependencyState.() -> DependencyState) {

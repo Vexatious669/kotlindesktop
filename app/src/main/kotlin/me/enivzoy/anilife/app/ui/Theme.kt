@@ -1,14 +1,17 @@
 ﻿package me.enivzoy.anilife.app.ui
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -108,26 +111,33 @@ object AniLifeColors {
     val SettingsSwitchKnob get() = Foreground
 }
 
-private val DarkScheme = darkColorScheme(
-    primary = AniLifeColors.Primary,
-    onPrimary = AniLifeColors.PrimaryForeground,
-    primaryContainer = AniLifeColors.Primary,
-    onPrimaryContainer = AniLifeColors.PrimaryForeground,
-    secondary = AniLifeColors.Secondary,
-    onSecondary = AniLifeColors.SecondaryForeground,
-    secondaryContainer = AniLifeColors.Accent,
-    onSecondaryContainer = AniLifeColors.AccentForeground,
-    background = AniLifeColors.Background,
-    onBackground = AniLifeColors.Foreground,
-    surface = AniLifeColors.Card,
-    onSurface = AniLifeColors.CardForeground,
-    surfaceVariant = AniLifeColors.Muted,
-    onSurfaceVariant = AniLifeColors.MutedForeground,
-    outline = AniLifeColors.Ring,
-    error = AniLifeColors.Destructive,
-    onError = Color.White,
-    scrim = AniLifeColors.Scrim,
-)
+// the css background decides the scheme, so a dark theme never falls back to light material
+// defaults and a light one does not render dark-on-dark text inside text fields.
+private fun appScheme(): ColorScheme = schemeFor(AniLifeColors.Background)
+
+internal fun schemeFor(background: Color): ColorScheme {
+    val base = if (background.luminance() < 0.5f) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = AniLifeColors.Primary,
+        onPrimary = AniLifeColors.PrimaryForeground,
+        primaryContainer = AniLifeColors.Primary,
+        onPrimaryContainer = AniLifeColors.PrimaryForeground,
+        secondary = AniLifeColors.Secondary,
+        onSecondary = AniLifeColors.SecondaryForeground,
+        secondaryContainer = AniLifeColors.Accent,
+        onSecondaryContainer = AniLifeColors.AccentForeground,
+        background = background,
+        onBackground = AniLifeColors.Foreground,
+        surface = AniLifeColors.Card,
+        onSurface = AniLifeColors.CardForeground,
+        surfaceVariant = AniLifeColors.Muted,
+        onSurfaceVariant = AniLifeColors.MutedForeground,
+        outline = AniLifeColors.Ring,
+        error = AniLifeColors.Destructive,
+        onError = Color.White,
+        scrim = AniLifeColors.Scrim,
+    )
+}
 
 private val AppTypography = Typography(
     displayLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold, fontSize = 48.sp, lineHeight = 52.sp, letterSpacing = (-1.2).sp),
@@ -166,26 +176,7 @@ fun AniLifeTheme(settings: AppSettings, content: @Composable () -> Unit) {
         }
     }
     val typography = androidx.compose.runtime.remember(font) { AppTypography.withFont(font) }
-    val scheme = darkColorScheme(
-        primary = AniLifeColors.Primary,
-        onPrimary = AniLifeColors.PrimaryForeground,
-        primaryContainer = AniLifeColors.Primary,
-        onPrimaryContainer = AniLifeColors.PrimaryForeground,
-        secondary = AniLifeColors.Secondary,
-        onSecondary = AniLifeColors.SecondaryForeground,
-        secondaryContainer = AniLifeColors.Accent,
-        onSecondaryContainer = AniLifeColors.AccentForeground,
-        background = AniLifeColors.Background,
-        onBackground = AniLifeColors.Foreground,
-        surface = AniLifeColors.Card,
-        onSurface = AniLifeColors.CardForeground,
-        surfaceVariant = AniLifeColors.Muted,
-        onSurfaceVariant = AniLifeColors.MutedForeground,
-        outline = AniLifeColors.Ring,
-        error = AniLifeColors.Destructive,
-        onError = Color.White,
-        scrim = AniLifeColors.Scrim,
-    )
+    val scheme = appScheme()
     MaterialTheme(
         colorScheme = scheme,
         typography = typography,
