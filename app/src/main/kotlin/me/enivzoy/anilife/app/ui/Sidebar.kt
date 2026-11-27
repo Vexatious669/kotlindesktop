@@ -29,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import me.enivzoy.anilife.app.Screen
@@ -119,16 +118,12 @@ private fun NavIcon(
     progress: Float? = null,
     onClick: () -> Unit,
 ) {
-    val iconTint = progress?.let { value ->
-        val base = if (selected) AniLifeColors.Foreground else AniLifeColors.MutedForeground
-        val amount = if (value.isNaN()) 0.14f else value.coerceIn(0f, 1f) * 0.78f
-        lerp(base, AniLifeColors.DownloadProgress, amount)
-    }
     GlassIconButton(
         onClick = onClick,
         icon = icon,
         contentDescription = label,
-        iconTint = iconTint,
+        progress = progress,
+        progressColor = AniLifeColors.DownloadProgress,
         size = size,
         iconSize = 20.dp,
         selected = selected,

@@ -1,8 +1,13 @@
 package me.enivzoy.anilife.app.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -20,6 +25,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -176,6 +182,8 @@ fun GlassIconButton(
     selected: Boolean = false,
     accent: Color? = null,
     iconTint: Color? = null,
+    progress: Float? = null,
+    progressColor: Color = AniLifeColors.DownloadProgress,
     size: Dp = 40.dp,
     iconSize: Dp = 18.dp,
     shape: Shape = RoundedCornerShape(11.dp),
@@ -220,8 +228,42 @@ fun GlassIconButton(
             .pointerHoverIcon(if (enabled) PointerIcon.Hand else PointerIcon.Default),
         contentAlignment = Alignment.Center,
     ) {
+        if (progress != null) {
+            IconButtonProgressFill(progress = progress, color = progressColor)
+        }
         Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size(iconSize))
     }
+}
+
+@Composable
+private fun BoxScope.IconButtonProgressFill(progress: Float, color: Color) {
+    val fillFraction = if (progress.isNaN()) {
+        val transition = rememberInfiniteTransition(label = "iconButtonIndeterminateProgress")
+        val fraction by transition.animateFloat(
+            initialValue = 0.18f,
+            targetValue = 0.62f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1100),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "iconButtonIndeterminateProgressFraction",
+        )
+        fraction
+    } else {
+        val fraction by animateFloatAsState(
+            targetValue = progress.coerceIn(0f, 1f),
+            animationSpec = tween(durationMillis = 420),
+            label = "iconButtonProgressFraction",
+        )
+        fraction
+    }
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .fillMaxHeight(fillFraction)
+            .background(color.copy(alpha = 0.34f)),
+    )
 }
 
 /**
