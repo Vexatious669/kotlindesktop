@@ -263,11 +263,9 @@ fun AniLifeApp(
         }
     }
     LaunchedEffect(Unit) {
-        if (System.getProperty("AniLife.mpv.library") == null) {
-            val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
-            if (path == null) {
-                NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = "libmpv not found. Install mpv manually.")
-            }
+        val path = MpvBootstrap.ensure { status -> NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = status) }
+        if (path == null) {
+            NoticeStoreInstance.add(kind = "mpv", title = "mpv", body = "libmpv not found. Install mpv manually.")
         }
     }
 

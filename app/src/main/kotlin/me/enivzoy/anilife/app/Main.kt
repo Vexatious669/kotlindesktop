@@ -61,7 +61,7 @@ internal fun forwardedJvmProperties(properties: Properties): List<String> =
     properties.stringPropertyNames()
         .filter {
             it.startsWith("compose.") || it.startsWith("jpackage.") ||
-                it == "file.encoding" || it == "skiko.library.path"
+                it == "file.encoding" || it == "skiko.library.path" || it == "AniLife.mpv.library"
         }
         .map { "-D$it=${properties.getProperty(it)}" }
 
@@ -70,7 +70,7 @@ private fun showcaseRequested(): Boolean =
     System.getProperty("anilife.glassShowcase") == "true" ||
         System.getenv("ANILIFE_GLASS_SHOWCASE") == "1"
 
-/** Skip the first-run dependency setup (for development when deps are already on PATH). */
+/** Skip dependency setup for development when the managed runtimes are already installed. */
 private fun skipSetup(): Boolean =
     System.getProperty("anilife.skipSetup") == "true" ||
         System.getenv("ANILIFE_SKIP_SETUP") == "1"
@@ -85,6 +85,9 @@ fun main() {
         ),
         dependencyDirectory(),
     )
+    File(dependencyDirectory(), "mpv/libmpv-2.dll").takeIf(File::isFile)?.let {
+        System.setProperty("AniLife.mpv.library", it.absolutePath)
+    }
     if (relaunchWithSetupJre()) return
     val instance = if (System.getenv("ANILIFE_ALLOW_MULTIPLE") == "1") {
         null
