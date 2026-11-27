@@ -80,9 +80,14 @@ fun GlassHost(content: @Composable () -> Unit) {
  */
 @Composable
 private fun AmbientWallpaper(style: GlassStyle) {
+    // Default has no glass, so it keeps the plain app background instead of an aurora field.
+    if (style == GlassStyle.LEGACY) {
+        Box(Modifier.fillMaxSize().background(AniLifeColors.Background))
+        return
+    }
     val primaryStrength = when (style) {
-        GlassStyle.LEGACY -> 0.10f
-        GlassStyle.FROSTED -> 0.08f
+        GlassStyle.LEGACY -> 0f
+        GlassStyle.FROSTED -> 0.10f
         GlassStyle.LIQUID -> 0.16f
     }
     Box(
@@ -191,19 +196,21 @@ fun Modifier.adaptiveGlass(
 }
 
 /**
- * The Liquid Glass renderer.
+ * The glass renderer, shared by every glass surface in the app.
  *
- * Rendering pipeline for one surface:
- *  1. sample the registered backdrop layer,
- *  2. blur it (depth of field),
- *  3. refract it: a Skia runtime shader displaces samples along the rounded-rect edge (lens)
- *     and adds a specular sweep, edge glow, chromatic dispersion and vignette,
- *  4. composite a tint, a top specular sheen and a pointer-localised light on the surface,
- *  5. draw a rim light that follows the shape.
+ * The active [GlassStyle] selects how much of the pipeline runs:
+ *  - [GlassStyle.LEGACY] (Default) draws a flat tint and a rim and never samples the backdrop.
+ *  - [GlassStyle.FROSTED] samples and blurs the backdrop, tints it and stops.
+ *  - [GlassStyle.LIQUID] runs the full pipeline: sample the registered backdrop layer, blur it
+ *    (depth of field), then refract it with a Skia runtime shader that displaces samples along
+ *    the rounded-rect edge (lens) and adds a specular sweep, edge glow, chromatic dispersion and
+ *    vignette, and finally composites a tint, a top specular sheen and a pointer-localised
+ *    light with a rim light that follows the shape.
  *
  * Interaction comes from [interactionSource]: hover/focus raise the ambient light, press
  * adds a small optical scale-down and a stronger specular response, and the pointer position
- * is tracked so the highlight is localised rather than uniform.
+ * is tracked so the highlight is localised rather than uniform. Frosted keeps only the rim
+ * response; the shader effects are Liquid-only.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -231,15 +238,36 @@ fun Modifier.glassSurface(
     val glowState = rememberAppFloat(interactionTarget)
     val pointer = remember { mutableStateOf(Offset.Unspecified) }
 
+    val base = if (elevation > 0.dp) {
+        this.shadow(elevation, shape, ambientColor = AniLifeColors.Shadow, spotColor = Color.Transparent)
+    } else {
+        this
+    }
+
+    // Default theme: no glass at all. The surface is flat, bordered and never samples the
+    // backdrop, so buttons, icons, sidebars and dialogs look like the original AniLife UI.
+    if (style == GlassStyle.LEGACY) {
+        val legacyTint = when {
+            accent != null -> accent.copy(alpha = 0.16f + 0.10f * interactionTarget)
+            else -> AniLifeColors.Card.copy(alpha = 0.96f)
+        }
+        val legacyBorder = accent?.copy(alpha = 0.42f + 0.2f * interactionTarget) ?: AniLifeColors.Border
+        return base.background(legacyTint, shape).border(1.dp, legacyBorder, shape)
+    }
+
     val tintAlpha = when (style) {
-        GlassStyle.LEGACY -> (alpha * appearance.glassTransparency / 0.5f * 0.42f)
-        GlassStyle.FROSTED -> (alpha * appearance.glassTransparency / 0.5f * 0.30f)
-        GlassStyle.LIQUID -> (alpha * appearance.glassTransparency / 0.5f * 0.22f)
+        GlassStyle.LEGACY -> alpha * appearance.glassTransparency / 0.5f * 0.42f
+        GlassStyle.FROSTED -> alpha * appearance.glassTransparency / 0.5f * 0.34f
+        GlassStyle.LIQUID -> alpha * appearance.glassTransparency / 0.5f * 0.22f
     }.coerceIn(0.06f, 0.72f)
 
     // tinting from the css background keeps a dark theme dark no matter what sits behind it;
-    // scaling by transparency keeps the appearance slider meaningful
-    val baseTintAlpha = (0.40f + 0.60f * appearance.glassTransparency).coerceIn(0.40f, 0.90f)
+    // scaling by transparency keeps the appearance slider meaningful. Frosted leaves more of
+    // the blurred backdrop visible, because the blur *is* the effect.
+    val baseTintAlpha = when (style) {
+        GlassStyle.FROSTED -> (0.18f + 0.34f * appearance.glassTransparency).coerceIn(0.18f, 0.52f)
+        else -> (0.40f + 0.60f * appearance.glassTransparency).coerceIn(0.40f, 0.90f)
+    }
 
     val surfaceTint = when {
         accent != null -> accent.copy(alpha = (tintAlpha * 0.85f).coerceIn(0.08f, 0.6f))
@@ -247,25 +275,13 @@ fun Modifier.glassSurface(
     }
     val borderColor = when {
         accent != null -> accent.copy(alpha = 0.42f + 0.2f * interactionTarget)
-        style == GlassStyle.LEGACY -> Color.White.copy(alpha = 0.09f + 0.08f * interactionTarget)
-        style == GlassStyle.FROSTED -> Color.White.copy(alpha = 0.16f + 0.1f * interactionTarget)
+        style == GlassStyle.FROSTED -> Color.White.copy(alpha = 0.14f + 0.06f * interactionTarget)
         else -> AniLifeColors.Primary.copy(alpha = 0.16f + 0.14f * interactionTarget)
     }
 
-    val base = if (elevation > 0.dp) {
-        this.shadow(elevation, shape, ambientColor = AniLifeColors.Shadow, spotColor = Color.Transparent)
-    } else {
-        this
-    }
-
-    val tracked = base.onPointerEvent(PointerEventType.Move) { event ->
-        val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
-        pointer.value = position
-    }.onPointerEvent(PointerEventType.Exit) { pointer.value = Offset.Unspecified }
-
     if (backdrop == null || !PlatformCapabilities.supportsBlur) {
         // Graceful fallback: keep the shape, depth and rim, drop sampling.
-        return tracked
+        return base
             .background(
                 Brush.verticalGradient(
                     listOf(
@@ -279,28 +295,36 @@ fun Modifier.glassSurface(
     }
 
     val blurRadius = when (style) {
-        GlassStyle.LEGACY -> 8.dp
-        GlassStyle.FROSTED -> 6.dp
+        GlassStyle.LEGACY -> 0.dp
+        // frosted glass is only a blur, so it needs a real blur radius to read as one
+        GlassStyle.FROSTED -> 18.dp
         GlassStyle.LIQUID -> 10.dp
     } * appearance.glassBlurIntensity
     val blurPx = with(density) { blurRadius.toPx() }
+
+    // Frosted Glass: sample the backdrop, blur it, tint it and stop. No refraction shader, no
+    // lens, no specular sweep and no pointer light - those belong to Liquid Glass.
+    if (style == GlassStyle.FROSTED) {
+        return base
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { shape },
+                effects = { blur(blurPx) },
+                onDrawSurface = { drawRect(surfaceTint) },
+            )
+            .border(1.dp, borderColor, shape)
+    }
+
+    val tracked = base.onPointerEvent(PointerEventType.Move) { event ->
+        val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+        pointer.value = position
+    }.onPointerEvent(PointerEventType.Exit) { pointer.value = Offset.Unspecified }
+
     val highlightAlpha = ((0.30f + 0.40f * interactionTarget) * appearance.glassHighlightIntensity)
         .coerceIn(0f, 0.85f)
-    val reflectionStrength = when (style) {
-        GlassStyle.LEGACY -> 0.12f
-        GlassStyle.FROSTED -> 0.10f
-        GlassStyle.LIQUID -> 0.18f
-    } * (0.75f + 0.45f * interactionTarget)
-    val distortion = when (style) {
-        GlassStyle.LEGACY -> 0.30f
-        GlassStyle.FROSTED -> 0.22f
-        GlassStyle.LIQUID -> 0.46f
-    }
-    val vignette = when (style) {
-        GlassStyle.LEGACY -> 0.10f
-        GlassStyle.FROSTED -> 0.06f
-        GlassStyle.LIQUID -> 0.15f
-    }
+    val reflectionStrength = 0.18f * (0.75f + 0.45f * interactionTarget)
+    val distortion = 0.46f
+    val vignette = 0.15f
     val useShader = PlatformCapabilities.supportsRuntimeShader
     val refractionHeight = with(density) { 16.dp.toPx() }
     val refractionAmount = with(density) { 9.dp.toPx() }
@@ -315,7 +339,7 @@ fun Modifier.glassSurface(
                     reflectiveGlass(
                         reflectionStrength,
                         distortion,
-                        if (style == GlassStyle.LIQUID) 0.03f else 0f,
+                        0.03f,
                         vignette,
                     )
                     // Edge-only lens refraction on surfaces with enough room for it to read.

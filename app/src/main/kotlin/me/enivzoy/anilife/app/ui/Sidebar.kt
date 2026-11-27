@@ -1,5 +1,6 @@
 ﻿package me.enivzoy.anilife.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import me.enivzoy.anilife.app.Screen
+import me.enivzoy.anilife.app.ui.theme.GlassStyle
+import me.enivzoy.anilife.app.ui.theme.LocalAppearance
+import me.enivzoy.anilife.app.ui.theme.glassStyle
 
  
 
@@ -49,7 +53,15 @@ fun AppSidebar(
         modifier = modifier
             .width(64.dp)
             .fillMaxHeight()
-            .liquidGlass(shape = RoundedCornerShape(0.dp))
+            .then(
+                // Default keeps the solid sidebar of the original layout; glass themes sample
+                // the backdrop through the glass renderer instead.
+                if (LocalAppearance.current.themeMode.glassStyle == GlassStyle.LEGACY) {
+                    Modifier.background(AniLifeColors.Sidebar)
+                } else {
+                    Modifier.liquidGlass(shape = RoundedCornerShape(0.dp))
+                },
+            )
             .drawBehind {
                 val x = size.width - 0.5f
                 drawLine(
