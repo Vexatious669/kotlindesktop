@@ -10,9 +10,27 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DependencyManagerTest {
+    @Test
+    fun configurePathsDoesNotThrowOnFreshInstall() {
+        val dir = Files.createTempDirectory("anilife-fresh-install")
+        System.clearProperty("AniLife.mpv.library")
+        try {
+            // No jre/mpv/ffmpeg/upscaler folders exist yet, exactly like a first run.
+            DependencyManager(CoroutineScope(Dispatchers.Unconfined), dir.toFile()).configurePaths()
+            assertNull(System.getProperty("AniLife.mpv.library"))
+        } finally {
+            System.clearProperty("AniLife.mpv.library")
+            System.clearProperty("AniLife.ffmpeg.dir")
+            System.clearProperty("AniLife.jre.home")
+            System.clearProperty("AniLife.upscaler.dir")
+            dir.toFile().deleteRecursively()
+        }
+    }
+
     @Test
     fun usesWindowsUserAgent() {
         assertTrue(USER_AGENT.contains("Windows NT"))

@@ -324,8 +324,14 @@ class DependencyManager(
         return if (extension == "7z" || extension == "zip") ".$extension" else ".zip"
     }
 
-    private fun findLibrary(root: Path, name: String): Path? = Files.walk(root).use { paths ->
-        paths.filter { it.fileName.toString().equals(name, ignoreCase = true) }.findFirst().orElse(null)
+    // Fresh installs have no mpv folder yet; walking a missing directory throws NoSuchFileException.
+    private fun findLibrary(root: Path, name: String): Path? {
+        if (!Files.isDirectory(root)) return null
+        return runCatching {
+            Files.walk(root).use { paths ->
+                paths.filter { it.fileName.toString().equals(name, ignoreCase = true) }.findFirst().orElse(null)
+            }
+        }.getOrNull()
     }
 
     private fun update(dependency: Dependency, change: DependencyState.() -> DependencyState) {
