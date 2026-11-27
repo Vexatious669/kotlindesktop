@@ -175,6 +175,7 @@ fun GlassIconButton(
     enabled: Boolean = true,
     selected: Boolean = false,
     accent: Color? = null,
+    iconTint: Color? = null,
     size: Dp = 40.dp,
     iconSize: Dp = 18.dp,
     shape: Shape = RoundedCornerShape(11.dp),
@@ -185,7 +186,7 @@ fun GlassIconButton(
     val hovered by interaction.collectIsHoveredAsState()
     val pressed by interaction.collectIsPressedAsState()
     val scale by rememberAppFloat(if (pressed && enabled) 0.94f else 1f)
-    val tint = when {
+    val tint = iconTint ?: when {
         !enabled -> AniLifeColors.MutedForeground.copy(alpha = 0.6f)
         selected -> AniLifeColors.Foreground
         hovered -> AniLifeColors.Foreground

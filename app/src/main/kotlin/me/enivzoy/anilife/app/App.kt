@@ -111,6 +111,25 @@ import kotlinx.coroutines.launch
 
 private val logger = KotlinLogging.logger {}
 private val updaterLogger = KotlinLogging.logger("AniLife.updater")
+
+internal fun downloadQueueProgress(jobs: List<me.enivzoy.anilife.app.data.DownloadJob>): Float? {
+    val active = jobs.filter {
+        it.status == me.enivzoy.anilife.app.data.DownloadStatus.Queued ||
+            it.status == me.enivzoy.anilife.app.data.DownloadStatus.Running
+    }
+    if (active.isEmpty()) return null
+    val fractions = active.map { job ->
+        when {
+            job.status == me.enivzoy.anilife.app.data.DownloadStatus.Queued -> 0f
+            job.progressFraction != null -> job.progressFraction
+            job.total != null && job.total > 0L ->
+                (job.downloaded.toDouble() / job.total.toDouble()).toFloat().coerceIn(0f, 1f)
+            else -> null
+        }
+    }
+    if (fractions.any { it == null }) return Float.NaN
+    return fractions.filterNotNull().average().toFloat().coerceIn(0f, 1f)
+}
 private const val UPDATE_LOG_TAIL_BYTES = 200 * 1024
 
 @Composable
@@ -518,6 +537,7 @@ fun AniLifeApp(
                 onNavigate = ::navigateTo,
                 onRandom = ::pickRandom,
                 onSearch = { paletteOpen = true },
+                downloadProgress = downloadQueueProgress(downloadJobs),
             )
         }
 
