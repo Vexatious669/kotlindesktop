@@ -50,7 +50,7 @@ You need JDK 21. Gradle downloads everything else.
 
 Installers must be built on Windows. Tests that need libmpv skip themselves when it is not installed.
 
-CI lives in `.github/workflows/build.yml`. It builds the four Windows files on every push and attaches them to a GitHub release when you push a tag like `v1.2.0`. The tag becomes the package version, so it has to be three numbers.
+CI lives in `.github/workflows/build.yml`. It builds the four Windows files on every push and attaches them to a GitHub release when you push a version tag. Tags must be `v<major>.<minor>.<patch>-<suffix>`, where the suffix is uppercase `HOTFIX`, `RELEASE`, `PRE` or `TESTING`, for example `v1.2.0-RELEASE`. The full version, suffix included, becomes the app version; the installer gets the three-number part. `HOTFIX` and `RELEASE` are stable releases, `PRE` and `TESTING` are published as GitHub prereleases.
 
 ## Keyboard shortcuts in the player
 

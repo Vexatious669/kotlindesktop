@@ -123,7 +123,16 @@ class Updater(
         .build(),
     private val manifestUrl: String = DEFAULT_MANIFEST_URL,
     private val fallbackManifestUrl: String = FALLBACK_MANIFEST_URL,
+    private val releasesUrl: String = Updater.RELEASES_URL,
 ) {
+    /**
+     * Release-list discovery only applies to the canonical repository. Custom manifest endpoints
+     * (self-hosted mirrors or tests) must not silently fall through to GitHub's release list.
+     */
+    private val releaseListEnabled: Boolean =
+        releasesUrl.isNotBlank() &&
+            (manifestUrl == DEFAULT_MANIFEST_URL || fallbackManifestUrl == FALLBACK_MANIFEST_URL)
+
     private val mutableUpdate = MutableStateFlow<Update?>(null)
     val update: StateFlow<Update?> = mutableUpdate.asStateFlow()
 
@@ -272,7 +281,13 @@ class Updater(
     private suspend fun fetchUpdate(currentVersion: String): Update? {
         logger.info { "update check start current=$currentVersion" }
         val failures = mutableListOf<String>()
-        for (url in listOf(manifestUrl, fallbackManifestUrl)) {
+        val sources = buildList {
+            add(manifestUrl)
+            if (releaseListEnabled) add(releasesUrl)
+            add(fallbackManifestUrl)
+        }
+        var successfulResponses = 0
+        for (url in sources) {
             val safeUrl = redactForLog(url)
             logger.info { "manifest query url=$safeUrl" }
             try {
@@ -280,7 +295,7 @@ class Updater(
                 val request = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofSeconds(30))
                     .header("User-Agent", "AniLife-Updater")
-                    .header("Accept", "application/vnd.github+json")
+                    .header("Accept", acceptHeaderFor(uri))
                     .GET()
                     .build()
                 val response = ResourceTracker.networkOpened(uri.host).use {
@@ -303,7 +318,14 @@ class Updater(
                     failures += "$safeUrl: $detail"
                     continue
                 }
-                return parseUpdateManifest(response.body(), currentVersion, currentPlatform())
+                successfulResponses++
+                val update = if (url == releasesUrl) {
+                    parseReleaseList(response.body(), currentVersion, currentPlatform())
+                } else {
+                    parseUpdateManifest(response.body(), currentVersion, currentPlatform())
+                }
+                if (update != null) return update
+                logger.info { "manifest returned no compatible update url=$safeUrl" }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -312,14 +334,20 @@ class Updater(
                 failures += "$safeUrl: $detail"
             }
         }
-        val message = "Update manifest fetch failed: ${failures.joinToString("; ")}"
-        logger.error { message }
-        throw UpdateException(message)
+        if (successfulResponses == 0) {
+            val message = "Update manifest fetch failed: ${failures.joinToString("; ")}"
+            logger.error { message }
+            throw UpdateException(message)
+        }
+        logger.info { "update check complete current=$currentVersion no compatible update" }
+        return null
     }
 
     companion object {
         const val FALLBACK_VERSION = "1.0.0"
         const val UPDATES_DIRECTORY = "updates"
+        const val RELEASES_URL =
+            "https://api.github.com/repos/anilifecommunity/kotlindesktop/releases?per_page=30"
 
         fun logFile(): Path = DiagnosticsPaths.logs.resolve("updater.log")
 
@@ -360,59 +388,122 @@ class Updater(
             return base.resolve("AniLifeUpdater").resolve(UPDATES_DIRECTORY)
         }
 
+        /**
+         * Legacy accessor kept for backward compatibility. Do not use for upgrade decisions;
+         * [AppVersion] carries the suffix. Bare partial versions ("2.0") are padded to a triple.
+         */
         fun parseVersion(version: String): List<Int> =
-            version.trim().split('.').mapNotNull { it.toIntOrNull() }.ifEmpty { listOf(0) }
+            parseAppVersion(version)?.let { listOf(it.major, it.minor, it.patch) }
+                ?: legacyNumericVersion(version)
+                ?: listOf(0)
 
         fun isNewer(candidate: String, current: String): Boolean {
-            val left = parseVersion(candidate)
-            val right = parseVersion(current)
-            val size = maxOf(left.size, right.size)
-            for (index in 0 until size) {
-                val a = left.getOrElse(index) { 0 }
-                val b = right.getOrElse(index) { 0 }
-                if (a != b) return a > b
-            }
-            return false
+            val left = parseAppVersion(candidate)
+            val right = parseAppVersion(current)
+            if (left != null && right != null) return left.isNewerThan(right)
+            // Legacy tolerance for short, suffix-less versions such as "2.0" used by old manifests.
+            // Anything carrying an unknown/partial suffix stays unparseable and never counts newer.
+            val legacyLeft = legacyNumericVersion(candidate) ?: return false
+            val legacyRight = legacyNumericVersion(current) ?: return false
+            return compareTriples(legacyLeft, legacyRight) > 0
         }
     }
+}
+
+/** Bare `1`, `1.2` or `1.2.3` padded to a triple; null when the string is anything else. */
+private val LEGACY_NUMERIC_VERSION = Regex("""^\d+(?:\.\d+){0,2}$""")
+
+private fun legacyNumericVersion(version: String): List<Int>? {
+    val trimmed = version.trim()
+    if (!LEGACY_NUMERIC_VERSION.matches(trimmed)) return null
+    val parts = trimmed.split('.').map { it.toIntOrNull() ?: return null }
+    return List(3) { parts.getOrElse(it) { 0 } }
+}
+
+private fun compareTriples(left: List<Int>, right: List<Int>): Int {
+    val size = maxOf(left.size, right.size)
+    for (index in 0 until size) {
+        val a = left.getOrElse(index) { 0 }
+        val b = right.getOrElse(index) { 0 }
+        if (a != b) return a.compareTo(b)
+    }
+    return 0
 }
 
 internal fun parseUpdateManifest(body: String, currentVersion: String, platform: String): Update? {
     val json = Json { ignoreUnknownKeys = true }
     val root = json.parseToJsonElement(body) as? JsonObject ?: return null
-    val version = root.string("version")
-        ?: root.string("tag_name")?.removePrefix("v")
-        ?: return null
-    if (!Updater.isNewer(version, currentVersion)) return null
+    val tagName = root.string("tag_name")?.trim()?.takeIf { it.isNotEmpty() }
+    val declaredVersion = root.string("version")?.trim()?.takeIf { it.isNotEmpty() }
+    val rawVersion = declaredVersion ?: tagName ?: return null
+    val candidate = parseAppVersion(rawVersion) ?: return null
+    val version = candidate.normalized()
+    if (tagName != null && declaredVersion != null) {
+        val tagVersion = parseAppVersion(tagName) ?: return null
+        if (tagVersion.normalized() != version) {
+            logger.warn { "manifest tag/version mismatch tag=$tagName version=$declaredVersion" }
+            return null
+        }
+    }
+    val current = parseAppVersion(currentVersion) ?: ZERO_APP_VERSION
+    if (!isUpdateAllowed(current, candidate)) return null
+    val declaredChannel = root.string("channel")?.trim()?.lowercase()
+    if (declaredChannel != null) {
+        val suffixChannel = candidate.channel.name.lowercase()
+        if (declaredChannel != suffixChannel && declaredChannel != "pre-release") {
+            logger.warn {
+                "manifest channel mismatch version=$version declared=$declaredChannel suffix=$suffixChannel"
+            }
+        }
+    }
+
+    val isReleasePayload = tagName != null
     val assets = (root["assets"] as? JsonArray)
         ?.mapNotNull { it as? JsonObject }
         .orEmpty()
-    val platformAsset = assets.firstOrNull {
-        it.string("platform").equals(platform, ignoreCase = true)
+
+    fun assetUrl(asset: JsonObject): String? =
+        asset.string("browser_download_url") ?: asset.string("url")
+
+    fun JsonObject.isUsableAsset(): Boolean {
+        val name = string("name")
+        if (name != null) {
+            // An asset filename must name exactly this release version, not just contain it:
+            // "anilife-1.1.10.base.msi" must not satisfy version 1.1.1.
+            if (!assetNameNamesVersion(name, version)) return false
+        } else if (isReleasePayload) {
+            return false
+        }
+        val url = assetUrl(this) ?: return true
+        return urlMatchesReleaseTag(url, tagName)
     }
-    val releaseAsset = if (root.string("tag_name") != null) {
+
+    val platformAsset = assets.firstOrNull {
+        it.string("platform").equals(platform, ignoreCase = true) && it.isUsableAsset()
+    }
+    val releaseAsset = if (isReleasePayload) {
         assets.firstOrNull {
             val name = it.string("name").orEmpty()
-            name.endsWith(".base.msi", ignoreCase = true) ||
-                name.endsWith("#base.msi", ignoreCase = true)
+            (name.endsWith(".base.msi", ignoreCase = true) ||
+                name.endsWith("#base.msi", ignoreCase = true)) && it.isUsableAsset()
         } ?: assets.firstOrNull {
             val name = it.string("name").orEmpty()
-            name.endsWith(".base.exe", ignoreCase = true) ||
-                name.endsWith("#base.exe", ignoreCase = true)
+            (name.endsWith(".base.exe", ignoreCase = true) ||
+                name.endsWith("#base.exe", ignoreCase = true)) && it.isUsableAsset()
         }
     } else {
         null
     }
     val asset = platformAsset ?: releaseAsset
-    val url = sequenceOf(
-        root.string("url"),
-        root.string("assetUrl"),
-        asset?.string("browser_download_url"),
-        asset?.string("url"),
-    )
-        .filterNotNull()
-        .firstOrNull(String::isNotBlank)
+    // A GitHub release object carries its own `url`, which is the API JSON endpoint, not a
+    // download. The selected asset's URL is authoritative; root-level URLs are a fallback for
+    // hand-written manifests and must also be real download links.
+    val url = asset?.let { assetUrl(it) }?.takeIf(::isDownloadableUrl)
+        ?: sequenceOf(root.string("url"), root.string("assetUrl"))
+            .filterNotNull()
+            .firstOrNull { it.isNotBlank() && isDownloadableUrl(it) }
         ?: return null
+    if (!urlMatchesReleaseTag(url, tagName)) return null
     val downloadUrl = normalizeAssetUrl(url) ?: return null
     return Update(
         version = version,
@@ -430,11 +521,87 @@ internal fun parseUpdateManifest(body: String, currentVersion: String, platform:
     )
 }
 
+/**
+ * Picks the best compatible release from a GitHub release-list JSON array. Each release is parsed
+ * with the same rules as a single manifest, then the highest allowed version wins.
+ */
+internal fun parseReleaseList(body: String, currentVersion: String, platform: String): Update? {
+    val json = Json { ignoreUnknownKeys = true }
+    val releases = json.parseToJsonElement(body) as? JsonArray ?: return null
+    val current = parseAppVersion(currentVersion) ?: ZERO_APP_VERSION
+    var bestVersion: AppVersion? = null
+    var bestUpdate: Update? = null
+    for (element in releases) {
+        val release = element as? JsonObject ?: continue
+        val candidate = parseAppVersion(release.string("tag_name")) ?: continue
+        if (!isUpdateAllowed(current, candidate)) continue
+        val best = bestVersion
+        if (best != null && !candidate.isNewerThan(best)) continue
+        val update = parseUpdateManifest(release.toString(), currentVersion, platform) ?: continue
+        bestVersion = candidate
+        bestUpdate = update
+    }
+    return bestUpdate
+}
+
+/**
+ * True for an http(s) URL that serves file bytes. GitHub's REST release/asset endpoints return
+ * JSON metadata, so they are never valid download targets for the updater.
+ */
+private fun isDownloadableUrl(value: String): Boolean {
+    val uri = httpUri(value) ?: return false
+    if (uri.host.equals("api.github.com", ignoreCase = true)) {
+        val path = uri.path.orEmpty().trimEnd('/')
+        if (GITHUB_RELEASE_API_PATH.matches(path)) return false
+    }
+    return true
+}
+
+/** `/repos/<owner>/<repo>/releases`, `.../latest`, `.../<id>` and `.../assets/<id>`. */
+private val GITHUB_RELEASE_API_PATH =
+    Regex("""^/repos/[^/]+/[^/]+/releases(?:/(?:latest|\d+|assets/\d+))?$""")
+
+/**
+ * True when [name] carries the exact version token, e.g. `anilife-1.1.1-HOTFIX.base.msi` for
+ * `1.1.1-HOTFIX` or `anilife-1.0.3#base.exe` for `1.0.3`. A longer version that merely starts with
+ * the candidate (`1.1.10` vs `1.1.1`) does not match.
+ */
+private fun assetNameNamesVersion(name: String, version: String): Boolean {
+    val stem = "anilife-$version"
+    val index = name.indexOf(stem, ignoreCase = true)
+    if (index < 0) return false
+    val end = index + stem.length
+    return end == name.length || !name[end].isLetterOrDigit()
+}
+
+/**
+ * Rejects an asset URL whose `.../releases/download/<segment>/...` segment disagrees with the
+ * release tag. Applies only to github.com URLs on payloads that carry a tag.
+ */
+private fun urlMatchesReleaseTag(url: String, tag: String?): Boolean {
+    if (tag == null) return true
+    val uri = httpUri(url) ?: return false
+    if (!uri.host.equals("github.com", ignoreCase = true)) return true
+    val marker = "/releases/download/"
+    val path = uri.path.orEmpty()
+    val index = path.indexOf(marker)
+    if (index < 0) return true
+    val segment = path.substring(index + marker.length).substringBefore('/')
+    return segment.isNotEmpty() && segment == tag
+}
+
 private fun currentPlatform(): String = when {
     System.getProperty("os.name").orEmpty().contains("windows", ignoreCase = true) -> "windows"
     System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true) -> "macos"
     else -> "linux"
 }
+
+private fun acceptHeaderFor(uri: URI): String =
+    if (uri.host.equals("api.github.com", ignoreCase = true)) {
+        "application/vnd.github+json"
+    } else {
+        "application/json"
+    }
 
 private fun httpUri(url: String): URI? = runCatching { URI.create(url) }
     .getOrNull()
