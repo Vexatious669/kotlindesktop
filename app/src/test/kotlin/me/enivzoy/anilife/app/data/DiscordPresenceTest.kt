@@ -1,5 +1,6 @@
 package me.enivzoy.anilife.app.data
 
+import java.nio.file.Files
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -10,6 +11,24 @@ import kotlin.test.assertTrue
 import xyz.orbitary.perigee.activity.ActivityType
 
 class DiscordPresenceTest {
+    @Test
+    fun migratesLegacyPresenceLogIntoRoamingLogDirectory() {
+        val root = Files.createTempDirectory("anilife-discord-log-")
+        try {
+            val legacy = root.resolve("local/AniLife/discord-presence.log")
+            val roaming = root.resolve("roaming/AniLife/logs/discord-presence.log")
+            Files.createDirectories(legacy.parent)
+            Files.writeString(legacy, "existing diagnostic log")
+
+            migrateLegacyDiscordPresenceLog(legacy.toFile(), roaming.toFile())
+
+            assertEquals("existing diagnostic log", Files.readString(roaming))
+            assertTrue(!Files.exists(legacy))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
     private fun playing(
         position: Double = 120.0,
         duration: Double = 1_440.0,

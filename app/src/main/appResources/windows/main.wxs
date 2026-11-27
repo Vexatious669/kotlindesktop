@@ -69,6 +69,23 @@
 
     <CustomAction Id="JpFindRelatedProducts" BinaryKey="JpCaDll" DllEntry="FindRelatedProductsEx" />
 
+    <Property Id="ANILIFE_RUNTIME_DIR" Value="%APPDATA%\AniLife\runtime" />
+    <Property Id="ANILIFE_HEAPDUMPS_DIR" Value="%APPDATA%\AniLife\heapdumps" />
+    <Property Id="ANILIFE_LOCAL_DATA_DIR" Value="%LOCALAPPDATA%\AniLife" />
+    <Property Id="ANILIFE_UPDATER_DIR" Value="%LOCALAPPDATA%\AniLifeUpdater" />
+
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="AniLifeUninstallCleanup" Guid="{AE04BD28-1F0A-437C-9C6D-C217D07C579E}">
+        <Condition><![CDATA[NOT UPGRADINGPRODUCTCODE]]></Condition>
+        <util:RemoveFolderEx Id="RemoveAniLifeRuntime" On="uninstall" Property="ANILIFE_RUNTIME_DIR" />
+        <util:RemoveFolderEx Id="RemoveAniLifeHeapDumps" On="uninstall" Property="ANILIFE_HEAPDUMPS_DIR" />
+        <util:RemoveFolderEx Id="RemoveAniLifeLocalData" On="uninstall" Property="ANILIFE_LOCAL_DATA_DIR" />
+        <util:RemoveFolderEx Id="RemoveAniLifeUpdaterData" On="uninstall" Property="ANILIFE_UPDATER_DIR" />
+        <RegistryValue Root="HKMU" Key="Software\AniLife\InstallerCleanup" Name="CleanupComponent" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveRegistryKey Id="RemoveAniLifeCleanupRegistryKey" Root="HKMU" Key="Software\AniLife\InstallerCleanup" Action="removeOnUninstall" />
+      </Component>
+    </DirectoryRef>
+
     <Property Id="JP_LAUNCH_AFTER_INSTALL" Value="1" />
     <CustomAction Id="JpLaunchApp" Directory="INSTALLDIR" ExeCommand="&quot;$(var.JpAppName).exe&quot;" Return="ignore" />
 
@@ -79,6 +96,7 @@
       <ComponentGroupRef Id="Shortcuts"/>
       <ComponentGroupRef Id="Files"/>
       <ComponentGroupRef Id="FileAssociations"/>
+      <ComponentRef Id="AniLifeUninstallCleanup" />
     </Feature>
 
     <CustomAction Id="JpSetARPINSTALLLOCATION" Property="ARPINSTALLLOCATION" Value="[INSTALLDIR]" />

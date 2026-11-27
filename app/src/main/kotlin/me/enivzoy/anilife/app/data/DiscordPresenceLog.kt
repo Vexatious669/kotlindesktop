@@ -1,8 +1,17 @@
 package me.enivzoy.anilife.app.data
 
+import me.enivzoy.anilife.core.diagnostics.DiagnosticsPaths
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+
+internal fun migrateLegacyDiscordPresenceLog(legacyFile: File, roamingLog: File) {
+    if (!legacyFile.isFile || roamingLog.exists() || legacyFile.absoluteFile == roamingLog.absoluteFile) return
+    roamingLog.parentFile?.let { Files.createDirectories(it.toPath()) }
+    Files.move(legacyFile.toPath(), roamingLog.toPath(), StandardCopyOption.REPLACE_EXISTING)
+}
 
 /**
  * Small self-contained logger for Rich Presence diagnostics.
@@ -16,14 +25,15 @@ object DiscordPresenceLog {
 
     private val formatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private val file: File by lazy {
-        val base = System.getProperty("localappdata")
-            ?.takeIf(String::isNotBlank)
-            ?.let { File(it, "AniLife") }
-            ?: File(System.getProperty("user.home"), ".anilife")
-        runCatching {
-            base.mkdirs()
-            File(base, "discord-presence.log")
-        }.getOrElse { File(System.getProperty("java.io.tmpdir"), "anilife-discord-presence.log") }
+        val roamingLog = DiagnosticsPaths.logs.resolve("discord-presence.log").toFile()
+        val localAppData = System.getProperty("localappdata")?.takeIf(String::isNotBlank)
+            ?: System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)
+        val legacyLog = localAppData?.let { File(it, "AniLife/discord-presence.log") }
+        if (legacyLog != null) {
+            runCatching { migrateLegacyDiscordPresenceLog(legacyLog, roamingLog) }
+                .onFailure { System.err.println("Couldn't migrate Discord presence log: ${it.message}") }
+        }
+        roamingLog
     }
 
     @Synchronized
