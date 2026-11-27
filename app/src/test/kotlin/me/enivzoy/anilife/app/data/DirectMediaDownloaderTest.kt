@@ -1,12 +1,29 @@
 package me.enivzoy.anilife.app.data
 
+import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.io.TempDir
+import java.net.InetSocketAddress
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DirectMediaDownloaderTest {
+    @TempDir
+    lateinit var tempDirectory: Path
+
+    @Test
+    fun createsTheRequestedDownloadFolderAndParents() {
+        val downloadDirectory = tempDirectory.resolve("AniLife/Downloads")
+
+        assertEquals(downloadDirectory, DirectMediaDownloader.ensureDownloadDirectory(downloadDirectory))
+        assertTrue(Files.isDirectory(downloadDirectory))
+    }
+
     @Test
     fun defaultsDownloadsToTheUsersVideosFolder() {
         assertEquals(
