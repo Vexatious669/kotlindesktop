@@ -101,6 +101,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.platform.Font
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AppSettings
@@ -194,91 +195,95 @@ internal fun SettingsScreen(
             true
         }
     ) {
-        Row(modifier.fillMaxSize().background(AniLifeColors.SettingsBackground)) {
-            SettingsSidebar(
-                page = page,
-                query = query,
-                onQueryChange = { query = it },
-                onSelect = {
-                    page = it
-                    query = ""
-                },
-            )
-            Box(Modifier.width(1.dp).fillMaxHeight().background(AniLifeColors.SettingsDivider))
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                SettingsHeader(
-                title = if (query.isBlank()) page.title else "Search results",
-                subtitle = if (query.isBlank()) {
-                    page.subtitle
-                } else {
-                    "${results.size} setting${if (results.size == 1) "" else "s"} matching “${query.trim()}”"
-                },
-            )
-            val settingsScrollState = rememberScrollState()
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-            Column(
-                Modifier.fillMaxSize()
-                    .padding(start = 4.dp, end = 8.dp)
-                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                    .background(AniLifeColors.SettingsPanel)
-                    .adaptiveGlass(shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                    .border(1.dp, AniLifeColors.SettingsBorder, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                    .verticalScroll(settingsScrollState)
-                    .padding(horizontal = 26.dp, vertical = 16.dp),
-            ) {
-                if (query.isNotBlank()) {
-                    SearchResults(results) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val settingsSidebarWidth = (maxWidth * 0.32f).coerceIn(180.dp, 300.dp)
+            Row(modifier.fillMaxSize().background(AniLifeColors.SettingsBackground)) {
+                SettingsSidebar(
+                    page = page,
+                    query = query,
+                    width = settingsSidebarWidth,
+                    onQueryChange = { query = it },
+                    onSelect = {
                         page = it
                         query = ""
-                    }
-                } else {
-                    when (page) {
-                        SettingsPage.Player -> PlayerSettings(
-                            settings = settings,
-                            onSettingsChange = onSettingsChange,
-                            listeningForAction = listeningForAction,
-                            onListen = { listeningForAction = it },
-                            shortcutMessage = shortcutMessage,
+                    },
+                )
+                Box(Modifier.width(1.dp).fillMaxHeight().background(AniLifeColors.SettingsDivider))
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    SettingsHeader(
+                        title = if (query.isBlank()) page.title else "Search results",
+                        subtitle = if (query.isBlank()) {
+                            page.subtitle
+                        } else {
+                            "${results.size} setting${if (results.size == 1) "" else "s"} matching “${query.trim()}”"
+                        },
+                    )
+                    val settingsScrollState = rememberScrollState()
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Column(
+                            Modifier.fillMaxSize()
+                                .padding(start = 4.dp, end = 8.dp)
+                                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                                .background(AniLifeColors.SettingsPanel)
+                                .adaptiveGlass(shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                                .border(1.dp, AniLifeColors.SettingsBorder, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                                .verticalScroll(settingsScrollState)
+                                .padding(horizontal = 26.dp, vertical = 16.dp),
+                        ) {
+                            if (query.isNotBlank()) {
+                                SearchResults(results) {
+                                    page = it
+                                    query = ""
+                                }
+                            } else {
+                                when (page) {
+                                    SettingsPage.Player -> PlayerSettings(
+                                        settings = settings,
+                                        onSettingsChange = onSettingsChange,
+                                        listeningForAction = listeningForAction,
+                                        onListen = { listeningForAction = it },
+                                        shortcutMessage = shortcutMessage,
+                                    )
+                                    SettingsPage.Subtitles -> SubtitleSettings(settings, onSettingsChange)
+                                    SettingsPage.Downloads -> DownloadSettings(
+                                        settings = settings,
+                                        onSettingsChange = onSettingsChange,
+                                        autoDetect = autoDetect,
+                                        autoDetectScan = autoDetectScan,
+                                        autoDetectRunning = autoDetectRunning,
+                                        autoDetectStatus = autoDetectStatus,
+                                    )
+                                    SettingsPage.Servers -> ServerSettings()
+                                    SettingsPage.Accounts -> AccountSettings(
+                                        settings = settings,
+                                        discordState = discordState,
+                                        onSettingsChange = onSettingsChange,
+                                        onDiscordConnect = onDiscordConnect,
+                                    )
+                                    SettingsPage.Notifications -> NotificationSettings()
+                                    SettingsPage.Content -> ContentSettings(settings, onSettingsChange)
+                                    SettingsPage.Appearance -> AppearanceSettings(settings, onSettingsChange)
+                                    SettingsPage.Data -> DataSettings(settings, onSettingsChange, repository)
+                                    SettingsPage.App -> AppSettingsPage(
+                                        settings = settings,
+                                        onSettingsChange = onSettingsChange,
+                                        currentVersion = currentVersion,
+                                        updateCheckStatus = updateCheckStatus,
+                                        checkingForUpdates = checkingForUpdates,
+                                        onCheckForUpdates = onCheckForUpdates,
+                                    )
+                                    SettingsPage.About -> AboutSettings(currentVersion, settings)
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                        }
+                        PageScrollbar(
+                            rememberScrollbarAdapter(settingsScrollState),
+                            Modifier.align(Alignment.CenterEnd),
                         )
-                        SettingsPage.Subtitles -> SubtitleSettings(settings, onSettingsChange)
-                        SettingsPage.Downloads -> DownloadSettings(
-                            settings = settings,
-                            onSettingsChange = onSettingsChange,
-                            autoDetect = autoDetect,
-                            autoDetectScan = autoDetectScan,
-                            autoDetectRunning = autoDetectRunning,
-                            autoDetectStatus = autoDetectStatus,
-                        )
-                        SettingsPage.Servers -> ServerSettings()
-                        SettingsPage.Accounts -> AccountSettings(
-                            settings = settings,
-                            discordState = discordState,
-                            onSettingsChange = onSettingsChange,
-                            onDiscordConnect = onDiscordConnect,
-                        )
-                        SettingsPage.Notifications -> NotificationSettings()
-                        SettingsPage.Content -> ContentSettings(settings, onSettingsChange)
-                        SettingsPage.Appearance -> AppearanceSettings(settings, onSettingsChange)
-                        SettingsPage.Data -> DataSettings(settings, onSettingsChange, repository)
-                        SettingsPage.App -> AppSettingsPage(
-                            settings = settings,
-                            onSettingsChange = onSettingsChange,
-                            currentVersion = currentVersion,
-                            updateCheckStatus = updateCheckStatus,
-                            checkingForUpdates = checkingForUpdates,
-                            onCheckForUpdates = onCheckForUpdates,
-                        )
-                        SettingsPage.About -> AboutSettings(currentVersion, settings)
                     }
                 }
-                Spacer(Modifier.height(12.dp))
             }
-            PageScrollbar(
-                rememberScrollbarAdapter(settingsScrollState),
-                Modifier.align(Alignment.CenterEnd),
-            )
-            }
-        }
         }
         listeningForAction?.let { target ->
             Box(
@@ -372,11 +377,13 @@ SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebi
 private fun SettingsSidebar(
     page: SettingsPage,
     query: String,
+    width: Dp,
     onQueryChange: (String) -> Unit,
     onSelect: (SettingsPage) -> Unit,
 ) {
+    val pageScrollState = rememberScrollState()
     Column(
-        Modifier.width(300.dp)
+        Modifier.width(width)
             .fillMaxHeight()
             .background(AniLifeColors.SettingsBackground)
             .padding(top = 18.dp),
@@ -392,7 +399,10 @@ private fun SettingsSidebar(
         SidebarSearch(query = query, onQueryChange = onQueryChange)
         Spacer(Modifier.height(12.dp))
         Column(
-            Modifier.padding(horizontal = 20.dp),
+            Modifier.weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(pageScrollState)
+                .padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             SettingsPage.entries.forEach { entry ->
