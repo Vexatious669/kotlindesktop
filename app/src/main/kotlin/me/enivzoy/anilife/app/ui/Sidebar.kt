@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Casino
@@ -62,16 +64,18 @@ fun AppSidebar(
             },
     ) {
         val compact = maxHeight < 560.dp
-        val iconSize = if (compact) 34.dp else 40.dp
-        val gap = if (compact) 1.dp else 2.dp
+        val iconSize = 40.dp
+        val gap = 2.dp
+        val scrollState = rememberScrollState()
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize()
+                .then(if (compact) Modifier.verticalScroll(scrollState) else Modifier),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Top,
         ) {
             Spacer(Modifier.height(if (compact) 8.dp else 16.dp))
-            BrandMark(size = if (compact) 30.dp else 36.dp)
-            Spacer(Modifier.height(if (compact) 8.dp else 18.dp))
+            BrandMark(size = 36.dp)
+            Spacer(Modifier.height(18.dp))
 
             NavIcon(Icons.Rounded.Search, "Search (Ctrl+K)", selected = false, size = iconSize) { onSearch() }
             Spacer(Modifier.height(gap))

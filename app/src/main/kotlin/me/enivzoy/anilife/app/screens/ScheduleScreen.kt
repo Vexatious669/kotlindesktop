@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -50,6 +51,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.enivzoy.anilife.app.data.AniListRepository
@@ -122,56 +124,60 @@ private fun ScheduleContent(
     }
     val now = System.currentTimeMillis() / 1000
 
-    Column(
+    BoxWithConstraints(
         Modifier.fillMaxSize()
             .background(AniLifeColors.Background)
             .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Schedule",
-                color = AniLifeColors.Foreground,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.weight(1f))
-            MyListButton(selected = onlyMyList, onClick = { onlyMyList = !onlyMyList })
-        }
+        val sidebarWidth = (maxWidth * 0.42f).coerceIn(180.dp, 300.dp)
+        Column(Modifier.fillMaxSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Schedule",
+                    color = AniLifeColors.Foreground,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.weight(1f))
+                MyListButton(selected = onlyMyList, onClick = { onlyMyList = !onlyMyList })
+            }
 
-        ScheduleDayStrip(
-            today = today,
-            selected = selectedDate,
-            counts = dayCounts,
-            onSelect = { selectedDate = it },
-            modifier = Modifier.padding(top = 14.dp),
-        )
-
-        Row(
-            Modifier.weight(1f).fillMaxWidth().padding(top = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            ScheduleTimeline(
-                date = selectedDate,
+            ScheduleDayStrip(
                 today = today,
-                entries = selectedEntries,
-                now = now,
-                onOpen = onOpen,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-            ScheduleSidebar(
-                entries = visibleEntries,
-                libraryIds = libraryIds,
+                selected = selectedDate,
                 counts = dayCounts,
-                selectedDate = selectedDate,
-                month = YearMonth.from(selectedDate),
-                now = now,
-                formatFilters = formatFilters,
-                onSelectDate = { selectedDate = it },
-                onToggleFormat = { format ->
-                    formatFilters = if (format in formatFilters) formatFilters - format else formatFilters + format
-                },
-                onOpen = onOpen,
+                onSelect = { selectedDate = it },
+                modifier = Modifier.padding(top = 14.dp),
             )
+
+            Row(
+                Modifier.weight(1f).fillMaxWidth().padding(top = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                ScheduleTimeline(
+                    date = selectedDate,
+                    today = today,
+                    entries = selectedEntries,
+                    now = now,
+                    onOpen = onOpen,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                )
+                ScheduleSidebar(
+                    entries = visibleEntries,
+                    libraryIds = libraryIds,
+                    counts = dayCounts,
+                    selectedDate = selectedDate,
+                    month = YearMonth.from(selectedDate),
+                    now = now,
+                    formatFilters = formatFilters,
+                    sidebarWidth = sidebarWidth,
+                    onSelectDate = { selectedDate = it },
+                    onToggleFormat = { format ->
+                        formatFilters = if (format in formatFilters) formatFilters - format else formatFilters + format
+                    },
+                    onOpen = onOpen,
+                )
+            }
         }
     }
 }
@@ -447,6 +453,7 @@ private fun ScheduleSidebar(
     month: YearMonth,
     now: Long,
     formatFilters: Set<String>,
+    sidebarWidth: Dp,
     onSelectDate: (LocalDate) -> Unit,
     onToggleFormat: (String) -> Unit,
     onOpen: (Long) -> Unit,
@@ -459,7 +466,7 @@ private fun ScheduleSidebar(
         .take(4)
 
     val scrollState = rememberScrollState()
-    Box(Modifier.width(300.dp).fillMaxHeight()) {
+    Box(Modifier.width(sidebarWidth).fillMaxHeight()) {
     Column(
         Modifier.fillMaxSize().verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(13.dp),

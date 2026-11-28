@@ -86,6 +86,26 @@ class WindowStateStoreTest {
     }
 
     @Test
+    fun restoredWindowIsResizedAndPositionedWithinItsScreen() {
+        val saved = SavedWindow(x = -500, y = -200, width = 1_600, height = 900, maximized = false)
+
+        assertEquals(
+            Rectangle(0, 0, 1_024, 768),
+            restoreWindowBounds(saved, listOf(Rectangle(0, 0, 1_024, 768))),
+        )
+    }
+
+    @Test
+    fun compactSavedBoundsCanBeRestored() {
+        val saved = SavedWindow(x = 20, y = 30, width = 640, height = 360, maximized = false)
+
+        assertEquals(
+            Rectangle(20, 30, 640, 360),
+            restoreWindowBounds(saved, listOf(Rectangle(0, 0, 1_024, 768))),
+        )
+    }
+
+    @Test
     fun undersizedBoundsAreRejected() {
         val saved = SavedWindow(x = 100, y = 100, width = 400, height = 200, maximized = false)
 

@@ -19,6 +19,26 @@ internal enum class ReleaseSuffix(val rank: Int) {
     HOTFIX(3),
 }
 
+enum class UpdateChannel(val label: String) {
+    RELEASE("Release"),
+    TESTING("Testing"),
+    PRE("Pre-release"),
+    HOTFIX("Hotfix"),
+    ;
+
+    internal fun accepts(version: AppVersion): Boolean = when (this) {
+        RELEASE -> version.suffix == null || version.suffix == ReleaseSuffix.RELEASE
+        TESTING -> version.suffix == ReleaseSuffix.TESTING
+        PRE -> version.suffix == ReleaseSuffix.PRE
+        HOTFIX -> version.suffix == ReleaseSuffix.HOTFIX
+    }
+
+    companion object {
+        fun parse(value: String?): UpdateChannel =
+            entries.firstOrNull { it.name.equals(value?.trim(), ignoreCase = true) } ?: RELEASE
+    }
+}
+
 /**
  * Immutable, dependency-free representation of an AniLife release version.
  *
@@ -111,3 +131,9 @@ internal fun normalizeAppVersion(raw: String?): String? = parseAppVersion(raw)?.
 internal fun isUpdateAllowed(current: AppVersion, candidate: AppVersion): Boolean =
     candidate.isNewerThan(current) &&
         (current.channel == ReleaseChannel.PRERELEASE || candidate.channel == ReleaseChannel.STABLE)
+
+internal fun isUpdateAllowed(
+    current: AppVersion,
+    candidate: AppVersion,
+    updateChannel: UpdateChannel,
+): Boolean = candidate.isNewerThan(current) && updateChannel.accepts(candidate)

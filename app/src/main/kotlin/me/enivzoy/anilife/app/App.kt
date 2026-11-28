@@ -191,7 +191,7 @@ fun AniLifeApp(
         updater.clear()
         try {
             val currentVersion = Updater.currentVersion()
-            val update = updater.check(currentVersion)
+            val update = updater.check(currentVersion, settings.updateChannel)
             updateCheckStatus = if (update == null && showUpToDate) {
                 "AniLife $currentVersion is up to date."
             } else {
@@ -287,7 +287,7 @@ fun AniLifeApp(
     DisposableEffect(Unit) {
         onDispose { MemoryProfiler.stop() }
     }
-    LaunchedEffect(settings.checkUpdatesOnLaunch) {
+    LaunchedEffect(settings.checkUpdatesOnLaunch, settings.updateChannel) {
         if (settings.checkUpdatesOnLaunch) {
             checkForUpdates(showUpToDate = false)
         } else {

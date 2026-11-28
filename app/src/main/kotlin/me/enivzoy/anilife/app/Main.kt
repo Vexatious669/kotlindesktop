@@ -121,7 +121,8 @@ fun main() {
      
     val windowStateStore = remember { WindowStateStore() }
     val savedWindow = remember { windowStateStore.read() }
-    val restoredBounds = remember { restoreWindowBounds(savedWindow, screenBounds()) }
+    val availableScreens = remember { screenBounds() }
+    val restoredBounds = remember { restoreWindowBounds(savedWindow, availableScreens) }
     val state = rememberWindowState(
         placement = if (savedWindow?.maximized == true && restoredBounds != null) {
             WindowPlacement.Maximized
@@ -171,7 +172,7 @@ fun main() {
                 }
         }
         LaunchedEffect(appSettings) {
-            window.minimumSize = Dimension(800, 480)
+            window.minimumSize = minimumWindowSize()
             AniLifeColors.update(appSettings)
             val background = awtColor(AniLifeColors.Background)
             window.background = background
@@ -341,7 +342,9 @@ private fun appDataDirectory(): File {
 }
 
 private fun screenBounds(): List<Rectangle> =
-    GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { it.defaultConfiguration.bounds }
+    GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map {
+        usableScreenBounds(it.defaultConfiguration)
+    }
 
 private fun usableScreenBounds(configuration: java.awt.GraphicsConfiguration): Rectangle {
     val bounds = configuration.bounds
@@ -367,16 +370,28 @@ internal fun fitWindowBoundsToWorkArea(bounds: Rectangle, workArea: Rectangle): 
 
  
 private fun initialWindowSize(): DpSize {
-    val density = GraphicsEnvironment.getLocalGraphicsEnvironment()
+    val configuration = GraphicsEnvironment.getLocalGraphicsEnvironment()
         .defaultScreenDevice
         .defaultConfiguration
-        .defaultTransform
-        .scaleX
-        .takeIf { it > 0.0 } ?: 1.0
+    val density = configuration.defaultTransform.scaleX.takeIf { it > 0.0 } ?: 1.0
     val screen = Toolkit.getDefaultToolkit().screenSize
-    val width = (screen.width / density - 48).coerceIn(800.0, 1280.0)
-    val height = (screen.height / density - 96).coerceIn(480.0, 760.0)
+    val workArea = usableScreenBounds(configuration)
+    val availableWidth = (workArea.width / density).coerceAtLeast(1.0)
+    val availableHeight = (workArea.height / density).coerceAtLeast(1.0)
+    val width = ((screen.width / density - 48.0).coerceIn(800.0, 1280.0)).coerceAtMost(availableWidth)
+    val height = ((screen.height / density - 96.0).coerceIn(480.0, 760.0)).coerceAtMost(availableHeight)
     return DpSize(width.dp, height.dp)
+}
+
+private fun minimumWindowSize(): Dimension {
+    val configuration = GraphicsEnvironment.getLocalGraphicsEnvironment()
+        .defaultScreenDevice
+        .defaultConfiguration
+    val workArea = usableScreenBounds(configuration)
+    return Dimension(
+        800.coerceAtMost(workArea.width).coerceAtLeast(1),
+        480.coerceAtMost(workArea.height).coerceAtLeast(1),
+    )
 }
 
  

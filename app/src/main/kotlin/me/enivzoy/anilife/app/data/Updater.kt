@@ -136,8 +136,11 @@ class Updater(
     private val mutableUpdate = MutableStateFlow<Update?>(null)
     val update: StateFlow<Update?> = mutableUpdate.asStateFlow()
 
-    suspend fun check(currentVersion: String): Update? = withContext(Dispatchers.IO) {
-        val update = fetchUpdate(currentVersion)
+    suspend fun check(
+        currentVersion: String,
+        updateChannel: UpdateChannel = UpdateChannel.RELEASE,
+    ): Update? = withContext(Dispatchers.IO) {
+        val update = fetchUpdate(currentVersion, updateChannel)
         mutableUpdate.value = update
         update
     }
@@ -278,8 +281,8 @@ class Updater(
         ProcessBuilder("cmd.exe", "/c", "start", "\"\"", "/b", helper.toString()).start()
     }
 
-    private suspend fun fetchUpdate(currentVersion: String): Update? {
-        logger.info { "update check start current=$currentVersion" }
+    private suspend fun fetchUpdate(currentVersion: String, updateChannel: UpdateChannel): Update? {
+        logger.info { "update check start current=$currentVersion channel=${updateChannel.name}" }
         val failures = mutableListOf<String>()
         val sources = buildList {
             add(manifestUrl)
@@ -320,9 +323,9 @@ class Updater(
                 }
                 successfulResponses++
                 val update = if (url == releasesUrl) {
-                    parseReleaseList(response.body(), currentVersion, currentPlatform())
+                    parseReleaseList(response.body(), currentVersion, currentPlatform(), updateChannel)
                 } else {
-                    parseUpdateManifest(response.body(), currentVersion, currentPlatform())
+                    parseUpdateManifest(response.body(), currentVersion, currentPlatform(), updateChannel)
                 }
                 if (update != null) return update
                 logger.info { "manifest returned no compatible update url=$safeUrl" }
@@ -430,7 +433,12 @@ private fun compareTriples(left: List<Int>, right: List<Int>): Int {
     return 0
 }
 
-internal fun parseUpdateManifest(body: String, currentVersion: String, platform: String): Update? {
+internal fun parseUpdateManifest(
+    body: String,
+    currentVersion: String,
+    platform: String,
+    updateChannel: UpdateChannel = UpdateChannel.RELEASE,
+): Update? {
     val json = Json { ignoreUnknownKeys = true }
     val root = json.parseToJsonElement(body) as? JsonObject ?: return null
     val tagName = root.string("tag_name")?.trim()?.takeIf { it.isNotEmpty() }
@@ -446,7 +454,7 @@ internal fun parseUpdateManifest(body: String, currentVersion: String, platform:
         }
     }
     val current = parseAppVersion(currentVersion) ?: ZERO_APP_VERSION
-    if (!isUpdateAllowed(current, candidate)) return null
+    if (!isUpdateAllowed(current, candidate, updateChannel)) return null
     val declaredChannel = root.string("channel")?.trim()?.lowercase()
     if (declaredChannel != null) {
         val suffixChannel = candidate.channel.name.lowercase()
@@ -525,7 +533,12 @@ internal fun parseUpdateManifest(body: String, currentVersion: String, platform:
  * Picks the best compatible release from a GitHub release-list JSON array. Each release is parsed
  * with the same rules as a single manifest, then the highest allowed version wins.
  */
-internal fun parseReleaseList(body: String, currentVersion: String, platform: String): Update? {
+internal fun parseReleaseList(
+    body: String,
+    currentVersion: String,
+    platform: String,
+    updateChannel: UpdateChannel = UpdateChannel.RELEASE,
+): Update? {
     val json = Json { ignoreUnknownKeys = true }
     val releases = json.parseToJsonElement(body) as? JsonArray ?: return null
     val current = parseAppVersion(currentVersion) ?: ZERO_APP_VERSION
@@ -534,10 +547,10 @@ internal fun parseReleaseList(body: String, currentVersion: String, platform: St
     for (element in releases) {
         val release = element as? JsonObject ?: continue
         val candidate = parseAppVersion(release.string("tag_name")) ?: continue
-        if (!isUpdateAllowed(current, candidate)) continue
+        if (!isUpdateAllowed(current, candidate, updateChannel)) continue
         val best = bestVersion
         if (best != null && !candidate.isNewerThan(best)) continue
-        val update = parseUpdateManifest(release.toString(), currentVersion, platform) ?: continue
+        val update = parseUpdateManifest(release.toString(), currentVersion, platform, updateChannel) ?: continue
         bestVersion = candidate
         bestUpdate = update
     }

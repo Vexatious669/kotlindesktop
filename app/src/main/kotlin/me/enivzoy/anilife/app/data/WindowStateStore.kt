@@ -60,15 +60,24 @@ internal const val MIN_VISIBLE_WINDOW_PIXELS = 200
 internal fun restoreWindowBounds(
     saved: SavedWindow?,
     screens: List<Rectangle>,
-    minWidth: Int = 800,
-    minHeight: Int = 480,
+    minWidth: Int = 480,
+    minHeight: Int = 240,
 ): Rectangle? {
     if (saved == null) return null
     if (saved.width < minWidth || saved.height < minHeight) return null
     val bounds = Rectangle(saved.x, saved.y, saved.width, saved.height)
-    val visible = screens.any { screen ->
-        val overlap = screen.intersection(bounds)
-        overlap.width >= MIN_VISIBLE_WINDOW_PIXELS && overlap.height >= MIN_VISIBLE_WINDOW_PIXELS
-    }
-    return bounds.takeIf { visible }
+    val targetScreen = screens.map { screen -> screen to screen.intersection(bounds) }
+        .filter { (_, overlap) ->
+            overlap.width >= MIN_VISIBLE_WINDOW_PIXELS && overlap.height >= MIN_VISIBLE_WINDOW_PIXELS
+        }
+        .maxByOrNull { (_, overlap) -> overlap.width.toLong() * overlap.height }
+        ?.first ?: return null
+    val width = bounds.width.coerceAtMost(targetScreen.width)
+    val height = bounds.height.coerceAtMost(targetScreen.height)
+    return Rectangle(
+        bounds.x.coerceIn(targetScreen.x, targetScreen.x + targetScreen.width - width),
+        bounds.y.coerceIn(targetScreen.y, targetScreen.y + targetScreen.height - height),
+        width,
+        height,
+    )
 }
