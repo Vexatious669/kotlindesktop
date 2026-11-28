@@ -79,6 +79,7 @@ data class AppSettings(
     /** Add titles saved by a restore or an import to the signed-in account's Plan to Watch. */
     val syncSavedToAccount: Boolean = true,
     val checkUpdatesOnLaunch: Boolean = true,
+    val updateChannel: UpdateChannel = UpdateChannel.RELEASE,
     val captionFont: String = "sans-serif",
     val captionFontFile: String = "",
     val buttonColor: String = "#87D66A",
@@ -185,6 +186,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             volume = properties.getProperty("volume", "100").toIntOrNull() ?: 100,
             subtitleScale = properties.getProperty("subtitleScale", "1.0").toFloatOrNull() ?: 1f,
             checkUpdatesOnLaunch = properties.getProperty("checkUpdatesOnLaunch", "true").toBooleanStrictOrNull() ?: true,
+            updateChannel = UpdateChannel.parse(properties.getProperty("updateChannel")),
             captionFont = properties.getProperty("captionFont", "sans-serif"),
             captionFontFile = properties.getProperty("captionFontFile", ""),
             buttonColor = properties.getProperty("buttonColor", "#87D66A"),
@@ -264,6 +266,7 @@ class AppSettingsStore(private val file: File = settingsFile()) {
             setProperty("volume", settings.volume.toString())
             setProperty("subtitleScale", settings.subtitleScale.toString())
             setProperty("checkUpdatesOnLaunch", settings.checkUpdatesOnLaunch.toString())
+            setProperty("updateChannel", settings.updateChannel.name)
             setProperty("captionFont", settings.captionFont)
             setProperty("captionFontFile", settings.captionFontFile)
             setProperty("buttonColor", settings.buttonColor)

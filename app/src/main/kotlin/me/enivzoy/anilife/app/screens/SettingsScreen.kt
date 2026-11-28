@@ -107,6 +107,7 @@ import me.enivzoy.anilife.app.data.AppSettings
 import me.enivzoy.anilife.app.data.AniListRepository
 import me.enivzoy.anilife.app.data.AppBackup
 import me.enivzoy.anilife.app.data.AppSettingsStore
+import me.enivzoy.anilife.app.data.UpdateChannel
 import me.enivzoy.anilife.app.data.AutoDetectCandidate
 import me.enivzoy.anilife.app.data.AutoDetectScan
 import me.enivzoy.anilife.app.data.AutoDetectService
@@ -361,6 +362,7 @@ SettingSearchEntry("Keyboard shortcuts", SettingsPage.Player, "keys binding rebi
     SettingSearchEntry("Export MyAnimeList XML", SettingsPage.Data, "mal export xml list"),
     SettingSearchEntry("Import MyAnimeList XML", SettingsPage.Data, "mal import xml list"),
     SettingSearchEntry("Play startup intro", SettingsPage.App, "animation splash opening startup"),
+    SettingSearchEntry("Update channel", SettingsPage.App, "release testing pre-release hotfix updates"),
     SettingSearchEntry("Check for updates on launch", SettingsPage.App, "automatic updates release startup"),
     SettingSearchEntry("Check for updates now", SettingsPage.App, "update version release check"),
     SettingSearchEntry("About AniLife", SettingsPage.About, "app version metadata player credits links website discord shortcuts repository"),
@@ -2022,6 +2024,19 @@ private fun AppSettingsPage(
     onCheckForUpdates: () -> Unit,
 ) {
     SettingsSection("Updates") {
+        SettingsRow(
+            "Update channel",
+            "Choose which release tags to check. Release is the stable default; other channels may contain less-tested builds.",
+        ) {
+            SettingsDropdown(
+                choices = UpdateChannel.entries.map { it.name to it.label },
+                selected = settings.updateChannel.name,
+                onSelect = { value ->
+                    val channel = UpdateChannel.parse(value)
+                    onSettingsChange { it.copy(updateChannel = channel) }
+                },
+            )
+        }
         SettingsRow(
             "Check for updates on launch",
             "Look for a newer AniLife release when the app starts. You choose whether to install it.",

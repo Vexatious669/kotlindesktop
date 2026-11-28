@@ -156,7 +156,12 @@ class UpdaterTest {
             }
         """.trimIndent()
 
-        val update = parseUpdateManifest(release, currentVersion = "1.1.0", platform = "windows")
+        val update = parseUpdateManifest(
+            release,
+            currentVersion = "1.1.0",
+            platform = "windows",
+            updateChannel = UpdateChannel.HOTFIX,
+        )
 
         assertEquals("1.1.1-HOTFIX", update?.version)
         assertEquals(
@@ -192,7 +197,12 @@ class UpdaterTest {
             }
         """.trimIndent()
 
-        val update = parseUpdateManifest(release, currentVersion = "1.1.1", platform = "windows")
+        val update = parseUpdateManifest(
+            release,
+            currentVersion = "1.1.1",
+            platform = "windows",
+            updateChannel = UpdateChannel.HOTFIX,
+        )
 
         assertEquals("1.1.1-HOTFIX", update?.version)
     }
@@ -238,7 +248,12 @@ class UpdaterTest {
 
         assertEquals(
             "1.1.1-PRE",
-            parseUpdateManifest(pre, currentVersion = "1.1.0-PRE", platform = "windows")?.version,
+            parseUpdateManifest(
+                pre,
+                currentVersion = "1.1.0-PRE",
+                platform = "windows",
+                updateChannel = UpdateChannel.PRE,
+            )?.version,
         )
     }
 
@@ -269,7 +284,12 @@ class UpdaterTest {
             }
         """.trimIndent()
 
-        val update = parseUpdateManifest(release, currentVersion = "1.1.0", platform = "windows")
+        val update = parseUpdateManifest(
+            release,
+            currentVersion = "1.1.0",
+            platform = "windows",
+            updateChannel = UpdateChannel.HOTFIX,
+        )
 
         assertEquals(
             "https://github.com/anilifecommunity/kotlindesktop/releases/download/v1.1.1-HOTFIX/anilife-1.1.1-HOTFIX.base.msi",
@@ -342,7 +362,12 @@ class UpdaterTest {
         )
         assertEquals(
             "1.1.2-PRE",
-            parseReleaseList(releases, currentVersion = "1.1.0-PRE", platform = "windows")?.version,
+            parseReleaseList(
+                releases,
+                currentVersion = "1.1.0-PRE",
+                platform = "windows",
+                updateChannel = UpdateChannel.PRE,
+            )?.version,
         )
     }
 
@@ -372,12 +397,35 @@ class UpdaterTest {
         """.trimIndent()
 
         assertEquals(
-            "1.1.1-HOTFIX",
+            "1.1.1",
             parseReleaseList(releases, currentVersion = "1.1.0", platform = "windows")?.version,
         )
         assertEquals(
+            "1.1.1-HOTFIX",
+            parseReleaseList(
+                releases,
+                currentVersion = "1.1.0",
+                platform = "windows",
+                updateChannel = UpdateChannel.HOTFIX,
+            )?.version,
+        )
+        assertEquals(
+            "1.1.2-PRE",
+            parseReleaseList(
+                releases,
+                currentVersion = "1.1.0-PRE",
+                platform = "windows",
+                updateChannel = UpdateChannel.PRE,
+            )?.version,
+        )
+        assertEquals(
             "1.1.3-TESTING",
-            parseReleaseList(releases, currentVersion = "1.1.0-PRE", platform = "windows")?.version,
+            parseReleaseList(
+                releases,
+                currentVersion = "1.1.0-PRE",
+                platform = "windows",
+                updateChannel = UpdateChannel.TESTING,
+            )?.version,
         )
     }
 

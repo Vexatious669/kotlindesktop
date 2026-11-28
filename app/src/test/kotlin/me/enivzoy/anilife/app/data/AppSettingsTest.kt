@@ -12,6 +12,13 @@ import xyz.orbitary.perigee.activity.ActivityType
 
 class AppSettingsTest {
     @Test
+    fun updateChannelDefaultsToReleaseAndInvalidStoredValuesFallBackToRelease() {
+        assertEquals(UpdateChannel.RELEASE, AppSettings().updateChannel)
+        assertEquals(UpdateChannel.RELEASE, UpdateChannel.parse("unknown"))
+        assertEquals(UpdateChannel.HOTFIX, UpdateChannel.parse(" hotfix "))
+    }
+
+    @Test
     fun discordPresenceFormatsIdleMovieAndEpisodeActivities() {
         val startedAt = Instant.parse("2026-11-03T22:00:00Z")
         val cover = "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/1.jpg"
@@ -119,6 +126,7 @@ class AppSettingsTest {
                     playIntro = false,
                     titleLanguage = "romaji",
                     discordPresenceEnabled = true,
+                    updateChannel = UpdateChannel.TESTING,
                     discordApplicationId = "123456789012345678x",
                     volume = 140,
                     contentScale = "invalid",
@@ -148,6 +156,7 @@ class AppSettingsTest {
             assertEquals(false, persisted.playIntro)
             assertEquals("romaji", persisted.titleLanguage)
             assertEquals(true, persisted.discordPresenceEnabled)
+            assertEquals(UpdateChannel.TESTING, persisted.updateChannel)
             assertEquals("123456789012345678", persisted.discordApplicationId)
             assertEquals(100, persisted.volume)
             assertEquals("fit", persisted.contentScale)
