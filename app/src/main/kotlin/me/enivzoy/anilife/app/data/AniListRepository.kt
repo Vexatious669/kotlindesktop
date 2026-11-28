@@ -38,6 +38,15 @@ class AniListRepository(
     private var titleLanguage = titleLanguage
 
     @Volatile
+    private var onlyAdult = false
+
+    fun setOnlyAdult(enabled: Boolean) {
+        if (onlyAdult == enabled) return
+        onlyAdult = enabled
+        homeCache = null
+    }
+
+    @Volatile
     private var homeCache: Home? = homeSnapshot.read()?.withTitlePreference(titleLanguage)
 
     init {
@@ -61,15 +70,15 @@ class AniListRepository(
         if (!force) homeCache?.let { return it }
         return homeMutex.withLock {
             if (!force) homeCache?.let { return@withLock it }
-            client.home().also {
+            client.home(showAdult = onlyAdult).also {
                 homeCache = it
-                withContext(Dispatchers.IO) { homeSnapshot.write(it) }
+                if (!onlyAdult) withContext(Dispatchers.IO) { homeSnapshot.write(it) }
             }
         }
     }
 
     suspend fun search(query: String, genre: String? = null, page: Int = 1): SearchPage =
-        client.search(query = query, genre = genre, page = page)
+        client.search(query = query, genre = genre, page = page, showAdult = onlyAdult)
 
     suspend fun detail(id: Long): AnimeDetail = client.detail(id)
 
@@ -80,7 +89,7 @@ class AniListRepository(
     suspend fun recentlyAired(hours: Int): List<me.enivzoy.anilife.core.model.AiringEntry> =
         client.schedule(days = 1, since = System.currentTimeMillis() / 1000 - hours * 3600L)
 
-    suspend fun random(): AnimeCard? = client.random()
+    suspend fun random(): AnimeCard? = client.random(showAdult = onlyAdult)
 
     suspend fun detectLocalMedia(root: java.nio.file.Path, audio: String, onProgress: (String, String) -> Unit = { _, _ -> }): AutoDetectResult {
         val result = MediaAutoDetector.scan(root, audio, { query -> search(query).results }, onProgress)
