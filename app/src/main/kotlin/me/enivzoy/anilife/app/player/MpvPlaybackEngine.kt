@@ -17,6 +17,7 @@ import me.enivzoy.anilife.app.data.AudioLanguage
 import me.enivzoy.anilife.app.data.DiscordPlaybackInfo
 import me.enivzoy.anilife.app.data.PlayerAction
 import me.enivzoy.anilife.app.data.Presence
+import me.enivzoy.anilife.app.data.SillyMode
 import me.enivzoy.anilife.app.data.SubtitleAppearance
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
@@ -171,6 +172,7 @@ private val playbackBufferSize: String = "auto",
 
     fun start() {
         if (worker != null || closed.get()) return
+        SillyMode.pause()
         transition("loading")
         worker = thread(name = "AniLife-playback", isDaemon = true) { runPlayback() }
     }
@@ -248,6 +250,7 @@ private val playbackBufferSize: String = "auto",
                     positionClock.flush()
                     isPlaying = !it
                     transition(if (it) "idle" else "playing")
+                    SillyMode.paused(it)
                     reportPresence(force = true)
                 }
                 "mute" -> (event.value as? PropertyValue.Flag)?.value?.let { isMuted = it }
