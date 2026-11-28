@@ -76,7 +76,7 @@ class AniListClient(
         season: String = seasonOf(),
         year: Int = seasonYearOf(),
     ): Home {
-        val adult = if (showAdult) "" else ", isAdult: false"
+        val adult = if (showAdult) ", isAdult: true" else ", isAdult: false"
         val query = """
             query (${'$'}season: MediaSeason, ${'$'}year: Int, ${'$'}airedBefore: Int) {
               trending: Page(perPage: 20) { media(type: ANIME, sort: TRENDING_DESC$adult) { $CARD_FIELDS } }
@@ -106,7 +106,7 @@ class AniListClient(
                 ?.get("media")
                 .asArray()
                 ?.mapNotNull { (it as? JsonObject)?.let { media -> parseCard(media, titleLanguage) } }
-                ?.filter { showAdult || !it.isAdult }
+                ?.filter { if (showAdult) it.isAdult else !it.isAdult }
                 .orEmpty()
 
         val newest = (data["newest"] as? JsonObject)
@@ -115,7 +115,7 @@ class AniListClient(
             ?.mapNotNull { schedule ->
                 ((schedule as? JsonObject)?.get("media") as? JsonObject)?.let { media -> parseCard(media, titleLanguage) }
             }
-            ?.filter { showAdult || !it.isAdult }
+            ?.filter { if (showAdult) it.isAdult else !it.isAdult }
             ?.distinctBy { it.id }
             ?.take(20)
             .orEmpty()
@@ -176,7 +176,7 @@ class AniListClient(
         val pageObj = data["Page"] as? JsonObject
         val results = pageObj?.get("media").asArray()
             ?.mapNotNull { (it as? JsonObject)?.let { media -> parseCard(media, titleLanguage) } }
-            ?.filter { showAdult || !it.isAdult }
+            ?.filter { if (showAdult) it.isAdult else !it.isAdult }
             .orEmpty()
         val hasNext = (pageObj?.get("pageInfo") as? JsonObject)?.bool("hasNextPage") ?: false
         return SearchPage(results = results, hasNext = hasNext)

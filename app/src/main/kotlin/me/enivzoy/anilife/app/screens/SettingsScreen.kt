@@ -1704,13 +1704,16 @@ private fun AppearanceSettings(settings: AppSettings, onSettingsChange: ((AppSet
                     onChange = { value -> onSettingsChange { it.copy(glassTransparency = value) } },
                 )
             }
-            SettingsRow("Edge highlights", "Brightness of borders and reflections on glass surfaces.") {
-                SettingsSliderRow(
-                    value = settings.glassHighlightIntensity,
-                    valueRange = 0f..1.5f,
-                    valueLabel = "${(settings.glassHighlightIntensity * 100).roundToInt()}%",
-                    onChange = { value -> onSettingsChange { it.copy(glassHighlightIntensity = value) } },
-                )
+            // Edge highlights drive the liquid refraction shader, so they only apply to Liquid Glass.
+            if (themeMode == ThemeMode.LIQUID_GLASS) {
+                SettingsRow("Edge highlights", "Brightness of borders and reflections on glass surfaces.") {
+                    SettingsSliderRow(
+                        value = settings.glassHighlightIntensity,
+                        valueRange = 0f..1.5f,
+                        valueLabel = "${(settings.glassHighlightIntensity * 100).roundToInt()}%",
+                        onChange = { value -> onSettingsChange { it.copy(glassHighlightIntensity = value) } },
+                    )
+                }
             }
         }
     }

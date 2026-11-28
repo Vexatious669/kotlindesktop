@@ -1,5 +1,6 @@
 ﻿package me.enivzoy.anilife.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +36,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import me.enivzoy.anilife.app.Screen
+import me.enivzoy.anilife.app.ui.theme.GlassStyle
+import me.enivzoy.anilife.app.ui.theme.LocalAppearance
+import me.enivzoy.anilife.app.ui.theme.glassStyle
 
  
 
@@ -46,13 +51,23 @@ fun AppSidebar(
     onRandom: () -> Unit,
     onSearch: () -> Unit = { onNavigate(Screen.Browse) },
     downloadProgress: Float? = null,
+    sillyMode: Boolean = false,
+    onSillyMode: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
         modifier = modifier
             .width(64.dp)
             .fillMaxHeight()
-            .liquidGlass(shape = RoundedCornerShape(0.dp))
+            .then(
+                // Default keeps the solid sidebar of the original layout; glass themes sample
+                // the backdrop through the glass renderer instead.
+                if (LocalAppearance.current.themeMode.glassStyle == GlassStyle.LEGACY) {
+                    Modifier.background(AniLifeColors.Sidebar)
+                } else {
+                    Modifier.liquidGlass(shape = RoundedCornerShape(0.dp))
+                },
+            )
             .drawBehind {
                 val x = size.width - 0.5f
                 drawLine(
@@ -104,6 +119,13 @@ fun AppSidebar(
             NavIcon(Icons.Rounded.Notifications, "Notifications", selected = current is Screen.Notifications, size = iconSize) {
                 onNavigate(Screen.Notifications)
             }
+            Spacer(Modifier.height(gap))
+            NavIcon(
+                Icons.Rounded.VisibilityOff,
+                if (sillyMode) "Silly mode on" else "Silly mode",
+                selected = sillyMode,
+                size = iconSize,
+            ) { onSillyMode() }
             Spacer(Modifier.height(gap))
             NavIcon(Icons.Rounded.Person, "Profile", selected = current is Screen.Profile, size = iconSize) { onNavigate(Screen.Profile) }
             Spacer(Modifier.height(gap))
