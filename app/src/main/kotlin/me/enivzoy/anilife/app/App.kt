@@ -522,13 +522,16 @@ fun AniLifeApp(
     LaunchedEffect(isSillyMode) {
         if (isSillyMode) SillyMode.start() else SillyMode.stop()
     }
+    LaunchedEffect(screen is Screen.Player, isSillyMode) {
+        if (screen is Screen.Player) SillyMode.pause() else if (isSillyMode) SillyMode.resume()
+    }
     DisposableEffect(Unit) {
         onDispose { SillyMode.stop() }
     }
 
     Box(
         Modifier.fillMaxSize()
-            .discoMode(isSillyMode)
+            .discoMode(isSillyMode && screen !is Screen.Player)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown &&
                     (event.isCtrlPressed || event.isMetaPressed) &&
@@ -553,6 +556,7 @@ fun AniLifeApp(
                 onSillyMode = {
                     isSillyMode = !isSillyMode
                     repository.setOnlyAdult(isSillyMode)
+                    if (isSillyMode) updateSettings { it.copy(volume = 100) }
                 },
             )
         }
