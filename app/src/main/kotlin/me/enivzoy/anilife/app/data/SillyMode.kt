@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -18,6 +19,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.security.MessageDigest
 import java.time.Duration
+import io.github.oshai.kotlinlogging.KotlinLogging
+
+private val logger = KotlinLogging.logger {}
 
 object SillyMode {
     private const val TRACK = "https://www.youtube.com/watch?v=mvkcyB_lve0"
@@ -34,6 +38,11 @@ object SillyMode {
     @Volatile
     private var player: Mpv? = null
 
+    @Volatile
+    private var videoPlaying = false
+
+    private var resumeJob: Job? = null
+
     fun start() {
         if (job?.isActive == true) return
         active = true
@@ -46,6 +55,8 @@ object SillyMode {
 
     fun stop() {
         active = false
+        resumeJob?.cancel()
+        resumeJob = null
         job?.cancel()
         job = null
         process?.destroy()
@@ -53,6 +64,39 @@ object SillyMode {
         val current = player
         player = null
         if (current != null) scope.launch { runCatching { current.shutdown() } }
+    }
+
+    fun pause() {
+        videoPlaying = true
+        resumeJob?.cancel()
+        resumeJob = null
+        if (player != null) logger.info { "silly audio paused for video" }
+        runCatching { player?.setPaused(true) }
+    }
+
+    fun resume() {
+        videoPlaying = false
+        resumeJob?.cancel()
+        resumeJob = null
+        if (player != null) logger.info { "silly audio resumed" }
+        if (job?.isActive == true) runCatching { player?.play() }
+    }
+
+    fun paused(paused: Boolean) {
+        if (!videoPlaying) return
+        resumeJob?.cancel()
+        resumeJob = null
+        if (!paused) {
+            runCatching { player?.setPaused(true) }
+            return
+        }
+        resumeJob = scope.launch {
+            delay(5_000)
+            if (videoPlaying) {
+                logger.info { "silly audio back after pause" }
+                runCatching { player?.play() }
+            }
+        }
     }
 
     private fun play() {
@@ -70,14 +114,14 @@ object SillyMode {
                 "vo" to "null",
                 "video" to "no",
                 "loop-file" to "inf",
-                "volume" to "65",
+                "volume" to "100",
                 "audio-exclusive" to "no",
                 "terminal" to "no",
             ),
         )
         player = mpv
         mpv.loadfile(track.absolutePath)
-        mpv.play()
+        if (!videoPlaying) mpv.play()
         if (!active) {
             player = null
             runCatching { mpv.shutdown() }
