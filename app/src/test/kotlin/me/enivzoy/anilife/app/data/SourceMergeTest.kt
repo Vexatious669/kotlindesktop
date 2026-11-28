@@ -96,6 +96,54 @@ class SourceMergeTest {
     }
 
     @Test
+    fun downloadSourceSelectionDoesNotRetryTheRejectedUrlWhenNoAlternativeExists() {
+        val rejected = source("https://cdn.example/rejected.m3u8")
+
+        assertEquals(
+            null,
+            pickDownloadSource(
+                sources = listOf(rejected),
+                target = DownloadTarget(resolution = 1080, server = "Auto"),
+                exclusions = DownloadSourceExclusions(urls = setOf(rejected.url)),
+            ),
+        )
+    }
+
+    @Test
+    fun downloadSourceSelectionCanChooseAnotherAvailableServer() {
+        val rejected = source("https://cdn.example/rejected.m3u8")
+        val alternative = source("https://other.example/available.m3u8")
+
+        assertEquals(
+            alternative,
+            pickDownloadSource(
+                sources = listOf(rejected, alternative),
+                target = DownloadTarget(resolution = 1080, server = "Auto"),
+                exclusions = DownloadSourceExclusions(urls = setOf(rejected.url)),
+            ),
+        )
+    }
+
+    @Test
+    fun sourceSelectionExcludesFreshUrlsFromTheSameProviderServer() {
+        val rejected = source("https://cdn.example/old.m3u8?token=old").copy(server = "Mirror A")
+        val refreshed = rejected.copy(url = "https://new-cdn.example/new.m3u8?token=fresh")
+        val alternative = source("https://other.example/available.m3u8").copy(server = "Mirror B")
+
+        assertEquals(
+            alternative,
+            pickDownloadSource(
+                sources = listOf(refreshed, alternative),
+                target = DownloadTarget(resolution = 1080, server = "Auto"),
+                exclusions = DownloadSourceExclusions(
+                    urls = setOf(rejected.url),
+                    servers = setOf(downloadServerIdentity(rejected)),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun anEmptyInputStaysEmpty() {
         assertTrue(mergeVideoSources(emptyList()).isEmpty())
     }

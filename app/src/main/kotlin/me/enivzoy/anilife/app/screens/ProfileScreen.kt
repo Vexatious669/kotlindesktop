@@ -122,6 +122,7 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
     var reloadKey by remember { mutableIntStateOf(0) }
     var tab by remember { mutableIntStateOf(0) }
     var tokenText by remember { mutableStateOf("") }
+    var showTokenField by remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
 
     suspend fun loadProfile() {
@@ -199,10 +200,12 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
                 error = error,
                 token = tokenText,
                 onTokenChange = { tokenText = it },
+                showTokenField = showTokenField,
                 connecting = connecting,
                 onAniList = {
                     try {
                         AniListSync.beginAuth()
+                        showTokenField = true
                     } catch (failure: Throwable) {
                         error = failure.message ?: "Couldn't open AniList sign-in."
                     }
@@ -214,6 +217,7 @@ fun ProfileScreen(onOpenAnime: (Long) -> Unit) {
                         try {
                             AniListSync.connect(tokenText)
                             tokenText = ""
+                            showTokenField = false
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Throwable) {
@@ -280,6 +284,7 @@ private fun UnlinkedProfile(
     error: String?,
     token: String,
     onTokenChange: (String) -> Unit,
+    showTokenField: Boolean,
     connecting: Boolean,
     onAniList: () -> Unit,
     onAniListToken: () -> Unit,
@@ -305,27 +310,29 @@ private fun UnlinkedProfile(
             )
             Spacer(Modifier.height(4.dp))
             ProfileButton("Link AniList", onClick = onAniList, modifier = Modifier.fillMaxWidth())
-            Text(
-                "After approving in your browser, paste the access token from the redirect URL.",
-                color = AniLifeColors.MutedForeground,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-                textAlign = TextAlign.Center,
-            )
-            OutlinedTextField(
-                value = token,
-                onValueChange = onTokenChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("AniList access token or redirect URL") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-            )
-            ProfileButton(
-                "Save Token",
-                onClick = onAniListToken,
-                enabled = token.isNotBlank() && !connecting,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (showTokenField) {
+                Text(
+                    "After approving in your browser, paste the access token from the redirect URL.",
+                    color = AniLifeColors.MutedForeground,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    textAlign = TextAlign.Center,
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = onTokenChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("AniList access token or redirect URL") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                ProfileButton(
+                    "Save Token",
+                    onClick = onAniListToken,
+                    enabled = token.isNotBlank() && !connecting,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Spacer(Modifier.height(4.dp))
             ProfileButton("Link MAL", onClick = onMal, enabled = malConfigured, modifier = Modifier.fillMaxWidth())
             if (!malConfigured) {
