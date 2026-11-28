@@ -185,7 +185,7 @@ class AniListRepository(
         downloadRoot: java.nio.file.Path? = null,
         headers: Map<String, String> = emptyMap(),
         maxHeight: Int = Int.MAX_VALUE,
-        onProgress: ((Long, Long?) -> Unit)? = null,
+        onProgress: ((Long, Long?, Float?) -> Unit)? = null,
     ): LocalEpisode {
         val matchedAnime = try {
             search(animeTitle).results

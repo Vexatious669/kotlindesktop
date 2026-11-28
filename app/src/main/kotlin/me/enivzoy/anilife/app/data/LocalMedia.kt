@@ -418,7 +418,7 @@ object DirectMediaDownloader {
         episodeTitle: String? = null,
         headers: Map<String, String> = emptyMap(),
         maxHeight: Int = Int.MAX_VALUE,
-        onProgress: ((Long, Long?) -> Unit)? = null,
+        onProgress: ((Long, Long?, Float?) -> Unit)? = null,
     ): LocalEpisode =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             require(animeTitle.isNotBlank()) { "Enter the anime title." }
@@ -468,7 +468,16 @@ object DirectMediaDownloader {
                     throw failure
                 }
                 val input = lease.track(response.body())
-                require(response.statusCode() in 200..299) { "The video server returned HTTP ${response.statusCode()}." }
+                val status = response.statusCode()
+                if (status !in 200..299) {
+                    input.close()
+                    throw SourceException(
+                        HlsSource.sourceFailureFor(status),
+                        status,
+                        response.headers().firstValue("Content-Type").orElse(null),
+                        retryAfterMillis = HlsSource.parseRetryAfterMillis(response.headers().firstValue("Retry-After").orElse(null)),
+                    )
+                }
                 val contentLength = response.headers().firstValue("Content-Length")
                 val totalBytes = if (contentLength.isPresent) contentLength.get().toLongOrNull() else null
                 val buffer = ByteArray(64 * 1024)
@@ -480,7 +489,8 @@ object DirectMediaDownloader {
                             if (read < 0) break
                             output.write(buffer, 0, read)
                             downloaded += read.toLong()
-                            onProgress?.invoke(downloaded, totalBytes)
+                            val fraction = totalBytes?.takeIf { it > 0L }?.let { downloadProgressFraction(downloaded, it) }
+                            onProgress?.invoke(downloaded, totalBytes, fraction)
                         }
                     }
                 }
@@ -559,7 +569,7 @@ object DirectMediaDownloader {
         anime: AnimeCard?,
         episodeTitle: String?,
         maxHeight: Int,
-        onProgress: ((Long, Long?) -> Unit)?,
+        onProgress: ((Long, Long?, Float?) -> Unit)?,
     ): LocalEpisode {
         // check the source before ffmpeg touches it, so an expired token is not reported as bad media
         val validated = HlsSource.validate(url, headers, maxHeight)
@@ -597,7 +607,7 @@ object DirectMediaDownloader {
                                 logger.warn { "stream byte size dropped from $lastSize to $size" }
                             }
                             lastSize = size
-                            onProgress?.invoke(size, null)
+                            onProgress?.invoke(size, null, null)
                         }
                     } else if (!line.startsWith("progress=") && line.isNotBlank()) {
                         diagnostics.add(line)
@@ -645,7 +655,7 @@ object DirectMediaDownloader {
         audio: String,
         anime: AnimeCard?,
         episodeTitle: String?,
-        onProgress: ((Long, Long?) -> Unit)?,
+        onProgress: ((Long, Long?, Float?) -> Unit)?,
     ): LocalEpisode {
         val playlist = source.playlist ?: throw SourceException(SourceFailure.EmptyPlaylist)
         val raw = File(
@@ -654,8 +664,8 @@ object DirectMediaDownloader {
         )
         try {
             logger.info { "hls download: ${redactUrl(source.url)} segments=${playlist.segments.size} fragmented=${playlist.isFragmented}" }
-            val bytes = HlsSource.downloadMediaPlaylist(playlist, source.headers, raw.toPath()) { written ->
-                onProgress?.invoke(written, null)
+            val bytes = HlsSource.downloadMediaPlaylist(playlist, source.headers, raw.toPath()) { written, fraction ->
+                onProgress?.invoke(written, null, fraction)
             }
             require(bytes > 0L) { "The provider sent a playlist without any segments." }
             val ffmpeg = findFfmpeg()
@@ -676,10 +686,16 @@ object DirectMediaDownloader {
             val log = remux.inputStream.bufferedReader().use { it.readText() }
             val exit = remux.waitFor()
             if (exit != 0) {
-                throw SourceException(
-                    SourceFailure.NotPlaylist,
-                    cause = IOException("ffmpeg remux failed ($exit): ${log.takeLast(240)}"),
-                )
+                val rawTarget = File(destination.parentFile, destination.name.removeSuffix(".mkv") + raw.extension)
+                logger.warn {
+                    "ffmpeg remux failed exit=$exit; preserving downloaded media as ${rawTarget.name}: ${log.takeLast(240)}"
+                }
+                try {
+                    Files.move(raw.toPath(), rawTarget.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(raw.toPath(), rawTarget.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+                return finalizeDownload(rawTarget, downloadRoot, animeTitle, episode, audio, anime, episodeTitle)
             }
             require(temporary.isFile && temporary.length() > 0L) { "The stream download produced an empty file." }
             try {
@@ -786,10 +802,10 @@ object DirectMediaDownloader {
         .take(100)
         .ifBlank { "Anime" }
 
-    fun defaultDownloadDirectory(): Path {
-        val base = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)?.let(::File)
-            ?: File(System.getProperty("user.home"), ".local/share")
-        return File(base, "AniLife/Downloads").toPath()
-    }
+fun defaultDownloadDirectory(): Path =
+    Path.of(System.getProperty("user.home"), "Videos", "AniLife")
+
+fun ensureDownloadDirectory(directory: Path = defaultDownloadDirectory()): Path =
+    Files.createDirectories(directory)
 }
 

@@ -263,46 +263,53 @@ fun DetailScreen(
                 scope.launch {
                     val titles = listOfNotNull(d.title, d.titleRomaji, d.titleNative) + d.synonyms
                     val dub = config.audio == AudioType.Dub
+                    val selectedEpisodes = config.episodeNumbers
                     var queued = 0
-                    val target = me.enivzoy.anilife.app.data.DownloadTarget(
-                        resolution = when (config.resolution) {
-                            Resolution.Auto, Resolution.P1080 -> 1080
-                            Resolution.P720 -> 720
-                            Resolution.P480 -> 480
-                            Resolution.P360 -> 360
-                        },
-                        server = config.firstChoiceServer,
-                    )
-                    config.episodeNumbers.forEach { episode ->
-                        // the queue re-runs this on retry, because these urls expire
-                        val resolve: suspend (String?) -> AnimeVideoSource? = { avoid ->
-                            val fresh = try {
-                                providers.sources(d.id, d.malId, titles, episode.toDouble(), dub)
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (_: Throwable) {
-                                emptyList()
-                            }
-                            me.enivzoy.anilife.app.data.pickDownloadSource(fresh, target, avoid)
-                        }
-                        val source = resolve(null) ?: return@forEach
-                        queueManager.enqueue(
-                            title = d.title,
-                            episode = episode.toDouble(),
-                            url = source.url,
-                            audio = config.audio.name.lowercase(),
-                            downloadRoot = java.nio.file.Path.of(config.saveDirectory),
-                            anime = d.toCard(),
-                            episodeTitle = null,
-                            headers = source.headers,
-                            maxHeight = target.resolution,
-                            resolve = resolve,
+                    try {
+                        val downloadRoot = DirectMediaDownloader.ensureDownloadDirectory(
+                            java.nio.file.Path.of(config.saveDirectory),
                         )
-                        queued++
-                    }
-                    if (queued == 0) {
-                        downloadNotice = "Couldn't queue downloads" to
-                            "No downloadable video source was found for this title."
+                        val target = me.enivzoy.anilife.app.data.DownloadTarget(
+                            resolution = when (config.resolution) {
+                                Resolution.Auto, Resolution.P1080 -> 1080
+                                Resolution.P720 -> 720
+                                Resolution.P480 -> 480
+                                Resolution.P360 -> 360
+                            },
+                            server = config.firstChoiceServer,
+                        )
+                        selectedEpisodes.forEach { episode ->
+                            val resolve: suspend (me.enivzoy.anilife.app.data.DownloadSourceExclusions) -> AnimeVideoSource? = { exclusions ->
+                                val fresh = providers.sources(
+                                    d.id,
+                                    d.malId,
+                                    titles,
+                                    episode.toDouble(),
+                                    dub,
+                                    refresh = exclusions.urls.isNotEmpty(),
+                                )
+                                me.enivzoy.anilife.app.data.pickDownloadSource(fresh, target, exclusions)
+                            }
+                            queueManager.enqueue(
+                                title = d.title,
+                                episode = episode.toDouble(),
+                                url = "",
+                                audio = config.audio.name.lowercase(),
+                                downloadRoot = downloadRoot,
+                                anime = d.toCard(),
+                                episodeTitle = null,
+                                maxHeight = target.resolution,
+                                resolve = resolve,
+                            )
+                            queued++
+                        }
+                        downloadNotice = "Downloads started" to
+                            "$queued episode${if (queued == 1) " was" else "s were"} added to your download queue. Track progress in Downloads."
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        downloadNotice = "Couldn't start downloads" to
+                            (failure.message?.takeIf(String::isNotBlank) ?: "AniLife couldn't prepare the download folder.")
                     }
                 }
             },

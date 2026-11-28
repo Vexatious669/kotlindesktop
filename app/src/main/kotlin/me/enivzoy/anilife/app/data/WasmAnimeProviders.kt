@@ -8,6 +8,7 @@ import ai.tegmentum.wasmtime4j.component.ComponentInstance
 import ai.tegmentum.wasmtime4j.component.ComponentLinker
 import ai.tegmentum.wasmtime4j.component.ComponentVal
 import ai.tegmentum.wasmtime4j.factory.WasmRuntimeFactory
+import kotlinx.coroutines.CancellationException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -34,13 +35,28 @@ internal class WasmAnimeProviders(
     private val engine: ComponentEngine by lazy { runtime.createComponentEngine() }
     private val compiled: List<LoadedProvider> by lazy { loadProviders() }
 
-    fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean): List<AnimeVideoSource> {
+    fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean, refresh: Boolean = false): List<AnimeVideoSource> {
         val owner = title.titles.firstOrNull() ?: "video provider"
         // wasm provider stores are browser sandboxes; close them after each lookup
         ResourceTracker.webViewCreated(owner)
         return try {
-            (compiled + runCatching { importedProviders() }.getOrDefault(emptyList())).flatMap { provider ->
-                runCatching { provider.sources(title, episode, dub) }.getOrDefault(emptyList())
+            val providers = try {
+                compiled + importedProviders()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                System.err.println("Couldn't load imported video providers: ${failure.message}")
+                compiled
+            }
+            providers.flatMap { provider ->
+                try {
+                    provider.sources(title, episode, dub, refresh)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    System.err.println("Video provider ${provider.name} failed: ${failure.message}")
+                    emptyList()
+                }
             }
         } finally {
             ResourceTracker.webViewDestroyed()
@@ -117,7 +133,8 @@ internal class WasmAnimeProviders(
     ) {
         private val cache = ConcurrentHashMap<String, CacheValue>()
 
-        fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean): List<AnimeVideoSource> {
+        fun sources(title: WasmAnimeTitle, episode: Double, dub: Boolean, refresh: Boolean): List<AnimeVideoSource> {
+            if (refresh) cache.clear()
             val linker = linker(hosts, cache)
             val store = runtime.createStore(engine.engine, FUEL_LIMIT, MEMORY_LIMIT_BYTES, CALL_TIMEOUT_SECONDS)
             try {

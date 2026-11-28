@@ -716,12 +716,20 @@ private fun DownloadsHomeCard(
                 overflow = TextOverflow.Ellipsis,
             )
             item.progress?.let { fraction ->
-                LinearProgressIndicator(
-                    progress = { fraction },
-                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
-                    color = AniLifeColors.Primary,
-                    trackColor = AniLifeColors.SurfaceVariant,
-                )
+                if (fraction.isNaN()) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                        color = AniLifeColors.Primary,
+                        trackColor = AniLifeColors.SurfaceVariant,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                        color = AniLifeColors.Primary,
+                        trackColor = AniLifeColors.SurfaceVariant,
+                    )
+                }
             }
             item.error?.let { problem ->
                 Text(problem, color = AniLifeColors.Destructive, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -805,18 +813,21 @@ private fun buildDownloadsHomeItems(
         val existing = items[key]
         val anime = local?.anime ?: job.anime ?: existing?.anime
         val title = anime?.title ?: job.title
-        val percent = if (job.total != null && job.total > 0L) {
-            ((job.downloaded * 100L) / job.total).toInt().coerceIn(0, 100)
-        } else {
-            0
+        val fraction = when {
+            job.status == DownloadStatus.Queued -> 0f
+            job.progressFraction != null -> job.progressFraction
+            job.total != null && job.total > 0L -> me.enivzoy.anilife.app.data.downloadProgressFraction(job.downloaded, job.total)
+            else -> null
         }
+        val percent = fraction?.let { (it * 100).toInt().coerceIn(0, 100) }
         val statusText: String
         val progress: Float?
         val error: String?
         when (job.status) {
             DownloadStatus.Running -> {
-                statusText = "Downloading Episode ${job.episode.episodeLabel()} · $percent%"
-                progress = percent / 100f
+                statusText = percent?.let { "Downloading Episode ${job.episode.episodeLabel()} · $it%" }
+                    ?: "Downloading Episode ${job.episode.episodeLabel()} · ${formatBytes(job.downloaded)} downloaded"
+                progress = fraction ?: Float.NaN
                 error = null
             }
             DownloadStatus.Queued -> {
@@ -908,7 +919,7 @@ private fun DirectDownloadDialog(
                     OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Anime title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = episode, onValueChange = { episode = it }, label = { Text("Episode number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTP(S) video or HLS/DASH URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Text("Audio: ${audio.uppercase()} · saved under AniLife/Downloads", fontSize = 11.sp)
+                    Text("Audio: ${audio.uppercase()} · saved in your download folder", fontSize = 11.sp)
                 }
                 PageScrollbar(dialogScrollState, Modifier.align(Alignment.CenterEnd))
             }
@@ -1590,11 +1601,8 @@ private fun DownloadJobRow(
     onRetry: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    val fraction = if (job.total != null && job.total > 0L) {
-        (job.downloaded / job.total).toFloat().coerceIn(0f, 1f)
-    } else {
-        0f
-    }
+    val fraction = job.progressFraction ?: job.total?.takeIf { it > 0L }
+        ?.let { me.enivzoy.anilife.app.data.downloadProgressFraction(job.downloaded, it) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -1608,7 +1616,12 @@ private fun DownloadJobRow(
             Column(Modifier.weight(1f)) {
                 Text(job.title, color = DownloadText, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "Episode ${job.episode.episodeLabel()} · ${job.status.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                    "Episode ${job.episode.episodeLabel()} · ${when {
+                        job.status == DownloadStatus.Running && job.downloaded == 0L -> "Finding video source…"
+                        job.status == DownloadStatus.Running && fraction != null -> "Downloading · ${(fraction * 100).toInt().coerceIn(0, 100)}%"
+                        job.status == DownloadStatus.Running -> "Downloading"
+                        else -> job.status.name.lowercase().replaceFirstChar { it.uppercase() }
+                    }}",
                     color = DownloadMuted,
                     fontSize = 12.sp,
                 )
@@ -1628,7 +1641,13 @@ private fun DownloadJobRow(
         }
         if (job.status == DownloadStatus.Running || job.status == DownloadStatus.Queued) {
             Text(
-                "${formatBytes(job.downloaded)} of ${job.total?.let { formatBytes(it) } ?: "?"}",
+                when {
+                    job.status == DownloadStatus.Queued -> "Waiting to start…"
+                    job.downloaded == 0L -> "Finding a video source…"
+                    job.total != null && job.total > 0L -> "${formatBytes(job.downloaded)} of ${formatBytes(job.total)}"
+                    fraction != null -> "${formatBytes(job.downloaded)} downloaded · ${(fraction * 100).toInt().coerceIn(0, 100)}% of segments"
+                    else -> "${formatBytes(job.downloaded)} downloaded · total size unknown"
+                },
                 color = DownloadMuted,
                 fontSize = 11.sp,
             )
@@ -1639,12 +1658,20 @@ private fun DownloadJobRow(
                     .clip(RoundedCornerShape(3.dp))
                     .background(DownloadSurfaceRaised),
             ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(fraction)
-                        .height(6.dp)
-                        .background(DownloadAccent),
-                )
+                if (fraction != null) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                            .height(6.dp)
+                            .background(DownloadAccent),
+                    )
+                } else {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
+                        color = DownloadAccent,
+                        trackColor = DownloadSurfaceRaised,
+                    )
+                }
             }
         }
         if (job.status == DownloadStatus.Failed && job.error != null) {

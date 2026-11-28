@@ -43,6 +43,7 @@ fun AppSidebar(
     onNavigate: (Screen) -> Unit,
     onRandom: () -> Unit,
     onSearch: () -> Unit = { onNavigate(Screen.Browse) },
+    downloadProgress: Float? = null,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
@@ -82,7 +83,13 @@ fun AppSidebar(
             Spacer(Modifier.height(gap))
             NavIcon(Icons.Rounded.VideoLibrary, "Library", selected = current is Screen.Library, size = iconSize) { onNavigate(Screen.Library) }
             Spacer(Modifier.height(gap))
-            NavIcon(Icons.Rounded.Download, "Downloads", selected = current is Screen.Downloads, size = iconSize) { onNavigate(Screen.Downloads) }
+            NavIcon(
+                Icons.Rounded.Download,
+                if (downloadProgress == null) "Downloads" else "Downloads in progress",
+                selected = current is Screen.Downloads,
+                size = iconSize,
+                progress = downloadProgress,
+            ) { onNavigate(Screen.Downloads) }
             Spacer(Modifier.height(gap))
             NavIcon(Icons.Rounded.Extension, "Providers", selected = current is Screen.Providers, size = iconSize) { onNavigate(Screen.Providers) }
             Spacer(Modifier.height(gap))
@@ -108,12 +115,15 @@ private fun NavIcon(
     label: String,
     selected: Boolean,
     size: androidx.compose.ui.unit.Dp = 40.dp,
+    progress: Float? = null,
     onClick: () -> Unit,
 ) {
     GlassIconButton(
         onClick = onClick,
         icon = icon,
         contentDescription = label,
+        progress = progress,
+        progressColor = AniLifeColors.DownloadProgress,
         size = size,
         iconSize = 20.dp,
         selected = selected,

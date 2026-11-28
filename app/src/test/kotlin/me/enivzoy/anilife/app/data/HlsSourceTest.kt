@@ -5,6 +5,10 @@ import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import java.net.InetSocketAddress
 import java.nio.file.Files
+import java.time.Instant
+import java.time.format.DateTimeFormatter
+import java.time.ZoneOffset
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -20,10 +24,12 @@ class HlsSourceTest {
     private lateinit var server: HttpServer
     private var base: String = ""
     private val hits = mutableListOf<String>()
+    private val throttledPlaylistRequests = AtomicInteger()
     private val requiredHeader = "Referer"
 
     @BeforeTest
     fun start() {
+        throttledPlaylistRequests.set(0)
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.executor = java.util.concurrent.Executors.newFixedThreadPool(8)
         server.createContext("/") { exchange -> route(exchange) }
@@ -44,6 +50,19 @@ class HlsSourceTest {
         val status: Int
         val contentType: String
         when {
+            path.endsWith("/throttled.m3u8") && throttledPlaylistRequests.incrementAndGet() == 1 -> {
+                exchange.responseHeaders.add("Retry-After", "0")
+                status = 429
+                contentType = "text/plain"
+                body = "rate limited".toByteArray()
+            }
+
+            path.endsWith("/throttled.m3u8") -> {
+                status = 200
+                contentType = "application/vnd.apple.mpegurl"
+                body = "#EXTM3U\n#EXTINF:4.0,\nseg-7.ts\n#EXT-X-ENDLIST\n".toByteArray()
+            }
+
             query.contains("expired=1") -> {
                 status = 410
                 contentType = "text/html"
@@ -203,6 +222,23 @@ class HlsSourceTest {
     private val headers = mapOf("Referer" to "https://provider.example/")
 
     @Test
+    fun retriesRateLimitedPlaylistAfterRetryAfterHeader() = runBlocking {
+        val source = HlsSource.validate("$base/throttled.m3u8", headers)
+
+        assertEquals(1, source.playlist?.segments?.size)
+        assertEquals(2, throttledPlaylistRequests.get())
+    }
+
+    @Test
+    fun parsesRetryAfterAsSecondsOrHttpDate() {
+        assertEquals(2_000L, HlsSource.parseRetryAfterMillis("2", nowMillis = 1_000L))
+        val now = Instant.parse("2026-11-27T22:00:00Z")
+        val retryAt = DateTimeFormatter.RFC_1123_DATE_TIME.format(now.plusSeconds(5).atZone(ZoneOffset.UTC))
+        assertEquals(5_000L, HlsSource.parseRetryAfterMillis(retryAt, now.toEpochMilli()))
+        assertNull(HlsSource.parseRetryAfterMillis("not a retry value", now.toEpochMilli()))
+    }
+
+    @Test
     fun resolvesAMediaPlaylistAndDownloadsSegmentsInOrder() = runBlocking {
         val source = HlsSource.validate("$base/media.m3u8", headers)
         assertEquals(SourceKind.HlsMedia, source.kind)
@@ -211,9 +247,14 @@ class HlsSourceTest {
 
         val output = Files.createTempFile("hls-media", ".ts")
         Files.delete(output)
-        val written = HlsSource.downloadMediaPlaylist(source.playlist!!, headers, output) {}
+        val progress = mutableListOf<Pair<Long, Float>>()
+        val written = HlsSource.downloadMediaPlaylist(source.playlist!!, headers, output) { bytes, fraction ->
+            progress += bytes to fraction
+        }
         assertEquals("SEGMENT-7SEGMENT-8".length.toLong(), written)
         assertEquals("SEGMENT-7SEGMENT-8", Files.readString(output))
+        assertEquals(listOf(0.5f, 1f), progress.map { it.second })
+        assertTrue(progress.zipWithNext().all { (before, after) -> after.first > before.first })
         Files.deleteIfExists(output)
     }
 
@@ -281,7 +322,7 @@ class HlsSourceTest {
         val source = HlsSource.validate("$base/media.m3u8", headers)
         val output = Files.createTempFile("hls-headers", ".ts")
         Files.delete(output)
-        HlsSource.downloadMediaPlaylist(source.playlist!!, headers, output) {}
+        HlsSource.downloadMediaPlaylist(source.playlist!!, headers, output) { _, _ -> }
         assertContains(Files.readString(output), "SEGMENT-8")
         Files.deleteIfExists(output)
     }
@@ -292,7 +333,7 @@ class HlsSourceTest {
         val playlist = assertNotNull(source.playlist)
         val output = Files.createTempFile("hls-aes", ".ts")
         Files.delete(output)
-        HlsSource.downloadMediaPlaylist(playlist, headers, output) {}
+        HlsSource.downloadMediaPlaylist(playlist, headers, output) { _, _ -> }
         assertEquals(PLAINTEXT.toString(Charsets.UTF_8), Files.readString(output))
         Files.deleteIfExists(output)
     }
@@ -305,7 +346,7 @@ class HlsSourceTest {
         val output = directory.resolve("episode.ts")
 
         val failure = assertFailsWith<SourceException> {
-            HlsSource.downloadMediaPlaylist(playlist, headers, output) {}
+            HlsSource.downloadMediaPlaylist(playlist, headers, output) { _, _ -> }
         }
         assertEquals(SourceFailure.NotFound, failure.reason)
         assertFalse(Files.exists(output))
