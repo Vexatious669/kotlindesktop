@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +49,8 @@ fun AppSidebar(
     onRandom: () -> Unit,
     onSearch: () -> Unit = { onNavigate(Screen.Browse) },
     downloadProgress: Float? = null,
+    sillyMode: Boolean = false,
+    onSillyMode: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
@@ -112,6 +115,13 @@ fun AppSidebar(
             NavIcon(Icons.Rounded.Notifications, "Notifications", selected = current is Screen.Notifications, size = iconSize) {
                 onNavigate(Screen.Notifications)
             }
+            Spacer(Modifier.height(gap))
+            NavIcon(
+                Icons.Rounded.VisibilityOff,
+                if (sillyMode) "Silly mode on" else "Silly mode",
+                selected = sillyMode,
+                size = iconSize,
+            ) { onSillyMode() }
             Spacer(Modifier.height(gap))
             NavIcon(Icons.Rounded.Person, "Profile", selected = current is Screen.Profile, size = iconSize) { onNavigate(Screen.Profile) }
             Spacer(Modifier.height(gap))

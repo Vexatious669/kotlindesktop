@@ -56,6 +56,7 @@ import me.enivzoy.anilife.app.data.asAutoDetectLibrary
 import me.enivzoy.anilife.app.data.mergeVideoSources
 import me.enivzoy.anilife.app.data.DiscordOAuth
 import me.enivzoy.anilife.app.data.AppSettingsStore
+import me.enivzoy.anilife.app.data.SillyMode
 import me.enivzoy.anilife.app.data.DEFAULT_DISCORD_APPLICATION_ID
 import me.enivzoy.anilife.app.data.DiscordPresenceManager
 import me.enivzoy.anilife.app.data.DownloadQueueManager
@@ -99,6 +100,7 @@ import me.enivzoy.anilife.app.ui.AniLifeColors
 import me.enivzoy.anilife.app.ui.RemoteImages
 import me.enivzoy.anilife.app.ui.AppSidebar
 import me.enivzoy.anilife.app.ui.appEnter
+import me.enivzoy.anilife.app.ui.discoMode
 import me.enivzoy.anilife.app.ui.liquidGlass
 import me.enivzoy.anilife.app.ui.rememberAppScreenTransition
 import me.enivzoy.anilife.mpv.Mpv
@@ -515,9 +517,18 @@ fun AniLifeApp(
     }
 
     var paletteOpen by remember { mutableStateOf(false) }
+    var isSillyMode by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isSillyMode) {
+        if (isSillyMode) SillyMode.start() else SillyMode.stop()
+    }
+    DisposableEffect(Unit) {
+        onDispose { SillyMode.stop() }
+    }
 
     Box(
         Modifier.fillMaxSize()
+            .discoMode(isSillyMode)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown &&
                     (event.isCtrlPressed || event.isMetaPressed) &&
@@ -538,6 +549,11 @@ fun AniLifeApp(
                 onRandom = ::pickRandom,
                 onSearch = { paletteOpen = true },
                 downloadProgress = downloadQueueProgress(downloadJobs),
+                sillyMode = isSillyMode,
+                onSillyMode = {
+                    isSillyMode = !isSillyMode
+                    repository.setOnlyAdult(isSillyMode)
+                },
             )
         }
 
@@ -556,7 +572,7 @@ fun AniLifeApp(
                     }
                 },
         ) {
-            key(settings.titleLanguage) {
+            key(settings.titleLanguage, isSillyMode) {
             val screenTransition = rememberAppScreenTransition()
             AnimatedContent(
                 targetState = screen,
